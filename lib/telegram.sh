@@ -99,8 +99,8 @@ telegram_handle_webhook() {
     local response
     response=$(claude_run "$text")
 
-    kill "$typing_pid" 2>/dev/null
-    wait "$typing_pid" 2>/dev/null
+    kill "$typing_pid" 2>/dev/null || true
+    wait "$typing_pid" 2>/dev/null || true
 
     if [ -n "$response" ]; then
         history_add "assistant" "$response"

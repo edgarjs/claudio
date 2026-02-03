@@ -34,7 +34,7 @@ claude_run() {
     fi
 
     local response
-    response=$(claude "${claude_args[@]}" 2>>"$CLAUDIO_LOG_FILE")
+    response=$(claude "${claude_args[@]}" 2>>"$CLAUDIO_LOG_FILE") || true
 
     echo "$response"
 }

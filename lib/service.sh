@@ -162,6 +162,10 @@ service_install_launchd() {
     <dict>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:${HOME}/.local/bin</string>
+        <key>USER</key>
+        <string>$(whoami)</string>
+        <key>TERM</key>
+        <string>dumb</string>
     </dict>
 </dict>
 </plist>

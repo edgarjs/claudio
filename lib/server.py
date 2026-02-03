@@ -19,11 +19,15 @@ class Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(length).decode("utf-8") if length else ""
             self._respond(200, {"ok": True})
             # Process webhook in background
-            subprocess.Popen(
-                [CLAUDIO_BIN, "_webhook", body],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+            log_file = os.path.join(
+                os.environ.get("HOME", "/tmp"), ".claudio", "webhook.log"
             )
+            with open(log_file, "a") as log_fh:
+                subprocess.Popen(
+                    [CLAUDIO_BIN, "_webhook", body],
+                    stdout=log_fh,
+                    stderr=log_fh,
+                )
         else:
             self._respond(404, {"error": "not found"})
 
