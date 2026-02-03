@@ -17,15 +17,18 @@ telegram_send_message() {
     while [ ${#text} -gt 0 ]; do
         local chunk="${text:0:$max_len}"
         text="${text:$max_len}"
-        telegram_api "sendMessage" \
+        local result
+        result=$(telegram_api "sendMessage" \
             -d "chat_id=${chat_id}" \
-            -d "text=${chunk}" \
-            -d "parse_mode=Markdown" > /dev/null 2>&1
+            --data-urlencode "text=${chunk}" \
+            -d "parse_mode=Markdown")
         # If markdown fails, retry without parse_mode
-        if [ $? -ne 0 ]; then
+        local ok
+        ok=$(echo "$result" | jq -r '.ok // empty')
+        if [ "$ok" != "true" ]; then
             telegram_api "sendMessage" \
                 -d "chat_id=${chat_id}" \
-                -d "text=${chunk}" > /dev/null 2>&1
+                --data-urlencode "text=${chunk}" > /dev/null 2>&1
         fi
     done
 }
