@@ -24,12 +24,17 @@ cloudflared_start() {
     # Temp file for parsing cloudflared output to detect tunnel URL
     local cf_log="$CLAUDIO_PATH/cloudflared.tmp"
 
+    # Configurable timing (for testing)
+    local poll_interval="${CLOUDFLARED_POLL_INTERVAL:-1}"
+    local retry_delay="${CLOUDFLARED_RETRY_DELAY:-2}"
+    local max_attempts="${CLOUDFLARED_MAX_ATTEMPTS:-10}"
+
     if [ "$TUNNEL_TYPE" = "ephemeral" ]; then
         cloudflared tunnel --url "http://localhost:${PORT}" > "$cf_log" 2>&1 &
         CLOUDFLARED_PID=$!
         trap 'kill $CLOUDFLARED_PID 2>/dev/null' EXIT
 
-        # Wait for the ephemeral URL to appear in the log (3 retries, 10s each)
+        # Wait for the ephemeral URL to appear in the log (3 retries)
         log "cloudflared" "Waiting for ephemeral tunnel URL..."
         local tunnel_url=""
         local retry=0
@@ -37,12 +42,12 @@ cloudflared_start() {
 
         while [ $retry -lt $max_retries ]; do
             local attempts=0
-            while [ $attempts -lt 10 ]; do
+            while [ $attempts -lt $max_attempts ]; do
                 tunnel_url=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' "$cf_log" 2>/dev/null | head -1)
                 if [ -n "$tunnel_url" ]; then
                     break 2
                 fi
-                sleep 1
+                sleep "$poll_interval"
                 attempts=$((attempts + 1))
             done
 
@@ -50,7 +55,7 @@ cloudflared_start() {
             if [ $retry -lt $max_retries ]; then
                 log "cloudflared" "Tunnel URL not detected, retrying ($retry/$max_retries)..."
                 kill $CLOUDFLARED_PID 2>/dev/null
-                sleep 2
+                sleep "$retry_delay"
                 cloudflared tunnel --url "http://localhost:${PORT}" > "$cf_log" 2>&1 &
                 CLOUDFLARED_PID=$!
             fi

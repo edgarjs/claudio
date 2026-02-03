@@ -7,6 +7,11 @@ setup() {
     export CLAUDIO_LOG_FILE="$BATS_TEST_TMPDIR/claudio.log"
     export PORT=8080
 
+    # Fast polling for tests
+    export CLOUDFLARED_POLL_INTERVAL=0.05
+    export CLOUDFLARED_RETRY_DELAY=0.1
+    export CLOUDFLARED_MAX_ATTEMPTS=3
+
     # Create a mock cloudflared
     export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
     mkdir -p "$BATS_TEST_TMPDIR/bin"
@@ -30,16 +35,16 @@ create_mock_cloudflared() {
 case "$behavior" in
     success)
         echo "https://test-tunnel-abc123.trycloudflare.com" >&1
-        sleep 60
+        sleep 10
         ;;
     delayed)
-        sleep 2
+        sleep 0.2
         echo "https://delayed-tunnel-xyz.trycloudflare.com" >&1
-        sleep 60
+        sleep 10
         ;;
     fail)
         echo "Connection failed" >&2
-        sleep 60
+        sleep 10
         ;;
 esac
 EOF
@@ -66,7 +71,7 @@ EOF
     # Run in background and wait a bit
     cloudflared_start &
     local pid=$!
-    sleep 3
+    sleep 0.3
 
     # Check that URL was detected
     [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"Ephemeral tunnel URL: https://test-tunnel-abc123.trycloudflare.com"* ]]
@@ -83,7 +88,7 @@ EOF
 
     cloudflared_start &
     local pid=$!
-    sleep 5
+    sleep 0.5
 
     [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"Ephemeral tunnel URL: https://delayed-tunnel-xyz.trycloudflare.com"* ]]
 
@@ -110,13 +115,13 @@ EOF
     cat > "$BATS_TEST_TMPDIR/bin/cloudflared" << 'EOF'
 #!/bin/bash
 echo "Starting named tunnel" >&1
-sleep 60
+sleep 10
 EOF
     chmod +x "$BATS_TEST_TMPDIR/bin/cloudflared"
 
     cloudflared_start &
     local pid=$!
-    sleep 1
+    sleep 0.2
 
     [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"Named tunnel 'my-tunnel' started"* ]]
 
@@ -142,7 +147,7 @@ EOF
 
     cloudflared_start &
     local pid=$!
-    sleep 3
+    sleep 0.3
 
     [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"Registering Telegram webhook"* ]]
     [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"Webhook registration:"* ]]
