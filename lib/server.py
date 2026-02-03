@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.request
 import urllib.error
+from collections import deque
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 
@@ -17,6 +18,86 @@ PORT = int(os.environ.get("PORT", 8421))
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+
+# Per-chat message queues for serial processing
+chat_queues = {}  # chat_id -> deque of webhook bodies
+queue_lock = threading.Lock()  # Global lock for accessing chat_queues
+seen_updates = set()  # Track processed update_ids to prevent duplicates
+MAX_SEEN_UPDATES = 1000  # Limit memory usage
+
+
+def parse_webhook(body):
+    """Extract update_id and chat_id from webhook body."""
+    try:
+        data = json.loads(body)
+        update_id = data.get("update_id")
+        chat_id = str(data.get("message", {}).get("chat", {}).get("id", ""))
+        return update_id, chat_id
+    except (json.JSONDecodeError, AttributeError):
+        return None, ""
+
+
+def process_queue(chat_id, log_file):
+    """Process messages for a chat one at a time."""
+    while True:
+        with queue_lock:
+            if chat_id not in chat_queues or not chat_queues[chat_id]:
+                # Queue empty, clean up
+                if chat_id in chat_queues:
+                    del chat_queues[chat_id]
+                return
+            body = chat_queues[chat_id].popleft()
+
+        # Process this message (blocking)
+        try:
+            with open(log_file, "a") as log_fh:
+                proc = subprocess.Popen(
+                    [CLAUDIO_BIN, "_webhook", body],
+                    stdout=log_fh,
+                    stderr=log_fh,
+                )
+                proc.wait()  # Wait for completion before processing next
+        except Exception as e:
+            sys.stderr.write(f"[queue] Error processing message for chat {chat_id}: {e}\n")
+
+
+def enqueue_webhook(body):
+    """Add webhook to per-chat queue and start processor if needed."""
+    update_id, chat_id = parse_webhook(body)
+    if not chat_id:
+        return  # Invalid webhook, skip
+
+    log_file = os.path.join(
+        os.environ.get("HOME", "/tmp"), ".claudio", "claudio.log"
+    )
+
+    with queue_lock:
+        # Deduplicate: skip if we've already seen this update_id
+        if update_id is not None:
+            if update_id in seen_updates:
+                return  # Duplicate webhook, skip
+            seen_updates.add(update_id)
+            # Limit memory usage by pruning old entries
+            if len(seen_updates) > MAX_SEEN_UPDATES:
+                # Remove oldest entries (set doesn't preserve order, so clear half)
+                to_remove = list(seen_updates)[:MAX_SEEN_UPDATES // 2]
+                for uid in to_remove:
+                    seen_updates.discard(uid)
+
+        # Initialize queue for this chat if needed
+        if chat_id not in chat_queues:
+            chat_queues[chat_id] = deque()
+
+        chat_queues[chat_id].append(body)
+
+        # Start processor thread if this is the only message (queue was empty)
+        if len(chat_queues[chat_id]) == 1:
+            thread = threading.Thread(
+                target=process_queue,
+                args=(chat_id, log_file),
+                daemon=True
+            )
+            thread.start()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -42,16 +123,8 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length).decode("utf-8") if length else ""
             self._respond(200, {"ok": True})
-            # Process webhook in background - output goes to centralized log
-            log_file = os.path.join(
-                os.environ.get("HOME", "/tmp"), ".claudio", "claudio.log"
-            )
-            with open(log_file, "a") as log_fh:
-                subprocess.Popen(
-                    [CLAUDIO_BIN, "_webhook", body],
-                    stdout=log_fh,
-                    stderr=log_fh,
-                )
+            # Add to per-chat queue for serial processing
+            enqueue_webhook(body)
         else:
             self._respond(404, {"error": "not found"})
 
