@@ -19,9 +19,6 @@ log() {
 
     # Write to log file
     echo "$msg" >> "$CLAUDIO_LOG_FILE"
-
-    # Also output to stderr for visibility
-    echo "$msg" >&2
 }
 
 # Log an error message (same as log but marked as ERROR)

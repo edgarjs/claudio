@@ -28,13 +28,6 @@ teardown() {
     [[ "$result" =~ \[[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}\] ]]
 }
 
-@test "log outputs to stderr" {
-    result=$(log "test" "stderr test" 2>&1)
-
-    [[ "$result" == *"[test]"* ]]
-    [[ "$result" == *"stderr test"* ]]
-}
-
 @test "log_error prefixes message with ERROR" {
     log_error "test" "Something went wrong" 2>/dev/null
 

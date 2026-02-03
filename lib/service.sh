@@ -168,9 +168,9 @@ service_install_launchd() {
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>${CLAUDIO_PATH}/claudio.log</string>
+    <string>${CLAUDIO_PATH}/claudio.out.log</string>
     <key>StandardErrorPath</key>
-    <string>${CLAUDIO_PATH}/claudio.log</string>
+    <string>${CLAUDIO_PATH}/claudio.err.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
