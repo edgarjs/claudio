@@ -30,6 +30,7 @@ EOF
 }
 
 claudio_init
+history_init
 
 case "${1:-}" in
     _webhook)
