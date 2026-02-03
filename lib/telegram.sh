@@ -5,7 +5,37 @@ TELEGRAM_API="https://api.telegram.org/bot"
 telegram_api() {
     local method="$1"
     shift
-    curl -s "${TELEGRAM_API}${TELEGRAM_BOT_TOKEN}/${method}" "$@"
+
+    local max_retries=4
+    local delays=(1 2 3 4)  # Total: 10 seconds max
+    local attempt=0
+    local response http_code body
+
+    while [ $attempt -le $max_retries ]; do
+        response=$(curl -s -w "\n%{http_code}" "${TELEGRAM_API}${TELEGRAM_BOT_TOKEN}/${method}" "$@")
+        http_code=$(echo "$response" | tail -n1)
+        body=$(echo "$response" | sed '$d')
+
+        # Success or client error (4xx except 429) - don't retry
+        if [[ "$http_code" =~ ^2 ]] || { [[ "$http_code" =~ ^4 ]] && [ "$http_code" != "429" ]; }; then
+            echo "$body"
+            return 0
+        fi
+
+        # Retryable: 429 (rate limit) or 5xx (server error)
+        if [ $attempt -lt $max_retries ]; then
+            local delay=${delays[$attempt]}
+            log "Telegram API error (HTTP $http_code), retrying in ${delay}s..."
+            sleep "$delay"
+        fi
+
+        ((attempt++))
+    done
+
+    # All retries exhausted
+    log "Telegram API failed after $max_retries retries (HTTP $http_code)"
+    echo "$body"
+    return 1
 }
 
 telegram_send_message() {

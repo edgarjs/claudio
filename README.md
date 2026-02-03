@@ -157,7 +157,7 @@ bats tests/db.bats
 
 - [x] Cloudflared URL detection fails silently after 30 seconds
 - [x] Webhook health check cron job
-- [ ] No retries with backoff for Telegram API
+- [x] No retries with backoff for Telegram API
 - [ ] Health check (`/health`) doesn't verify actual system state
 
 **Future**
