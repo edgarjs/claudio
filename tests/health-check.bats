@@ -59,27 +59,27 @@ EOF
     chmod +x "$BATS_TEST_TMPDIR/bin/curl"
 }
 
-@test "webhook-check exits 0 when health endpoint returns healthy" {
+@test "health-check exits 0 when health endpoint returns healthy" {
     create_env_file
     create_mock_curl_healthy
 
-    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
 
     [ "$status" -eq 0 ]
 }
 
-@test "webhook-check exits 1 when health endpoint returns unhealthy" {
+@test "health-check exits 1 when health endpoint returns unhealthy" {
     create_env_file
     create_mock_curl_unhealthy
 
-    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
 
     [ "$status" -eq 1 ]
     [ -f "$CLAUDIO_PATH/claudio.log" ]
     grep -q "unhealthy" "$CLAUDIO_PATH/claudio.log"
 }
 
-@test "webhook-check logs pending updates when non-zero" {
+@test "health-check logs pending updates when non-zero" {
     create_env_file
     cat > "$BATS_TEST_TMPDIR/bin/curl" << 'EOF'
 #!/bin/bash
@@ -88,30 +88,30 @@ echo "200"
 EOF
     chmod +x "$BATS_TEST_TMPDIR/bin/curl"
 
-    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
 
     [ "$status" -eq 0 ]
     [ -f "$CLAUDIO_PATH/claudio.log" ]
     grep -q "pending updates: 5" "$CLAUDIO_PATH/claudio.log"
 }
 
-@test "webhook-check fails when env file is missing" {
-    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
+@test "health-check fails when env file is missing" {
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
 
     [ "$status" -eq 1 ]
 }
 
-@test "webhook-check fails when server is not running" {
+@test "health-check fails when server is not running" {
     create_env_file
     create_mock_curl_server_down
 
-    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
 
     [ "$status" -eq 1 ]
     grep -q "Could not connect to server" "$CLAUDIO_PATH/claudio.log"
 }
 
-@test "webhook-check uses PORT from service.env" {
+@test "health-check uses PORT from service.env" {
     cat > "$CLAUDIO_PATH/service.env" << 'EOF'
 PORT=9999
 EOF
@@ -129,12 +129,12 @@ fi
 EOF
     chmod +x "$BATS_TEST_TMPDIR/bin/curl"
 
-    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
 
     [ "$status" -eq 0 ]
 }
 
-@test "webhook-check uses default PORT 8421 when not set" {
+@test "health-check uses default PORT 8421 when not set" {
     cat > "$CLAUDIO_PATH/service.env" << 'EOF'
 TELEGRAM_BOT_TOKEN=test
 EOF
@@ -152,7 +152,7 @@ fi
 EOF
     chmod +x "$BATS_TEST_TMPDIR/bin/curl"
 
-    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
 
     [ "$status" -eq 0 ]
 }
@@ -173,8 +173,8 @@ EOF
     run cron_install
 
     [ "$status" -eq 0 ]
-    grep -q "webhook-check.sh" "$HOME/.fake_crontab"
-    grep -q "claudio-webhook-check" "$HOME/.fake_crontab"
+    grep -q "health-check.sh" "$HOME/.fake_crontab"
+    grep -q "claudio-health-check" "$HOME/.fake_crontab"
 }
 
 @test "cron_uninstall removes cron entry" {
@@ -190,10 +190,10 @@ fi
 EOF
     chmod +x "$BATS_TEST_TMPDIR/bin/crontab"
 
-    echo "*/5 * * * * /path/to/webhook-check.sh # claudio-webhook-check" > "$HOME/.fake_crontab"
+    echo "*/5 * * * * /path/to/health-check.sh # claudio-health-check" > "$HOME/.fake_crontab"
 
     run cron_uninstall
 
     [ "$status" -eq 0 ]
-    ! grep -q "claudio-webhook-check" "$HOME/.fake_crontab"
+    ! grep -q "claudio-health-check" "$HOME/.fake_crontab"
 }

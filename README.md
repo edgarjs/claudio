@@ -72,7 +72,7 @@ The setup wizard will confirm when it receives the message and finish. Once done
 
 > If using a quick tunnel, the Telegram webhook is re-registered automatically each time the service starts.
 
-> A cron job runs every 5 minutes to verify the webhook is registered and re-registers it if needed. Logs are at `$HOME/.claudio/webhook-check.log`.
+> A cron job runs every 5 minutes to verify the webhook is registered and re-registers it if needed.
 
 ### Update
 

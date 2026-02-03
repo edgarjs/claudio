@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 import urllib.request
 import urllib.error
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -100,9 +102,15 @@ def check_health():
             else:
                 checks["telegram_webhook"] = {"status": "error", "detail": "API returned not ok"}
                 status = "unhealthy"
+                # Try to re-register webhook
+                expected_url = f"{WEBHOOK_URL}/telegram/webhook"
+                _register_webhook(expected_url)
         except (urllib.error.URLError, TimeoutError) as e:
             checks["telegram_webhook"] = {"status": "error", "detail": str(e)}
             status = "unhealthy"
+            # Try to re-register webhook
+            expected_url = f"{WEBHOOK_URL}/telegram/webhook"
+            _register_webhook(expected_url)
     else:
         checks["telegram_webhook"] = {"status": "not_configured"}
 
@@ -130,9 +138,26 @@ def _register_webhook(webhook_url):
         return False
 
 
+def startup_health_check():
+    """Run health check after startup to ensure webhook is registered."""
+    # Small delay to ensure server is ready
+    time.sleep(2)
+    print("Running startup health check...")
+    health = check_health()
+    if health["status"] == "healthy":
+        print("Startup health check passed")
+    else:
+        print(f"Startup health check: {health}")
+
+
 def main():
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"Claudio server listening on port {PORT}")
+
+    # Run health check in background thread
+    health_thread = threading.Thread(target=startup_health_check, daemon=True)
+    health_thread.start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
