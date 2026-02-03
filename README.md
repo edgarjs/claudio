@@ -124,3 +124,23 @@ Claudio stores its configuration and other files in `$HOME/.claudio/`. You can c
 ```bash
 claudio restart
 ```
+
+---
+
+## License
+
+Claudio is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+---
+
+## Contributing
+
+Contributions are welcome! Please read the [CONTRIBUTING](CONTRIBUTING.md) file for details on how to contribute.
+
+---
+
+## Acknowledgments
+
+Claudio is built on top of [Claude](https://claude.ai/) and [Claude Code](https://claude.ai/code).
+
+---
