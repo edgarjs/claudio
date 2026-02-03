@@ -17,7 +17,7 @@ Contributions are welcome! Bug reports, feature requests, documentation fixes, a
 
 ## Development Setup
 
-Claudio is a shell/Python project with no build system, test suite, or linter.
+Claudio is a shell/Python project with no build system or linter.
 
 Run locally with:
 
@@ -37,6 +37,27 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/claude.sh` — Claude Code CLI wrapper with conversation context
 - `lib/history.sh` — Conversation history management
 - `lib/service.sh` — systemd/launchd service management and cloudflared setup
+
+## Running Tests
+
+Claudio uses [BATS](https://github.com/bats-core/bats-core) for testing.
+
+```bash
+# Install BATS (macOS)
+brew install bats-core
+
+# Run all tests
+bats tests/
+
+# Run a specific test file
+bats tests/db.bats
+```
+
+Tests are located in the `tests/` directory. When contributing, please:
+
+- Run existing tests before submitting changes
+- Add tests for new functionality when possible
+- Ensure all tests pass
 
 ## Making Changes
 

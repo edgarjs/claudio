@@ -20,4 +20,6 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 
 ## Development
 
-No build system, test suite, or linter. Run locally with `bash bin/claudio start`. Requires `jq`, `curl`, `python3`, `cloudflared`, and `claude` CLI.
+Run locally with `bash bin/claudio start`. Requires `jq`, `curl`, `python3`, `cloudflared`, and `claude` CLI.
+
+**Tests:** Run `bats tests/` (requires [bats-core](https://github.com/bats-core/bats-core)). Tests use an isolated `$CLAUDIO_HOME` to avoid touching production data.

@@ -127,6 +127,20 @@ claudio restart
 
 ---
 
+## Testing
+
+Claudio uses [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) for integration tests.
+
+```bash
+# Run all tests
+bats tests/
+
+# Run a specific test file
+bats tests/db.bats
+```
+
+---
+
 ## License
 
 Claudio is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
