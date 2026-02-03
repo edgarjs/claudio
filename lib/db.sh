@@ -19,7 +19,14 @@ db_add() {
     local content="$2"
     # Escape single quotes for SQLite by doubling them
     local escaped_content="${content//\'/\'\'}"
-    sqlite3 "$CLAUDIO_DB_FILE" "INSERT INTO messages (role, content) VALUES ('$role', '$escaped_content');"
+    # Build SQL in temp file using printf to avoid shell expansion issues
+    local tmp_file
+    tmp_file=$(mktemp)
+    printf '%s' "INSERT INTO messages (role, content) VALUES ('$role', '" > "$tmp_file"
+    printf '%s' "$escaped_content" >> "$tmp_file"
+    printf '%s\n' "');" >> "$tmp_file"
+    sqlite3 "$CLAUDIO_DB_FILE" < "$tmp_file"
+    rm -f "$tmp_file"
 }
 
 db_get_context() {
@@ -36,7 +43,7 @@ db_get_context() {
             fi
             has_history=true
         fi
-    done < <(sqlite3 "$CLAUDIO_DB_FILE" "SELECT role, content FROM (SELECT role, content, id FROM messages ORDER BY id DESC LIMIT $limit) ORDER BY id ASC;")
+    done < <(printf "SELECT role, content FROM (SELECT role, content, id FROM messages ORDER BY id DESC LIMIT %d) ORDER BY id ASC;\n" "$limit" | sqlite3 "$CLAUDIO_DB_FILE")
 
     if [ "$has_history" = true ]; then
         echo -e "$context"
@@ -47,7 +54,7 @@ db_get_context() {
 
 db_trim() {
     local max_rows="${1:-100}"
-    sqlite3 "$CLAUDIO_DB_FILE" "DELETE FROM messages WHERE id NOT IN (SELECT id FROM messages ORDER BY id DESC LIMIT $max_rows);"
+    printf "DELETE FROM messages WHERE id NOT IN (SELECT id FROM messages ORDER BY id DESC LIMIT %d);\n" "$max_rows" | sqlite3 "$CLAUDIO_DB_FILE"
 }
 
 db_clear() {
