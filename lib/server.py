@@ -231,7 +231,8 @@ def main():
         sys.stderr.write("Generate one with: openssl rand -hex 32\n")
         sys.exit(1)
 
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    # Bind to localhost only - cloudflared handles external access
+    server = HTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Claudio server listening on port {PORT}")
 
     # Run health check in background thread
