@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+import urllib.request
+import urllib.error
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 
@@ -11,9 +13,22 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CLAUDIO_BIN = os.path.join(SCRIPT_DIR, "..", "bin", "claudio")
 PORT = int(os.environ.get("PORT", 8421))
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _respond(self, code, data):
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        sys.stderr.write("[%s] [http] %s\n" % (self.log_date_time_string(), format % args))
+
     def do_POST(self):
         if self.path == "/telegram/webhook":
             # Verify webhook secret if configured
@@ -40,20 +55,79 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self._respond(200, {"status": "ok"})
+            health = check_health()
+            code = 200 if health["status"] == "healthy" else 503
+            self._respond(code, health)
         else:
             self._respond(404, {"error": "not found"})
 
-    def _respond(self, code, data):
-        body = json.dumps(data).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
-    def log_message(self, format, *args):
-        sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), format % args))
+def check_health():
+    """Verify system health by checking Telegram webhook status."""
+    checks = {}
+    status = "healthy"
+
+    # Check 1: Telegram webhook configuration
+    if TELEGRAM_BOT_TOKEN and WEBHOOK_URL:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getWebhookInfo"
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+
+            if data.get("ok"):
+                result = data.get("result", {})
+                current_url = result.get("url", "")
+                expected_url = f"{WEBHOOK_URL}/telegram/webhook"
+                pending = result.get("pending_update_count", 0)
+                last_error = result.get("last_error_message", "")
+
+                if current_url == expected_url:
+                    checks["telegram_webhook"] = {
+                        "status": "ok",
+                        "pending_updates": pending,
+                    }
+                    if last_error:
+                        checks["telegram_webhook"]["last_error"] = last_error
+                else:
+                    checks["telegram_webhook"] = {
+                        "status": "mismatch",
+                        "expected": expected_url,
+                        "actual": current_url,
+                    }
+                    status = "unhealthy"
+                    # Try to re-register webhook
+                    _register_webhook(expected_url)
+            else:
+                checks["telegram_webhook"] = {"status": "error", "detail": "API returned not ok"}
+                status = "unhealthy"
+        except (urllib.error.URLError, TimeoutError) as e:
+            checks["telegram_webhook"] = {"status": "error", "detail": str(e)}
+            status = "unhealthy"
+    else:
+        checks["telegram_webhook"] = {"status": "not_configured"}
+
+    return {"status": status, "checks": checks}
+
+
+def _register_webhook(webhook_url):
+    """Attempt to re-register the Telegram webhook."""
+    try:
+        data = f"url={webhook_url}"
+        if WEBHOOK_SECRET:
+            data += f"&secret_token={WEBHOOK_SECRET}"
+        data += "&allowed_updates=[\"message\"]"
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+        req = urllib.request.Request(
+            url,
+            data=data.encode(),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+            return result.get("ok", False)
+    except Exception:
+        return False
 
 
 def main():

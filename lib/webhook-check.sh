@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Webhook health check script - verifies and re-registers Telegram webhook if needed
+# Webhook health check script - calls /health endpoint which verifies and fixes webhook
 # Intended to be run periodically via cron
 
 set -euo pipefail
@@ -13,13 +13,12 @@ log() {
     local msg
     msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
     echo "$msg" >> "$LOG_FILE"
-    # Also print errors to stderr for visibility
     if [[ "$*" == ERROR:* ]]; then
         echo "$msg" >&2
     fi
 }
 
-# Load environment
+# Load environment for PORT
 if [ ! -f "$CLAUDIO_ENV_FILE" ]; then
     log "ERROR: Environment file not found: $CLAUDIO_ENV_FILE"
     exit 1
@@ -30,55 +29,26 @@ set -a
 source "$CLAUDIO_ENV_FILE"
 set +a
 
-# Validate required variables
-if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
-    log "ERROR: TELEGRAM_BOT_TOKEN not set"
+PORT="${PORT:-8421}"
+
+# Call health endpoint - it will check and fix webhook if needed
+response=$(curl -s -w "\n%{http_code}" "http://localhost:${PORT}/health" 2>/dev/null || echo -e "\n000")
+http_code=$(echo "$response" | tail -n1)
+body=$(echo "$response" | sed '$d')
+
+if [ "$http_code" = "200" ]; then
+    # Healthy - nothing to log unless there are pending updates
+    pending=$(echo "$body" | jq -r '.checks.telegram_webhook.pending_updates // 0' 2>/dev/null || echo "0")
+    if [ "$pending" != "0" ] && [ "$pending" != "null" ]; then
+        log "Health OK (pending updates: $pending)"
+    fi
+elif [ "$http_code" = "503" ]; then
+    log "Health check returned unhealthy: $body"
     exit 1
-fi
-
-if [ -z "${WEBHOOK_URL:-}" ]; then
-    log "ERROR: WEBHOOK_URL not set"
+elif [ "$http_code" = "000" ]; then
+    log "ERROR: Could not connect to server on port $PORT"
     exit 1
-fi
-
-EXPECTED_WEBHOOK_URL="${WEBHOOK_URL}/telegram/webhook"
-TELEGRAM_API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
-
-# Check current webhook status
-response=$(curl -s "${TELEGRAM_API}/getWebhookInfo")
-ok=$(echo "$response" | jq -r '.ok // false')
-
-if [ "$ok" != "true" ]; then
-    log "ERROR: Failed to get webhook info: $response"
-    exit 1
-fi
-
-current_url=$(echo "$response" | jq -r '.result.url // empty')
-
-if [ "$current_url" = "$EXPECTED_WEBHOOK_URL" ]; then
-    # Webhook is correctly configured, nothing to do
-    exit 0
-fi
-
-# Webhook needs to be re-registered
-log "Webhook mismatch detected. Current: '${current_url}', Expected: '${EXPECTED_WEBHOOK_URL}'"
-
-# Build webhook registration request
-webhook_data="url=${EXPECTED_WEBHOOK_URL}"
-if [ -n "${WEBHOOK_SECRET:-}" ]; then
-    webhook_data="${webhook_data}&secret_token=${WEBHOOK_SECRET}"
-fi
-
-result=$(curl -s -X POST "${TELEGRAM_API}/setWebhook" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "$webhook_data" \
-    -d "allowed_updates=[\"message\"]")
-
-set_ok=$(echo "$result" | jq -r '.ok // false')
-
-if [ "$set_ok" = "true" ]; then
-    log "Webhook re-registered successfully: ${EXPECTED_WEBHOOK_URL}"
 else
-    log "ERROR: Failed to re-register webhook: $result"
+    log "ERROR: Unexpected response (HTTP $http_code): $body"
     exit 1
 fi

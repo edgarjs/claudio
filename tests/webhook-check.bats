@@ -11,6 +11,7 @@ setup() {
     unset TELEGRAM_BOT_TOKEN
     unset WEBHOOK_URL
     unset WEBHOOK_SECRET
+    unset PORT
 
     # Create mock curl in path
     export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
@@ -23,47 +24,67 @@ teardown() {
 
 create_env_file() {
     cat > "$CLAUDIO_PATH/service.env" << EOF
+PORT=8421
 TELEGRAM_BOT_TOKEN=test-token-123
 WEBHOOK_URL=https://test.example.com
 WEBHOOK_SECRET=secret123
 EOF
 }
 
-create_mock_curl() {
-    local webhook_url="$1"
-    cat > "$BATS_TEST_TMPDIR/bin/curl" << EOF
+create_mock_curl_healthy() {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'EOF'
 #!/bin/bash
-if [[ "\$*" == *"getWebhookInfo"* ]]; then
-    echo '{"ok":true,"result":{"url":"${webhook_url}"}}'
-elif [[ "\$*" == *"setWebhook"* ]]; then
-    echo '{"ok":true,"result":true}'
-fi
+echo '{"status":"healthy","checks":{"telegram_webhook":{"status":"ok","pending_updates":0}}}'
+echo "200"
 EOF
     chmod +x "$BATS_TEST_TMPDIR/bin/curl"
 }
 
-@test "webhook-check exits 0 when webhook is correctly configured" {
+create_mock_curl_unhealthy() {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'EOF'
+#!/bin/bash
+echo '{"status":"unhealthy","checks":{"telegram_webhook":{"status":"mismatch"}}}'
+echo "503"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+}
+
+create_mock_curl_server_down() {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'EOF'
+#!/bin/bash
+# Simulate connection refused
+echo ""
+echo "000"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+}
+
+@test "webhook-check exits 0 when health endpoint returns healthy" {
     create_env_file
-    create_mock_curl "https://test.example.com/telegram/webhook"
+    create_mock_curl_healthy
 
     run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
 
     [ "$status" -eq 0 ]
-    # No log file should be created when everything is fine
-    [ ! -f "$CLAUDIO_PATH/webhook-check.log" ]
 }
 
-@test "webhook-check re-registers when webhook URL is empty" {
+@test "webhook-check exits 1 when health endpoint returns unhealthy" {
     create_env_file
+    create_mock_curl_unhealthy
 
-    # First call returns empty URL, second call (setWebhook) succeeds
+    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
+
+    [ "$status" -eq 1 ]
+    [ -f "$CLAUDIO_PATH/webhook-check.log" ]
+    grep -q "unhealthy" "$CLAUDIO_PATH/webhook-check.log"
+}
+
+@test "webhook-check logs pending updates when non-zero" {
+    create_env_file
     cat > "$BATS_TEST_TMPDIR/bin/curl" << 'EOF'
 #!/bin/bash
-if [[ "$*" == *"getWebhookInfo"* ]]; then
-    echo '{"ok":true,"result":{"url":""}}'
-elif [[ "$*" == *"setWebhook"* ]]; then
-    echo '{"ok":true,"result":true}'
-fi
+echo '{"status":"healthy","checks":{"telegram_webhook":{"status":"ok","pending_updates":5}}}'
+echo "200"
 EOF
     chmod +x "$BATS_TEST_TMPDIR/bin/curl"
 
@@ -71,21 +92,39 @@ EOF
 
     [ "$status" -eq 0 ]
     [ -f "$CLAUDIO_PATH/webhook-check.log" ]
-    grep -q "Webhook mismatch detected" "$CLAUDIO_PATH/webhook-check.log"
-    grep -q "Webhook re-registered successfully" "$CLAUDIO_PATH/webhook-check.log"
+    grep -q "pending updates: 5" "$CLAUDIO_PATH/webhook-check.log"
 }
 
-@test "webhook-check re-registers when webhook URL is wrong" {
-    create_env_file
-    create_mock_curl "https://wrong-url.example.com/webhook"
+@test "webhook-check fails when env file is missing" {
+    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
 
-    # Override to handle setWebhook too
+    [ "$status" -eq 1 ]
+}
+
+@test "webhook-check fails when server is not running" {
+    create_env_file
+    create_mock_curl_server_down
+
+    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
+
+    [ "$status" -eq 1 ]
+    grep -q "Could not connect to server" "$CLAUDIO_PATH/webhook-check.log"
+}
+
+@test "webhook-check uses PORT from service.env" {
+    cat > "$CLAUDIO_PATH/service.env" << 'EOF'
+PORT=9999
+EOF
+
+    # Mock curl that checks the port
     cat > "$BATS_TEST_TMPDIR/bin/curl" << 'EOF'
 #!/bin/bash
-if [[ "$*" == *"getWebhookInfo"* ]]; then
-    echo '{"ok":true,"result":{"url":"https://wrong-url.example.com/webhook"}}'
-elif [[ "$*" == *"setWebhook"* ]]; then
-    echo '{"ok":true,"result":true}'
+if [[ "$*" == *":9999/health"* ]]; then
+    echo '{"status":"healthy","checks":{}}'
+    echo "200"
+else
+    echo "wrong port"
+    echo "500"
 fi
 EOF
     chmod +x "$BATS_TEST_TMPDIR/bin/curl"
@@ -93,43 +132,34 @@ EOF
     run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
 
     [ "$status" -eq 0 ]
-    grep -q "Webhook mismatch detected" "$CLAUDIO_PATH/webhook-check.log"
 }
 
-@test "webhook-check fails when env file is missing" {
-    # Don't create env file
-
-    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
-
-    [ "$status" -eq 1 ]
-}
-
-@test "webhook-check fails when TELEGRAM_BOT_TOKEN is not set" {
+@test "webhook-check uses default PORT 8421 when not set" {
     cat > "$CLAUDIO_PATH/service.env" << 'EOF'
-WEBHOOK_URL=https://test.example.com
+TELEGRAM_BOT_TOKEN=test
 EOF
 
-    run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
-
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"TELEGRAM_BOT_TOKEN not set"* ]]
-}
-
-@test "webhook-check fails when WEBHOOK_URL is not set" {
-    cat > "$CLAUDIO_PATH/service.env" << 'EOF'
-TELEGRAM_BOT_TOKEN=test-token
+    # Mock curl that checks the port
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'EOF'
+#!/bin/bash
+if [[ "$*" == *":8421/health"* ]]; then
+    echo '{"status":"healthy","checks":{}}'
+    echo "200"
+else
+    echo "wrong port"
+    echo "500"
+fi
 EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
 
     run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
 
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"WEBHOOK_URL not set"* ]]
+    [ "$status" -eq 0 ]
 }
 
 @test "cron_install adds cron entry" {
     source "$BATS_TEST_DIRNAME/../lib/service.sh"
 
-    # Use a fake crontab command
     cat > "$BATS_TEST_TMPDIR/bin/crontab" << 'EOF'
 #!/bin/bash
 if [ "$1" = "-l" ]; then
@@ -150,7 +180,6 @@ EOF
 @test "cron_uninstall removes cron entry" {
     source "$BATS_TEST_DIRNAME/../lib/service.sh"
 
-    # Set up fake crontab with existing entry
     cat > "$BATS_TEST_TMPDIR/bin/crontab" << 'EOF'
 #!/bin/bash
 if [ "$1" = "-l" ]; then

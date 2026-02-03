@@ -152,13 +152,10 @@ bats tests/db.bats
 - [x] Basic integration tests
 - [x] Input validation for model commands
 - [x] ShellCheck linting for scripts
-
-**Priority**
-
 - [x] Cloudflared URL detection fails silently after 30 seconds
 - [x] Webhook health check cron job
 - [x] No retries with backoff for Telegram API
-- [ ] Health check (`/health`) doesn't verify actual system state
+- [x] Health check (`/health`) doesn't verify actual system state
 
 **Future**
 
