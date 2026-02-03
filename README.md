@@ -72,6 +72,8 @@ The setup wizard will confirm when it receives the message and finish. Once done
 
 > If using a quick tunnel, the Telegram webhook is re-registered automatically each time the service starts.
 
+> A cron job runs every 5 minutes to verify the webhook is registered and re-registers it if needed. Logs are at `$HOME/.claudio/webhook-check.log`.
+
 ### Update
 
 To update Claudio to the latest stable release:
@@ -153,6 +155,7 @@ bats tests/db.bats
 **Priority**
 
 - [x] Cloudflared URL detection fails silently after 30 seconds
+- [x] Webhook health check cron job
 - [ ] No retries with backoff for Telegram API
 - [ ] Health check (`/health`) doesn't verify actual system state
 

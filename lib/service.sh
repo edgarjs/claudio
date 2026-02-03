@@ -1,8 +1,14 @@
 #!/bin/bash
 
-CLAUDIO_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/claudio"
+_service_script_dir() {
+    local src="${BASH_SOURCE[0]:-$0}"
+    cd "$(dirname "$src")" && pwd
+}
+CLAUDIO_LIB="$(_service_script_dir)"
+CLAUDIO_BIN="${CLAUDIO_LIB}/../bin/claudio"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.claudio.server.plist"
 SYSTEMD_UNIT="$HOME/.config/systemd/user/claudio.service"
+CRON_MARKER="# claudio-webhook-check"
 
 service_install() {
     claudio_init
@@ -14,6 +20,8 @@ service_install() {
     else
         service_install_systemd
     fi
+
+    cron_install
 
     echo ""
     echo "Claudio service installed and started."
@@ -214,6 +222,7 @@ service_uninstall() {
         systemctl --user daemon-reload 2>/dev/null
     fi
 
+    cron_uninstall
     echo "Claudio service removed."
 
     if [ "$purge" = true ]; then
@@ -230,6 +239,22 @@ service_restart() {
         systemctl --user restart claudio
     fi
     echo "Claudio service restarted."
+}
+
+cron_install() {
+    local webhook_script="${CLAUDIO_LIB}/webhook-check.sh"
+    local cron_entry="*/5 * * * * ${webhook_script} ${CRON_MARKER}"
+
+    # Remove existing entry if present, then add new one
+    (crontab -l 2>/dev/null | grep -v "$CRON_MARKER"; echo "$cron_entry") | crontab -
+    echo "Webhook health check cron job installed (runs every 5 minutes)."
+}
+
+cron_uninstall() {
+    if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
+        crontab -l 2>/dev/null | grep -v "$CRON_MARKER" | crontab -
+        echo "Webhook health check cron job removed."
+    fi
 }
 
 service_update() {
