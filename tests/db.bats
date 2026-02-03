@@ -149,3 +149,55 @@ Line 3"
     [[ $first_pos -lt $second_pos ]]
     [[ $second_pos -lt $third_pos ]]
 }
+
+@test "db_add rejects invalid role" {
+    run db_add "admin" "Hello"
+    [[ "$status" -eq 1 ]]
+    [[ "$output" == *"invalid role"* ]]
+
+    # Verify nothing was inserted
+    [[ $(db_count) == "0" ]]
+}
+
+@test "db_add rejects SQL injection in role" {
+    run db_add "user'); DROP TABLE messages; --" "Hello"
+    [[ "$status" -eq 1 ]]
+    [[ "$output" == *"invalid role"* ]]
+
+    # Verify table still exists and is empty
+    result=$(sqlite3 "$CLAUDIO_DB_FILE" ".tables")
+    [[ "$result" == *"messages"* ]]
+    [[ $(db_count) == "0" ]]
+}
+
+@test "db_add safely handles SQL injection attempts in content" {
+    db_add "user" "'; DROP TABLE messages; --"
+
+    # Verify message was inserted safely
+    [[ $(db_count) == "1" ]]
+
+    # Verify content was stored literally
+    result=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT content FROM messages;")
+    [[ "$result" == "'; DROP TABLE messages; --" ]]
+}
+
+@test "db_trim rejects invalid max_rows" {
+    run db_trim "abc"
+    [[ "$status" -eq 1 ]]
+    [[ "$output" == *"invalid max_rows"* ]]
+
+    run db_trim "0"
+    [[ "$status" -eq 1 ]]
+
+    run db_trim "-1"
+    [[ "$status" -eq 1 ]]
+}
+
+@test "db_get_context rejects invalid limit" {
+    run db_get_context "abc"
+    [[ "$status" -eq 1 ]]
+    [[ "$output" == *"invalid limit"* ]]
+
+    run db_get_context "0"
+    [[ "$status" -eq 1 ]]
+}
