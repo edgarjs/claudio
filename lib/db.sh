@@ -36,7 +36,7 @@ db_get_context() {
             fi
             has_history=true
         fi
-    done < <(sqlite3 "$CLAUDIO_DB_FILE" "SELECT role, content FROM messages ORDER BY id DESC LIMIT $limit;" | tac)
+    done < <(sqlite3 "$CLAUDIO_DB_FILE" "SELECT role, content FROM (SELECT role, content, id FROM messages ORDER BY id DESC LIMIT $limit) ORDER BY id ASC;")
 
     if [ "$has_history" = true ]; then
         echo -e "$context"
