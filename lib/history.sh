@@ -11,13 +11,13 @@ history_add() {
 }
 
 history_trim() {
-    # Keep last 10 lines (5 user + 5 assistant pairs)
+    local max_lines="${MAX_HISTORY_LINES:-100}"
     if [ -f "$CLAUDIO_HISTORY_FILE" ]; then
         local count
         count=$(wc -l < "$CLAUDIO_HISTORY_FILE")
-        if [ "$count" -gt 10 ]; then
+        if [ "$count" -gt "$max_lines" ]; then
             local tmp
-            tmp=$(tail -n 10 "$CLAUDIO_HISTORY_FILE")
+            tmp=$(tail -n "$max_lines" "$CLAUDIO_HISTORY_FILE")
             echo "$tmp" > "$CLAUDIO_HISTORY_FILE"
         fi
     fi
