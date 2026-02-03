@@ -11,8 +11,9 @@ Claudio is an adapter for Claude Code CLI and Telegram. It makes a tunnel betwee
   | Telegram |<--------+--->| Claudio |<----->| Claude Code CLI |    |
   +----------+         |    +---------+       +-----------------+    |
                        +---------------------------------------------+
-
 ```
+
+[![CI](https://github.com/edgarjs/claudio/actions/workflows/ci.yml/badge.svg)](https://github.com/edgarjs/claudio/actions/workflows/ci.yml)
 
 ---
 
