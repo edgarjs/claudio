@@ -1,0 +1,67 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$(cd "$SCRIPT_DIR/../lib" && pwd)"
+
+# Source library files
+source "$LIB_DIR/config.sh"
+source "$LIB_DIR/history.sh"
+source "$LIB_DIR/claude.sh"
+source "$LIB_DIR/telegram.sh"
+source "$LIB_DIR/server.sh"
+source "$LIB_DIR/service.sh"
+
+usage() {
+    cat <<EOF
+Usage: claudio <command> [options]
+
+Commands:
+  start              Start the HTTP server
+  install            Install and start the system service
+  uninstall [--purge] Stop and remove the service (--purge removes all data)
+  update             Update to the latest release
+  restart            Restart the service
+  telegram setup     Set up Telegram bot and webhook
+
+EOF
+    exit 1
+}
+
+claudio_init
+
+case "${1:-}" in
+    _webhook)
+        telegram_handle_webhook "$2"
+        ;;
+    start)
+        server_start
+        ;;
+    install)
+        service_install
+        ;;
+    uninstall)
+        service_uninstall "${2:-}"
+        ;;
+    update)
+        service_update
+        ;;
+    restart)
+        service_restart
+        ;;
+    telegram)
+        case "${2:-}" in
+            setup)
+                telegram_setup
+                ;;
+            *)
+                echo "Usage: claudio telegram setup"
+                exit 1
+                ;;
+        esac
+        ;;
+    *)
+        usage
+        ;;
+esac
