@@ -20,7 +20,7 @@ Claudio is an adapter for Claude Code CLI and Telegram. It makes a tunnel betwee
 
 Claudio starts a local HTTP server that listens on port 8421, and creates a tunnel using [cloudflared](https://github.com/cloudflare/cloudflared). When the user sends a message from Telegram, it's sent to `<cloudflare-tunnel-url>/telegram/webhook` and forwarded it to the Claude Code CLI.
 
-The user message is passed as a one-shot prompt, along with some context to maintain continuity. Only the last five messages of the conversation are injected in the context to keep it small.
+The user message is passed as a one-shot prompt, along with some context to maintain continuity. Only the last 5 message pairs (user + assistant) are injected in the context to keep it small.
 
 After Claude Code finishes, it outputs the response in plain text to stdout for Claudio to capture it and forward it to Telegram API.
 
@@ -32,32 +32,31 @@ After Claude Code finishes, it outputs the response in plain text to stdout for 
 
 As you should know already, Claude Code has direct access to your machine terminal and filesystem. Beware this will expose it to your Telegram account.
 
-**⚠️ CLAUDE CODE IS EXECUTED WITH DANGEROUSLY PERMISSIONS ENABLED**
+**⚠️ CLAUDE CODE IS EXECUTED WITH `--dangerously-skip-permissions`, `--disable-slash-commands`, AND `--permission-mode bypassPermissions`**
 
 ### Requirements
 
 - Claude Code CLI (with Pro/Max subscription)
-- Cloudflare account (free)
 - Linux/MacOS/WSL
 - Telegram bot token
 
 ### Setup
 
-1. Download the latest binary for your machine from the [releases page](https://github.com/edgarjs/claudio/releases), and add it to your `PATH`. Then run:
+1. Clone the repository and run the install command:
 
 ```bash
-claudio install
+git clone https://github.com/edgarjs/claudio.git
+cd claudio
+bin/claudio install
 ```
 
-This will install and start a systemd/launchd service so that the server is started with the machine.
+This will:
 
-2. Create Cloudflare tunnel.
+- Install `cloudflared` if not already present
+- Prompt you to choose between a **quick tunnel** (ephemeral, no account needed, URL changes on restart) or a **named tunnel** (permanent URL, requires a free Cloudflare account)
+- Configure the tunnel and install a systemd/launchd service
 
-You have two options: A temporal tunnel that doesn're require an account, but doesn't provide a permanent URL so you'll have to re-configure it again when it changes. Or a permanent tunel with your own domain.
-
-Install and follow [cloudflared](https://github.com/cloudflare/cloudflared) instructions for the option that suits you.
-
-3. Set Telegram Webhook
+2. Set up Telegram bot
 
 In Telegram, message `@BotFather` with `/newbot` and follow instructions to create a bot. At the end, you'll be given a secret token, copy it and then run:
 
@@ -67,11 +66,11 @@ claudio telegram setup
 
 Paste your Telegram token when asked, and press Enter. Then, send a `/start` message to your bot from the Telegram account that you'll use to communicate with Claude Code.
 
-The setup wizard will confirm when it receives the webhook notification and finish. If you've sent the start message but it's not being received, wait a little bit more for the Cloudflare tunnel DNS to propagate and try again.
+The setup wizard will confirm when it receives the message and finish. Once done, the service restarts automatically, and you can start chatting with Claude Code.
 
-Once the setup has finished, it'll restart the service automatically, and now you can start chatting with Claude Code.
+> For security, only the `chat_id` captured during setup is authorized to send messages.
 
-> For security, only one account is allowed to send messages by default.
+> If using a quick tunnel, the Telegram webhook is re-registered automatically each time the service starts.
 
 ### Update
 
