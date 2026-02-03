@@ -38,12 +38,14 @@ claude_run() {
 
     local response stderr_output
     stderr_output=$(mktemp)
+    # Ensure temp file is cleaned up even on unexpected exit
+    trap 'rm -f "$stderr_output"' RETURN
+
     response=$(claude "${claude_args[@]}" 2>"$stderr_output") || true
 
     if [ -s "$stderr_output" ]; then
         log "claude" "$(cat "$stderr_output")"
     fi
-    rm -f "$stderr_output"
 
     echo "$response"
 }
