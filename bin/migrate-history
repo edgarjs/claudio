@@ -1,0 +1,67 @@
+#!/bin/bash
+#
+# Migrate conversation history from JSONL to SQLite
+# Usage: migrate-history [--dry-run]
+#
+# This script clears the database and reimports all messages from history.jsonl
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/config.sh"
+source "$SCRIPT_DIR/../lib/db.sh"
+
+DRY_RUN=false
+if [ "${1:-}" = "--dry-run" ]; then
+    DRY_RUN=true
+fi
+
+if [ ! -f "$CLAUDIO_HISTORY_FILE" ]; then
+    echo "Error: History file not found at $CLAUDIO_HISTORY_FILE"
+    exit 1
+fi
+
+line_count=$(wc -l < "$CLAUDIO_HISTORY_FILE" | tr -d ' ')
+echo "Found $line_count entries in $CLAUDIO_HISTORY_FILE"
+
+if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Would clear database and import $line_count messages"
+    exit 0
+fi
+
+# Initialize database if needed
+db_init
+
+# Clear existing messages (remove test data)
+echo "Clearing existing messages from database..."
+db_clear
+
+# Import messages
+imported=0
+errors=0
+
+while IFS= read -r line; do
+    if [ -z "$line" ]; then
+        continue
+    fi
+
+    # Parse JSON using jq
+    role=$(echo "$line" | jq -r '.role' 2>/dev/null)
+    content=$(echo "$line" | jq -r '.content' 2>/dev/null)
+
+    if [ -z "$role" ] || [ "$role" = "null" ] || [ -z "$content" ] || [ "$content" = "null" ]; then
+        echo "Warning: Skipping malformed line: ${line:0:50}..."
+        ((errors++)) || true
+        continue
+    fi
+
+    if db_add "$role" "$content"; then
+        ((imported++)) || true
+    else
+        echo "Warning: Failed to insert message: ${content:0:50}..."
+        ((errors++)) || true
+    fi
+done < "$CLAUDIO_HISTORY_FILE"
+
+echo "Migration complete: $imported messages imported, $errors errors"
+echo "Database now has $(db_count) messages"
