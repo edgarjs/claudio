@@ -17,16 +17,10 @@ SQL
 db_add() {
     local role="$1"
     local content="$2"
-    # Escape single quotes for SQLite by doubling them
-    local escaped_content="${content//\'/\'\'}"
-    # Build SQL in temp file using printf to avoid shell expansion issues
-    local tmp_file
-    tmp_file=$(mktemp)
-    printf '%s' "INSERT INTO messages (role, content) VALUES ('$role', '" > "$tmp_file"
-    printf '%s' "$escaped_content" >> "$tmp_file"
-    printf '%s\n' "');" >> "$tmp_file"
-    sqlite3 "$CLAUDIO_DB_FILE" < "$tmp_file"
-    rm -f "$tmp_file"
+    # Use heredoc with sed for quote escaping to handle all special characters safely
+    sqlite3 "$CLAUDIO_DB_FILE" <<SQL
+INSERT INTO messages (role, content) VALUES ('$role', '$(echo "$content" | sed "s/'/''/g")');
+SQL
 }
 
 db_get_context() {
