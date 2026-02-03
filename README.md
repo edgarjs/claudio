@@ -175,7 +175,7 @@ bats tests/db.bats
 
 ## License
 
-Claudio is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+Claudio is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
 
 ---
 
