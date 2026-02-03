@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import hmac
 import json
 import os
 import subprocess
@@ -114,12 +115,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/telegram/webhook":
-            # Verify webhook secret if configured
-            if WEBHOOK_SECRET:
-                token = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-                if token != WEBHOOK_SECRET:
-                    self._respond(401, {"error": "unauthorized"})
-                    return
+            # Verify webhook secret (required for security)
+            token = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+            # Use constant-time comparison to prevent timing attacks
+            if not hmac.compare_digest(token, WEBHOOK_SECRET):
+                self._respond(401, {"error": "unauthorized"})
+                return
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length).decode("utf-8") if length else ""
             self._respond(200, {"ok": True})
@@ -224,6 +225,12 @@ def startup_health_check():
 
 
 def main():
+    # Require WEBHOOK_SECRET for security
+    if not WEBHOOK_SECRET:
+        sys.stderr.write("Error: WEBHOOK_SECRET environment variable is required.\n")
+        sys.stderr.write("Generate one with: openssl rand -hex 32\n")
+        sys.exit(1)
+
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"Claudio server listening on port {PORT}")
 

@@ -27,6 +27,12 @@ claudio_init() {
         set +a
     fi
 
+    # Auto-generate WEBHOOK_SECRET if not set (required for security)
+    if [ -z "$WEBHOOK_SECRET" ]; then
+        WEBHOOK_SECRET=$(openssl rand -hex 32)
+        claudio_save_env
+    fi
+
     if [ ! -f "$CLAUDIO_PROMPT_FILE" ]; then
         cat > "$CLAUDIO_PROMPT_FILE" <<'PROMPT'
 ## Role
