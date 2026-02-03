@@ -90,11 +90,17 @@ telegram_handle_webhook() {
 
     log "Received message from chat_id=$WEBHOOK_CHAT_ID: $text"
 
-    telegram_send_typing "$WEBHOOK_CHAT_ID"
     history_add "user" "$text"
+
+    # Send typing indicator in a loop until claude finishes
+    (while true; do telegram_send_typing "$WEBHOOK_CHAT_ID"; sleep 4; done) &
+    local typing_pid=$!
 
     local response
     response=$(claude_run "$text")
+
+    kill "$typing_pid" 2>/dev/null
+    wait "$typing_pid" 2>/dev/null
 
     if [ -n "$response" ]; then
         history_add "assistant" "$response"
