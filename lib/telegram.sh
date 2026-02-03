@@ -45,6 +45,9 @@ telegram_parse_webhook() {
     WEBHOOK_CHAT_ID=$(echo "$body" | jq -r '.message.chat.id // empty')
     WEBHOOK_TEXT=$(echo "$body" | jq -r '.message.text // empty')
     WEBHOOK_FROM_ID=$(echo "$body" | jq -r '.message.from.id // empty')
+    # Extract reply_to_message if present
+    WEBHOOK_REPLY_TO_TEXT=$(echo "$body" | jq -r '.message.reply_to_message.text // empty')
+    WEBHOOK_REPLY_TO_FROM=$(echo "$body" | jq -r '.message.reply_to_message.from.first_name // empty')
 }
 
 telegram_handle_webhook() {
@@ -62,6 +65,14 @@ telegram_handle_webhook() {
     fi
 
     local text="$WEBHOOK_TEXT"
+
+    # If this is a reply, prepend the original message as context
+    if [ -n "$WEBHOOK_REPLY_TO_TEXT" ]; then
+        local reply_from="${WEBHOOK_REPLY_TO_FROM:-someone}"
+        text="[Replying to ${reply_from}: \"${WEBHOOK_REPLY_TO_TEXT}\"]
+
+${text}"
+    fi
 
     case "$text" in
         /opus)
