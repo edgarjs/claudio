@@ -38,7 +38,7 @@ case "$behavior" in
         sleep 10
         ;;
     delayed)
-        sleep 0.2
+        sleep 0.1
         echo "https://delayed-tunnel-xyz.trycloudflare.com" >&1
         sleep 10
         ;;
@@ -88,7 +88,7 @@ EOF
 
     cloudflared_start &
     local pid=$!
-    sleep 0.5
+    sleep 1
 
     [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"Ephemeral tunnel URL: https://delayed-tunnel-xyz.trycloudflare.com"* ]]
 
@@ -147,10 +147,19 @@ EOF
 
     cloudflared_start &
     local pid=$!
-    sleep 0.3
 
-    [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"Registering Telegram webhook"* ]]
-    [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"Webhook registration:"* ]]
+    # Wait for webhook registration (more steps than other tests)
+    local attempts=0
+    while [ $attempts -lt 20 ]; do
+        if grep -q "Webhook registration:" "$CLAUDIO_LOG_FILE" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+        attempts=$((attempts + 1))
+    done
+
+    [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"[telegram] Registering webhook at"* ]]
+    [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"[telegram] Webhook registration:"* ]]
 
     kill $pid 2>/dev/null || true
 }

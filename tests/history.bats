@@ -38,8 +38,9 @@ teardown() {
     [[ "$count" == "5" ]]
 
     # Should have messages 6-10, not 1-5
-    result=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT content FROM messages ORDER BY id;")
-    [[ "$result" != *"Message 1"* ]]
+    # Use line-based check to avoid "Message 1" matching inside "Message 10"
+    result=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT content FROM messages ORDER BY id;" | tr '\n' ',')
+    [[ "$result" != *"Message 1,"* ]]
     [[ "$result" == *"Message 10"* ]]
 }
 
