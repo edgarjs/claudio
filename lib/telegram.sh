@@ -68,9 +68,11 @@ telegram_send_message() {
 
 telegram_send_typing() {
     local chat_id="$1"
-    telegram_api "sendChatAction" \
+    if ! telegram_api "sendChatAction" \
         -d "chat_id=${chat_id}" \
-        -d "action=typing" > /dev/null 2>&1
+        -d "action=typing" > /dev/null; then
+        log_error "telegram" "Failed to send typing indicator to chat $chat_id"
+    fi
 }
 
 telegram_parse_webhook() {
