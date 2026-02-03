@@ -60,6 +60,7 @@ cloudflared_start() {
         fi
 
         log "Ephemeral tunnel URL: ${tunnel_url}"
+        # shellcheck disable=SC2034  # Used by claudio_save_env
         WEBHOOK_URL="$tunnel_url"
         claudio_save_env
 

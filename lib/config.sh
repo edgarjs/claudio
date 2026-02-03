@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034  # Variables are used by other sourced scripts
 
 CLAUDIO_PATH="$HOME/.claudio"
 CLAUDIO_ENV_FILE="$CLAUDIO_PATH/service.env"
@@ -21,6 +22,7 @@ claudio_init() {
 
     if [ -f "$CLAUDIO_ENV_FILE" ]; then
         set -a
+        # shellcheck source=/dev/null
         source "$CLAUDIO_ENV_FILE"
         set +a
     fi

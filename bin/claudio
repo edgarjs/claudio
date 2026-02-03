@@ -6,11 +6,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/../lib" && pwd)"
 
 # Source library files
+# shellcheck source=../lib/config.sh
 source "$LIB_DIR/config.sh"
+# shellcheck source=../lib/history.sh
 source "$LIB_DIR/history.sh"
+# shellcheck source=../lib/claude.sh
 source "$LIB_DIR/claude.sh"
+# shellcheck source=../lib/telegram.sh
 source "$LIB_DIR/telegram.sh"
+# shellcheck source=../lib/server.sh
 source "$LIB_DIR/server.sh"
+# shellcheck source=../lib/service.sh
 source "$LIB_DIR/service.sh"
 
 usage() {

@@ -151,6 +151,7 @@ bats tests/db.bats
 - [x] Race conditions — Migrated from JSONL to SQLite
 - [x] Basic integration tests
 - [x] Input validation for model commands
+- [x] ShellCheck linting for scripts
 
 **Priority**
 
@@ -167,7 +168,6 @@ bats tests/db.bats
 - [ ] Rate limiting
 - [ ] Voice messages from bot (TTS)
 - [ ] Voice messages from human (STT)
-- [ ] ShellCheck linting for scripts
 - [ ] Environment variables documentation
 - [ ] Support for group chats
 

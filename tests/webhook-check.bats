@@ -7,6 +7,11 @@ setup() {
     export CLAUDIO_PATH="$BATS_TEST_TMPDIR/.claudio"
     mkdir -p "$CLAUDIO_PATH"
 
+    # Clear any inherited environment variables
+    unset TELEGRAM_BOT_TOKEN
+    unset WEBHOOK_URL
+    unset WEBHOOK_SECRET
+
     # Create mock curl in path
     export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
     mkdir -p "$BATS_TEST_TMPDIR/bin"
@@ -107,7 +112,7 @@ EOF
     run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
 
     [ "$status" -eq 1 ]
-    grep -q "TELEGRAM_BOT_TOKEN not set" "$CLAUDIO_PATH/webhook-check.log"
+    [[ "$output" == *"TELEGRAM_BOT_TOKEN not set"* ]]
 }
 
 @test "webhook-check fails when WEBHOOK_URL is not set" {
@@ -118,7 +123,7 @@ EOF
     run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
 
     [ "$status" -eq 1 ]
-    grep -q "WEBHOOK_URL not set" "$CLAUDIO_PATH/webhook-check.log"
+    [[ "$output" == *"WEBHOOK_URL not set"* ]]
 }
 
 @test "cron_install adds cron entry" {

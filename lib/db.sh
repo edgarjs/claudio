@@ -17,10 +17,11 @@ SQL
 db_add() {
     local role="$1"
     local content="$2"
-    # Use heredoc with sed for quote escaping to handle all special characters safely
-    sqlite3 "$CLAUDIO_DB_FILE" <<SQL
-INSERT INTO messages (role, content) VALUES ('$role', '$(echo "$content" | sed "s/'/''/g")');
-SQL
+    # Escape single quotes for SQL using sed (more reliable than bash substitution)
+    # shellcheck disable=SC2001  # sed is more reliable here for quote escaping
+    local escaped_content
+    escaped_content=$(printf '%s' "$content" | sed "s/'/''/g")
+    sqlite3 "$CLAUDIO_DB_FILE" "INSERT INTO messages (role, content) VALUES ('$role', '$escaped_content');"
 }
 
 db_get_context() {

@@ -25,6 +25,7 @@ service_install() {
 
     echo ""
     echo "Claudio service installed and started."
+    # shellcheck disable=SC2016  # Backticks intentionally not expanded (documentation)
     echo 'Run `claudio telegram setup` to connect your Telegram bot.'
 }
 
@@ -72,6 +73,7 @@ cloudflared_setup() {
 
     case "$tunnel_choice" in
         1)
+            # shellcheck disable=SC2034  # Used by claudio_save_env
             TUNNEL_TYPE="ephemeral"
             echo ""
             echo "Ephemeral tunnel selected."
@@ -84,6 +86,7 @@ cloudflared_setup() {
             ;;
         *)
             echo "Invalid choice. Defaulting to ephemeral tunnel."
+            # shellcheck disable=SC2034  # Used by claudio_save_env
             TUNNEL_TYPE="ephemeral"
             ;;
     esac
@@ -126,7 +129,9 @@ cloudflared_setup_named() {
         echo "Error: Hostname cannot be empty."
         exit 1
     fi
+    # shellcheck disable=SC2034  # Used by claudio_save_env
     TUNNEL_HOSTNAME="$hostname"
+    # shellcheck disable=SC2034  # Used by claudio_save_env
     WEBHOOK_URL="https://${hostname}"
 
     # Route DNS (ok if it already exists)

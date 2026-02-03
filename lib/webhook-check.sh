@@ -10,7 +10,13 @@ CLAUDIO_ENV_FILE="$CLAUDIO_PATH/service.env"
 LOG_FILE="$CLAUDIO_PATH/webhook-check.log"
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+    local msg
+    msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+    echo "$msg" >> "$LOG_FILE"
+    # Also print errors to stderr for visibility
+    if [[ "$*" == ERROR:* ]]; then
+        echo "$msg" >&2
+    fi
 }
 
 # Load environment
@@ -20,6 +26,7 @@ if [ ! -f "$CLAUDIO_ENV_FILE" ]; then
 fi
 
 set -a
+# shellcheck source=/dev/null
 source "$CLAUDIO_ENV_FILE"
 set +a
 

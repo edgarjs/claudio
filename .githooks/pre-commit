@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Pre-commit hook: run shellcheck and tests before allowing commit
+
+set -e
+
+# Run ShellCheck
+echo "Running shellcheck..."
+
+if ! command -v shellcheck &>/dev/null; then
+    echo "Error: shellcheck is not installed. Install it with: brew install shellcheck"
+    exit 1
+fi
+
+if ! shellcheck --severity=warning bin/claudio lib/*.sh; then
+    echo ""
+    echo "ShellCheck found issues. Commit aborted."
+    echo "Fix the issues above before committing."
+    exit 1
+fi
+
+echo "ShellCheck passed."
+echo ""
+
+# Run tests
+echo "Running tests..."
+
+if ! command -v bats &>/dev/null; then
+    echo "Error: bats is not installed. Install it with: brew install bats-core"
+    exit 1
+fi
+
+if ! bats tests/; then
+    echo ""
+    echo "Tests failed. Commit aborted."
+    echo "Fix the failing tests before committing."
+    exit 1
+fi
+
+echo "All tests passed."

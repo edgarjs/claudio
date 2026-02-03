@@ -59,6 +59,16 @@ Tests are located in the `tests/` directory. When contributing, please:
 - Add tests for new functionality when possible
 - Ensure all tests pass
 
+## Git Hooks
+
+The project includes a pre-commit hook that runs tests before each commit. To enable it:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This ensures tests pass before any commit is allowed.
+
 ## Making Changes
 
 - Check existing issues and PRs to avoid duplicate work

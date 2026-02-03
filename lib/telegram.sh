@@ -44,6 +44,7 @@ telegram_parse_webhook() {
     local body="$1"
     WEBHOOK_CHAT_ID=$(echo "$body" | jq -r '.message.chat.id // empty')
     WEBHOOK_TEXT=$(echo "$body" | jq -r '.message.text // empty')
+    # shellcheck disable=SC2034  # Available for future use
     WEBHOOK_FROM_ID=$(echo "$body" | jq -r '.message.from.id // empty')
     # Extract reply_to_message if present
     WEBHOOK_REPLY_TO_TEXT=$(echo "$body" | jq -r '.message.reply_to_message.text // empty')
@@ -88,6 +89,7 @@ ${text}"
             return
             ;;
         /haiku)
+            # shellcheck disable=SC2034  # Used by claude.sh via config
             MODEL="haiku"
             claudio_save_env
             telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Haiku model._"
