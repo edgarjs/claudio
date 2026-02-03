@@ -14,7 +14,7 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 - `lib/server.py` — Python HTTP server (stdlib `http.server`), listens on port 8421, routes POST `/telegram/webhook`.
 - `lib/telegram.sh` — Telegram Bot API integration (send messages, parse webhooks, setup wizard).
 - `lib/claude.sh` — Claude Code CLI wrapper with conversation context injection.
-- `lib/history.sh` — Conversation history (last 5 pairs) stored in `$HOME/.claudio/history.jsonl`.
+- `lib/history.sh` — Conversation history wrapper, delegates to `lib/db.sh` for SQLite storage.
 - `lib/service.sh` — systemd (Linux) and launchd (macOS) service management. Also handles cloudflared installation and tunnel setup (ephemeral or named) during `claudio install`.
 - Runtime config/state lives in `$HOME/.claudio/` (not in the repo).
 
