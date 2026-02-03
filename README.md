@@ -141,6 +141,35 @@ bats tests/db.bats
 
 ---
 
+## Roadmap
+
+**Completed**
+
+- [x] Webhook signature validation
+- [x] Race conditions — Migrated from JSONL to SQLite
+- [x] Basic integration tests
+- [x] Input validation for model commands
+
+**Priority**
+
+- [ ] Cloudflared URL detection fails silently after 30 seconds
+- [ ] No retries with backoff for Telegram API
+- [ ] Health check (`/health`) doesn't verify actual system state
+
+**Future**
+
+- [ ] Support for editing messages and reactions
+- [ ] File uploads
+- [ ] Image uploads
+- [ ] Rate limiting
+- [ ] Voice messages from bot (TTS)
+- [ ] Voice messages from human (STT)
+- [ ] ShellCheck linting for scripts
+- [ ] Environment variables documentation
+- [ ] Support for group chats
+
+---
+
 ## License
 
 Claudio is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
