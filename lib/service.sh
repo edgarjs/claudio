@@ -166,10 +166,10 @@ service_install_launchd() {
 </dict>
 </plist>
 EOF
-    launchctl stop com.claudio.server 2>/dev/null
-    launchctl unload "$LAUNCHD_PLIST" 2>/dev/null
-    launchctl load "$LAUNCHD_PLIST" 2>/dev/null
-    launchctl start com.claudio.server 2>/dev/null
+    launchctl stop com.claudio.server 2>/dev/null || true
+    launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+    launchctl load "$LAUNCHD_PLIST"
+    launchctl start com.claudio.server
 }
 
 service_install_systemd() {
@@ -189,7 +189,7 @@ EnvironmentFile=${CLAUDIO_ENV_FILE}
 [Install]
 WantedBy=default.target
 EOF
-    systemctl --user stop claudio 2>/dev/null
+    systemctl --user stop claudio 2>/dev/null || true
     systemctl --user daemon-reload
     systemctl --user enable claudio
     systemctl --user start claudio
@@ -200,12 +200,12 @@ service_uninstall() {
     [ "$1" = "--purge" ] && purge=true
 
     if [[ "$(uname)" == "Darwin" ]]; then
-        launchctl stop com.claudio.server 2>/dev/null
-        launchctl unload "$LAUNCHD_PLIST" 2>/dev/null
+        launchctl stop com.claudio.server 2>/dev/null || true
+        launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
         rm -f "$LAUNCHD_PLIST"
     else
-        systemctl --user stop claudio 2>/dev/null
-        systemctl --user disable claudio 2>/dev/null
+        systemctl --user stop claudio 2>/dev/null || true
+        systemctl --user disable claudio 2>/dev/null || true
         rm -f "$SYSTEMD_UNIT"
         systemctl --user daemon-reload 2>/dev/null
     fi
@@ -220,10 +220,10 @@ service_uninstall() {
 
 service_restart() {
     if [[ "$(uname)" == "Darwin" ]]; then
-        launchctl stop com.claudio.server 2>/dev/null
-        launchctl start com.claudio.server 2>/dev/null
+        launchctl stop com.claudio.server 2>/dev/null || true
+        launchctl start com.claudio.server
     else
-        systemctl --user restart claudio 2>/dev/null
+        systemctl --user restart claudio
     fi
     echo "Claudio service restarted."
 }
