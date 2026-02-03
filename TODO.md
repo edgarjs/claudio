@@ -2,7 +2,7 @@
 
 ## Critical (Priority 1)
 
-- [ ] **Webhook signature validation** — Anyone with the tunnel URL can send messages. Telegram sends an `X-Telegram-Bot-API-Secret-Token` header that should be verified.
+- [x] **Webhook signature validation** — Anyone with the tunnel URL can send messages. Telegram sends an `X-Telegram-Bot-API-Secret-Token` header that should be verified.
 - [ ] **Race conditions** — Two simultaneous webhooks could write to `history.jsonl` at the same time and corrupt it. Need file locking.
 - [ ] **No tests** — Basic integration tests would prevent regressions.
 - [ ] **Input validation** — Commands `/opus`, `/sonnet` don't validate the model before saving.

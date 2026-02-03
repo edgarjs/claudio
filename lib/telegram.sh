@@ -196,7 +196,11 @@ telegram_setup() {
 
     if [ -n "$wh_url" ]; then
         local result
-        result=$(telegram_api "setWebhook" -d "url=${wh_url}")
+        local webhook_args=("-d" "url=${wh_url}")
+        if [ -n "$WEBHOOK_SECRET" ]; then
+            webhook_args+=("-d" "secret_token=${WEBHOOK_SECRET}")
+        fi
+        result=$(telegram_api "setWebhook" "${webhook_args[@]}")
         local wh_ok
         wh_ok=$(echo "$result" | jq -r '.ok')
         if [ "$wh_ok" != "true" ]; then

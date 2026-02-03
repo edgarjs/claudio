@@ -10,11 +10,18 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CLAUDIO_BIN = os.path.join(SCRIPT_DIR, "..", "bin", "claudio")
 PORT = int(os.environ.get("PORT", 8421))
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/telegram/webhook":
+            # Verify webhook secret if configured
+            if WEBHOOK_SECRET:
+                token = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+                if token != WEBHOOK_SECRET:
+                    self._respond(401, {"error": "unauthorized"})
+                    return
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length).decode("utf-8") if length else ""
             self._respond(200, {"ok": True})

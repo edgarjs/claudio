@@ -51,8 +51,11 @@ cloudflared_start() {
         if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
             log "Registering Telegram webhook at ${tunnel_url}/telegram/webhook..."
             local result
-            result=$(curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
-                -d "url=${tunnel_url}/telegram/webhook")
+            local curl_args=("-s" "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" "-d" "url=${tunnel_url}/telegram/webhook")
+            if [ -n "$WEBHOOK_SECRET" ]; then
+                curl_args+=("-d" "secret_token=${WEBHOOK_SECRET}")
+            fi
+            result=$(curl "${curl_args[@]}")
             log "Webhook registration: ${result}"
         fi
 
