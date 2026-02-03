@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# shellcheck source=lib/log.sh
+source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
+
 claude_run() {
     local prompt="$1"
     local context
@@ -33,8 +36,14 @@ claude_run() {
         claude_args+=(--fallback-model haiku)
     fi
 
-    local response
-    response=$(claude "${claude_args[@]}" 2>>"$CLAUDIO_LOG_FILE") || true
+    local response stderr_output
+    stderr_output=$(mktemp)
+    response=$(claude "${claude_args[@]}" 2>"$stderr_output") || true
+
+    if [ -s "$stderr_output" ]; then
+        log "claude" "$(cat "$stderr_output")"
+    fi
+    rm -f "$stderr_output"
 
     echo "$response"
 }

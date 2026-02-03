@@ -5,22 +5,15 @@
 
 set -euo pipefail
 
+# shellcheck source=lib/log.sh
+source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
+
 CLAUDIO_PATH="$HOME/.claudio"
 CLAUDIO_ENV_FILE="$CLAUDIO_PATH/service.env"
-LOG_FILE="$CLAUDIO_PATH/webhook-check.log"
-
-log() {
-    local msg
-    msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-    echo "$msg" >> "$LOG_FILE"
-    if [[ "$*" == ERROR:* ]]; then
-        echo "$msg" >&2
-    fi
-}
 
 # Load environment for PORT
 if [ ! -f "$CLAUDIO_ENV_FILE" ]; then
-    log "ERROR: Environment file not found: $CLAUDIO_ENV_FILE"
+    log_error "webhook-check" "Environment file not found: $CLAUDIO_ENV_FILE"
     exit 1
 fi
 
@@ -40,15 +33,15 @@ if [ "$http_code" = "200" ]; then
     # Healthy - nothing to log unless there are pending updates
     pending=$(echo "$body" | jq -r '.checks.telegram_webhook.pending_updates // 0' 2>/dev/null || echo "0")
     if [ "$pending" != "0" ] && [ "$pending" != "null" ]; then
-        log "Health OK (pending updates: $pending)"
+        log "webhook-check" "Health OK (pending updates: $pending)"
     fi
 elif [ "$http_code" = "503" ]; then
-    log "Health check returned unhealthy: $body"
+    log_error "webhook-check" "Health check returned unhealthy: $body"
     exit 1
 elif [ "$http_code" = "000" ]; then
-    log "ERROR: Could not connect to server on port $PORT"
+    log_error "webhook-check" "Could not connect to server on port $PORT"
     exit 1
 else
-    log "ERROR: Unexpected response (HTTP $http_code): $body"
+    log_error "webhook-check" "Unexpected response (HTTP $http_code): $body"
     exit 1
 fi

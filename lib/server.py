@@ -40,9 +40,9 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length).decode("utf-8") if length else ""
             self._respond(200, {"ok": True})
-            # Process webhook in background
+            # Process webhook in background - output goes to centralized log
             log_file = os.path.join(
-                os.environ.get("HOME", "/tmp"), ".claudio", "webhook.log"
+                os.environ.get("HOME", "/tmp"), ".claudio", "claudio.log"
             )
             with open(log_file, "a") as log_fh:
                 subprocess.Popen(

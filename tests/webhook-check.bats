@@ -75,8 +75,8 @@ EOF
     run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
 
     [ "$status" -eq 1 ]
-    [ -f "$CLAUDIO_PATH/webhook-check.log" ]
-    grep -q "unhealthy" "$CLAUDIO_PATH/webhook-check.log"
+    [ -f "$CLAUDIO_PATH/claudio.log" ]
+    grep -q "unhealthy" "$CLAUDIO_PATH/claudio.log"
 }
 
 @test "webhook-check logs pending updates when non-zero" {
@@ -91,8 +91,8 @@ EOF
     run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
 
     [ "$status" -eq 0 ]
-    [ -f "$CLAUDIO_PATH/webhook-check.log" ]
-    grep -q "pending updates: 5" "$CLAUDIO_PATH/webhook-check.log"
+    [ -f "$CLAUDIO_PATH/claudio.log" ]
+    grep -q "pending updates: 5" "$CLAUDIO_PATH/claudio.log"
 }
 
 @test "webhook-check fails when env file is missing" {
@@ -108,7 +108,7 @@ EOF
     run "$BATS_TEST_DIRNAME/../lib/webhook-check.sh"
 
     [ "$status" -eq 1 ]
-    grep -q "Could not connect to server" "$CLAUDIO_PATH/webhook-check.log"
+    grep -q "Could not connect to server" "$CLAUDIO_PATH/claudio.log"
 }
 
 @test "webhook-check uses PORT from service.env" {

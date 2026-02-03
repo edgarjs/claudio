@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# shellcheck source=lib/log.sh
+source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
+
 TELEGRAM_API="https://api.telegram.org/bot"
 
 telegram_api() {
@@ -25,7 +28,7 @@ telegram_api() {
         # Retryable: 429 (rate limit) or 5xx (server error)
         if [ $attempt -lt $max_retries ]; then
             local delay=${delays[$attempt]}
-            log "Telegram API error (HTTP $http_code), retrying in ${delay}s..."
+            log "telegram" "API error (HTTP $http_code), retrying in ${delay}s..."
             sleep "$delay"
         fi
 
@@ -33,7 +36,7 @@ telegram_api() {
     done
 
     # All retries exhausted
-    log "Telegram API failed after $max_retries retries (HTTP $http_code)"
+    log_error "telegram" "API failed after $max_retries retries (HTTP $http_code)"
     echo "$body"
     return 1
 }
@@ -91,7 +94,7 @@ telegram_handle_webhook() {
 
     # Security: only allow configured chat_id
     if [ -n "$TELEGRAM_CHAT_ID" ] && [ "$WEBHOOK_CHAT_ID" != "$TELEGRAM_CHAT_ID" ]; then
-        log "Rejected message from unauthorized chat_id: $WEBHOOK_CHAT_ID"
+        log "telegram" "Rejected message from unauthorized chat_id: $WEBHOOK_CHAT_ID"
         return
     fi
 
@@ -131,7 +134,7 @@ ${text}"
             ;;
     esac
 
-    log "Received message from chat_id=$WEBHOOK_CHAT_ID: $text"
+    log "telegram" "Received message from chat_id=$WEBHOOK_CHAT_ID: $text"
 
     history_add "user" "$text"
 
