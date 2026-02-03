@@ -161,3 +161,52 @@ EOF
     attempts=$(cat "$BATS_TEST_TMPDIR/curl_attempts")
     [[ "$attempts" == "1" ]]
 }
+
+@test "telegram_send_message includes reply_to_message_id when provided" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'EOF'
+#!/bin/bash
+# Capture all arguments to a file for inspection
+echo "$@" >> "${BATS_TEST_TMPDIR}/curl_args"
+if [[ " $* " == *" -w "* ]]; then
+    echo '{"ok":true}'
+    echo "200"
+else
+    echo '{"ok":true}'
+fi
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    telegram_send_message "12345" "Hello" "999"
+
+    curl_args=$(cat "$BATS_TEST_TMPDIR/curl_args")
+    [[ "$curl_args" == *"reply_to_message_id=999"* ]]
+}
+
+@test "telegram_send_message works without reply_to_message_id" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'EOF'
+#!/bin/bash
+echo "$@" >> "${BATS_TEST_TMPDIR}/curl_args"
+if [[ " $* " == *" -w "* ]]; then
+    echo '{"ok":true}'
+    echo "200"
+else
+    echo '{"ok":true}'
+fi
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    telegram_send_message "12345" "Hello"
+
+    curl_args=$(cat "$BATS_TEST_TMPDIR/curl_args")
+    [[ "$curl_args" != *"reply_to_message_id"* ]]
+}
+
+@test "telegram_parse_webhook extracts message_id" {
+    body='{"message":{"message_id":42,"chat":{"id":123},"text":"hello","from":{"id":456}}}'
+
+    telegram_parse_webhook "$body"
+
+    [[ "$WEBHOOK_MESSAGE_ID" == "42" ]]
+    [[ "$WEBHOOK_CHAT_ID" == "123" ]]
+    [[ "$WEBHOOK_TEXT" == "hello" ]]
+}

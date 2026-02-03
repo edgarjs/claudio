@@ -44,24 +44,40 @@ telegram_api() {
 telegram_send_message() {
     local chat_id="$1"
     local text="$2"
+    local reply_to_message_id="${3:-}"
 
     # Telegram has a 4096 char limit per message
     local max_len=4096
+    local is_first=true
     while [ ${#text} -gt 0 ]; do
         local chunk="${text:0:$max_len}"
         text="${text:$max_len}"
+
+        # Determine if this chunk should reply to the original message
+        local should_reply=false
+        if [ "$is_first" = true ] && [ -n "$reply_to_message_id" ]; then
+            should_reply=true
+        fi
+        is_first=false
+
+        # Build curl arguments
+        local args=(-d "chat_id=${chat_id}" --data-urlencode "text=${chunk}" -d "parse_mode=Markdown")
+        if [ "$should_reply" = true ]; then
+            args+=(-d "reply_to_message_id=${reply_to_message_id}")
+        fi
+
         local result
-        result=$(telegram_api "sendMessage" \
-            -d "chat_id=${chat_id}" \
-            --data-urlencode "text=${chunk}" \
-            -d "parse_mode=Markdown")
+        result=$(telegram_api "sendMessage" "${args[@]}")
         # If markdown fails, retry without parse_mode
         local ok
         ok=$(echo "$result" | jq -r '.ok // empty')
         if [ "$ok" != "true" ]; then
-            telegram_api "sendMessage" \
-                -d "chat_id=${chat_id}" \
-                --data-urlencode "text=${chunk}" > /dev/null 2>&1
+            # Rebuild args without parse_mode
+            args=(-d "chat_id=${chat_id}" --data-urlencode "text=${chunk}")
+            if [ "$should_reply" = true ]; then
+                args+=(-d "reply_to_message_id=${reply_to_message_id}")
+            fi
+            telegram_api "sendMessage" "${args[@]}" > /dev/null 2>&1
         fi
     done
 }
@@ -78,6 +94,7 @@ telegram_send_typing() {
 telegram_parse_webhook() {
     local body="$1"
     WEBHOOK_CHAT_ID=$(echo "$body" | jq -r '.message.chat.id // empty')
+    WEBHOOK_MESSAGE_ID=$(echo "$body" | jq -r '.message.message_id // empty')
     WEBHOOK_TEXT=$(echo "$body" | jq -r '.message.text // empty')
     # shellcheck disable=SC2034  # Available for future use
     WEBHOOK_FROM_ID=$(echo "$body" | jq -r '.message.from.id // empty')
@@ -101,6 +118,7 @@ telegram_handle_webhook() {
     fi
 
     local text="$WEBHOOK_TEXT"
+    local message_id="$WEBHOOK_MESSAGE_ID"
 
     # If this is a reply, prepend the original message as context
     if [ -n "$WEBHOOK_REPLY_TO_TEXT" ]; then
@@ -114,24 +132,24 @@ ${text}"
         /opus)
             MODEL="opus"
             claudio_save_env
-            telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Opus model._"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Opus model._" "$message_id"
             return
             ;;
         /sonnet)
             MODEL="sonnet"
             claudio_save_env
-            telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Sonnet model._"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Sonnet model._" "$message_id"
             return
             ;;
         /haiku)
             # shellcheck disable=SC2034  # Used by claude.sh via config
             MODEL="haiku"
             claudio_save_env
-            telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Haiku model._"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Haiku model._" "$message_id"
             return
             ;;
         /start)
-            telegram_send_message "$WEBHOOK_CHAT_ID" "_Hola!_ Send me a message and I'll forward it to Claude Code."
+            telegram_send_message "$WEBHOOK_CHAT_ID" "_Hola!_ Send me a message and I'll forward it to Claude Code." "$message_id"
             return
             ;;
     esac
@@ -152,9 +170,9 @@ ${text}"
 
     if [ -n "$response" ]; then
         history_add "assistant" "$response"
-        telegram_send_message "$WEBHOOK_CHAT_ID" "$response"
+        telegram_send_message "$WEBHOOK_CHAT_ID" "$response" "$message_id"
     else
-        telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't get a response. Please try again."
+        telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't get a response. Please try again." "$message_id"
     fi
 }
 
