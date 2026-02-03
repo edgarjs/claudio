@@ -93,14 +93,22 @@ telegram_send_typing() {
 
 telegram_parse_webhook() {
     local body="$1"
-    WEBHOOK_CHAT_ID=$(echo "$body" | jq -r '.message.chat.id // empty')
-    WEBHOOK_MESSAGE_ID=$(echo "$body" | jq -r '.message.message_id // empty')
-    WEBHOOK_TEXT=$(echo "$body" | jq -r '.message.text // empty')
-    # shellcheck disable=SC2034  # Available for future use
-    WEBHOOK_FROM_ID=$(echo "$body" | jq -r '.message.from.id // empty')
-    # Extract reply_to_message if present
-    WEBHOOK_REPLY_TO_TEXT=$(echo "$body" | jq -r '.message.reply_to_message.text // empty')
-    WEBHOOK_REPLY_TO_FROM=$(echo "$body" | jq -r '.message.reply_to_message.from.first_name // empty')
+    # Use printf instead of echo to safely handle untrusted data
+    # (echo could misinterpret data starting with -e, -n, etc.)
+    # Extract all values in a single jq call for efficiency
+    local parsed
+    parsed=$(printf '%s' "$body" | jq -r '[
+        .message.chat.id // "",
+        .message.message_id // "",
+        .message.text // "",
+        .message.from.id // "",
+        .message.reply_to_message.text // "",
+        .message.reply_to_message.from.first_name // ""
+    ] | @tsv')
+
+    # shellcheck disable=SC2034  # WEBHOOK_FROM_ID available for future use
+    IFS=$'\t' read -r WEBHOOK_CHAT_ID WEBHOOK_MESSAGE_ID WEBHOOK_TEXT \
+        WEBHOOK_FROM_ID WEBHOOK_REPLY_TO_TEXT WEBHOOK_REPLY_TO_FROM <<< "$parsed"
 }
 
 telegram_handle_webhook() {
