@@ -10,7 +10,6 @@ telegram_api() {
     shift
 
     local max_retries=4
-    local delays=(1 2 3 4)  # Total: 10 seconds max
     local attempt=0
     local response http_code body
 
@@ -27,7 +26,16 @@ telegram_api() {
 
         # Retryable: 429 (rate limit) or 5xx (server error)
         if [ $attempt -lt $max_retries ]; then
-            local delay=${delays[$attempt]}
+            local delay
+            if [ "$http_code" = "429" ]; then
+                # Use Telegram's retry_after if provided, otherwise exponential backoff
+                delay=$(echo "$body" | jq -r '.parameters.retry_after // empty')
+                if [ -z "$delay" ] || [ "$delay" -lt 1 ] 2>/dev/null; then
+                    delay=$(( 2 ** attempt ))  # 1, 2, 4, 8
+                fi
+            else
+                delay=$(( 2 ** attempt ))  # Exponential backoff for 5xx
+            fi
             log "telegram" "API error (HTTP $http_code), retrying in ${delay}s..."
             sleep "$delay"
         fi
@@ -84,11 +92,27 @@ telegram_send_message() {
 
 telegram_send_typing() {
     local chat_id="$1"
-    if ! telegram_api "sendChatAction" \
+    # Fire-and-forget: don't retry typing indicators to avoid rate limit cascades
+    curl -s "${TELEGRAM_API}${TELEGRAM_BOT_TOKEN}/sendChatAction" \
         -d "chat_id=${chat_id}" \
-        -d "action=typing" > /dev/null; then
-        log_error "telegram" "Failed to send typing indicator to chat $chat_id"
-    fi
+        -d "action=typing" > /dev/null 2>&1 || true
+}
+
+# Progress messages to show while Claude is working
+PROGRESS_MESSAGES=(
+    "_Still working on it..._"
+    "_This is taking a bit longer, hang tight..._"
+    "_Still processing, almost there..._"
+    "_Working through this one..._"
+    "_Bear with me, still on it..._"
+)
+
+telegram_send_progress() {
+    local chat_id="$1"
+    local iteration="$2"
+    local index=$(( iteration % ${#PROGRESS_MESSAGES[@]} ))
+    local msg="${PROGRESS_MESSAGES[$index]}"
+    telegram_send_message "$chat_id" "$msg" > /dev/null 2>&1 || true
 }
 
 telegram_parse_webhook() {
@@ -166,8 +190,17 @@ ${text}"
 
     history_add "user" "$text"
 
-    # Send typing indicator in a loop until claude finishes
-    (while true; do telegram_send_typing "$WEBHOOK_CHAT_ID"; sleep 4; done) &
+    # Send typing indicator first, then progress messages if Claude takes long
+    (
+        telegram_send_typing "$WEBHOOK_CHAT_ID"
+        sleep 15
+        iteration=0
+        while true; do
+            telegram_send_progress "$WEBHOOK_CHAT_ID" "$iteration"
+            ((iteration++))
+            sleep 30
+        done
+    ) &
     local typing_pid=$!
 
     local response
