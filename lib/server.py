@@ -15,6 +15,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CLAUDIO_BIN = os.path.join(SCRIPT_DIR, "..", "claudio")
+CLAUDIO_PATH = os.path.join(os.path.expanduser("~"), ".claudio")
+LOG_FILE = os.path.join(CLAUDIO_PATH, "claudio.log")
 PORT = int(os.environ.get("PORT", 8421))
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -51,12 +53,21 @@ def process_queue(chat_id):
 
         # Process this message (blocking)
         try:
-            proc = subprocess.Popen(
-                [CLAUDIO_BIN, "_webhook", body],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            proc.wait()  # Wait for completion before processing next
+            with open(LOG_FILE, "a") as log_fh:
+                # Ensure PATH includes ~/.local/bin for claude command
+                env = os.environ.copy()
+                home = os.path.expanduser("~")
+                local_bin = os.path.join(home, ".local", "bin")
+                if local_bin not in env.get("PATH", "").split(os.pathsep):
+                    env["PATH"] = f"{local_bin}{os.pathsep}{env.get('PATH', '')}"
+
+                proc = subprocess.Popen(
+                    [CLAUDIO_BIN, "_webhook", body],
+                    stdout=log_fh,
+                    stderr=log_fh,
+                    env=env,
+                )
+                proc.wait()  # Wait for completion before processing next
         except Exception as e:
             sys.stderr.write(f"[queue] Error processing message for chat {chat_id}: {e}\n")
 
