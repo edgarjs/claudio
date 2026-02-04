@@ -186,7 +186,7 @@ ${text}"
             ;;
     esac
 
-    log "telegram" "Received message from chat_id=$WEBHOOK_CHAT_ID: $text"
+    log "telegram" "Received message from chat_id=$WEBHOOK_CHAT_ID"
 
     history_add "user" "$text"
 

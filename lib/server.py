@@ -38,7 +38,7 @@ def parse_webhook(body):
         return None, ""
 
 
-def process_queue(chat_id, log_file):
+def process_queue(chat_id):
     """Process messages for a chat one at a time."""
     while True:
         with queue_lock:
@@ -51,13 +51,12 @@ def process_queue(chat_id, log_file):
 
         # Process this message (blocking)
         try:
-            with open(log_file, "a") as log_fh:
-                proc = subprocess.Popen(
-                    [CLAUDIO_BIN, "_webhook", body],
-                    stdout=log_fh,
-                    stderr=log_fh,
-                )
-                proc.wait()  # Wait for completion before processing next
+            proc = subprocess.Popen(
+                [CLAUDIO_BIN, "_webhook", body],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            proc.wait()  # Wait for completion before processing next
         except Exception as e:
             sys.stderr.write(f"[queue] Error processing message for chat {chat_id}: {e}\n")
 
@@ -67,10 +66,6 @@ def enqueue_webhook(body):
     update_id, chat_id = parse_webhook(body)
     if not chat_id:
         return  # Invalid webhook, skip
-
-    log_file = os.path.join(
-        os.environ.get("HOME", "/tmp"), ".claudio", "claudio.log"
-    )
 
     with queue_lock:
         # Deduplicate: skip if we've already seen this update_id
@@ -95,7 +90,7 @@ def enqueue_webhook(body):
         if len(chat_queues[chat_id]) == 1:
             thread = threading.Thread(
                 target=process_queue,
-                args=(chat_id, log_file),
+                args=(chat_id,),
                 daemon=True
             )
             thread.start()
