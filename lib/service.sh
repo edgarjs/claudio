@@ -262,6 +262,10 @@ ExecStart=${CLAUDIO_BIN} start
 Restart=always
 RestartSec=5
 EnvironmentFile=${CLAUDIO_ENV_FILE}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin
+Environment=HOME=${HOME}
+Environment=USER=$(whoami)
+Environment=TERM=dumb
 
 [Install]
 WantedBy=default.target
