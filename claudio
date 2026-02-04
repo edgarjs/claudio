@@ -49,7 +49,6 @@ EOF
 }
 
 claudio_init
-history_init
 
 case "${1:-}" in
     version|--version|-v)
@@ -57,12 +56,14 @@ case "${1:-}" in
         exit 0
         ;;
     _webhook)
+        history_init
         telegram_handle_webhook "$2"
         ;;
     status)
         service_status
         ;;
     start)
+        history_init
         server_start
         ;;
     install)
