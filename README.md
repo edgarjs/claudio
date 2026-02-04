@@ -160,6 +160,9 @@ bats tests/db.bats
 
 **Future**
 
+- [ ] Auto-install dependencies (`sqlite3`, `jq`) during `claudio install`
+- [ ] Show webhook registration failure reason instead of generic warning
+- [ ] Fix install/update to add `claudio` to `$PATH` (currently contradicts README)
 - [ ] Support for editing messages and reactions
 - [ ] File uploads
 - [ ] Image uploads
