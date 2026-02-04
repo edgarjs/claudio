@@ -12,6 +12,7 @@ while [[ -L "$SCRIPT_PATH" ]]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
+VERSION=$(cat "$SCRIPT_DIR/VERSION")
 
 # Source library files
 # shellcheck source=lib/config.sh
@@ -29,6 +30,8 @@ source "$LIB_DIR/service.sh"
 
 usage() {
     cat <<EOF
+Claudio v${VERSION} - Telegram to Claude Code bridge
+
 Usage: claudio <command> [options]
 
 Commands:
@@ -39,6 +42,7 @@ Commands:
   update             Update to the latest release
   restart            Restart the service
   telegram setup     Set up Telegram bot and webhook
+  version            Show version
 
 EOF
     exit 1
@@ -48,6 +52,10 @@ claudio_init
 history_init
 
 case "${1:-}" in
+    version|--version|-v)
+        echo "claudio v${VERSION}"
+        exit 0
+        ;;
     _webhook)
         telegram_handle_webhook "$2"
         ;;
