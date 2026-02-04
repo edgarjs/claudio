@@ -43,3 +43,11 @@ log_error() {
     shift
     log "$module" "ERROR: $*"
 }
+
+# Log a warning message (same as log but marked as WARN)
+# Usage: log_warn "module" "warning message"
+log_warn() {
+    local module="$1"
+    shift
+    log "$module" "WARN: $*"
+}
