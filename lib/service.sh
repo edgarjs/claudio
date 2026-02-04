@@ -146,31 +146,10 @@ service_install() {
 
 cloudflared_setup() {
     echo ""
-    echo "Choose tunnel type:"
-    echo "  1) Quick tunnel (ephemeral, no account needed, URL changes on restart)"
-    echo "  2) Named tunnel (permanent URL, requires free Cloudflare account)"
-    echo ""
-    read -rp "Enter 1 or 2: " tunnel_choice
-
-    case "$tunnel_choice" in
-        1)
-            # shellcheck disable=SC2034  # Used by claudio_save_env
-            TUNNEL_TYPE="ephemeral"
-            echo ""
-            echo "Ephemeral tunnel selected."
-            echo "A new tunnel URL will be generated each time the service starts."
-            echo "The Telegram webhook will be re-registered automatically."
-            ;;
-        2)
-            TUNNEL_TYPE="named"
-            cloudflared_setup_named
-            ;;
-        *)
-            print_warning "Invalid choice. Defaulting to ephemeral tunnel."
-            # shellcheck disable=SC2034  # Used by claudio_save_env
-            TUNNEL_TYPE="ephemeral"
-            ;;
-    esac
+    echo "Setting up Cloudflare tunnel (requires free Cloudflare account)..."
+    # shellcheck disable=SC2034  # Used by claudio_save_env
+    TUNNEL_TYPE="named"
+    cloudflared_setup_named
 }
 
 cloudflared_setup_named() {

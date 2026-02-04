@@ -293,35 +293,26 @@ telegram_setup() {
     print_success "Received /start from chat_id: ${TELEGRAM_CHAT_ID}"
     telegram_send_message "$TELEGRAM_CHAT_ID" "_Hola!_ Send me a message and I'll forward it to Claude Code."
 
-    # Re-register webhook
-    local wh_url=""
-    if [ "$TUNNEL_TYPE" = "named" ] && [ -n "$WEBHOOK_URL" ]; then
-        wh_url="${WEBHOOK_URL}/telegram/webhook"
-    elif [ "$TUNNEL_TYPE" = "ephemeral" ] && [ -n "$WEBHOOK_URL" ]; then
-        wh_url="${WEBHOOK_URL}/telegram/webhook"
-    fi
-
-    if [ -n "$wh_url" ]; then
-        local result
-        local webhook_args=("-d" "url=${wh_url}")
-        if [ -n "$WEBHOOK_SECRET" ]; then
-            webhook_args+=("-d" "secret_token=${WEBHOOK_SECRET}")
-        fi
-        result=$(telegram_api "setWebhook" "${webhook_args[@]}")
-        local wh_ok
-        wh_ok=$(echo "$result" | jq -r '.ok')
-        if [ "$wh_ok" != "true" ]; then
-            local error_desc
-            error_desc=$(echo "$result" | jq -r '.description // "Unknown error"')
-            print_warning "Failed to set webhook: ${error_desc}"
-            echo "It will be set on next service restart."
-        else
-            print_success "Webhook set to: ${wh_url}"
-        fi
+    # Verify tunnel is configured
+    if [ -z "$TUNNEL_TYPE" ] || [ -z "$WEBHOOK_URL" ]; then
+        print_warning "No tunnel configured. Run 'claudio install' first."
+        exit 1
     fi
 
     claudio_save_env
+
+    # Restart service
     echo ""
-    print_success "Setup complete! Restarting service..."
-    service_restart 2>/dev/null || print_warning "Service not installed yet. Run 'claudio install' to set up the service."
+    echo "Restarting service..."
+    service_restart 2>/dev/null || {
+        print_warning "Service not installed yet. Run 'claudio install' to set up the service."
+        return
+    }
+
+    # Register webhook (will retry until successful)
+    echo ""
+    echo "Registering Telegram webhook (DNS propagation could take a moment)..."
+    register_webhook "$WEBHOOK_URL"
+
+    print_success "Setup complete!"
 }
