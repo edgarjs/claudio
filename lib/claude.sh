@@ -41,7 +41,23 @@ claude_run() {
     # Ensure temp file is cleaned up even on unexpected exit
     trap 'rm -f "$stderr_output"' RETURN
 
-    response=$(claude "${claude_args[@]}" 2>"$stderr_output") || true
+    # Find claude command, trying multiple common locations
+    # Note: Don't use 'command -v' as it's a bash builtin that doesn't work correctly
+    # when PATH is modified by parent processes (e.g., Python subprocess)
+    local claude_cmd
+    local home="${HOME:=$(eval echo ~"$(whoami)")}"
+    if [ -x "$home/.local/bin/claude" ]; then
+        claude_cmd="$home/.local/bin/claude"
+    elif [ -x "/usr/local/bin/claude" ]; then
+        claude_cmd="/usr/local/bin/claude"
+    elif [ -x "/usr/bin/claude" ]; then
+        claude_cmd="/usr/bin/claude"
+    else
+        log "claude" "Error: claude command not found in common locations"
+        return 1
+    fi
+
+    response=$("$claude_cmd" "${claude_args[@]}" 2>"$stderr_output") || true
 
     if [ -s "$stderr_output" ]; then
         log "claude" "$(cat "$stderr_output")"
