@@ -2,15 +2,20 @@
 
 setup() {
     export CLAUDIO_PATH="$BATS_TEST_TMPDIR"
+    export CLAUDIO_LOG_FILE="$BATS_TEST_TMPDIR/claudio.log"
     export TELEGRAM_BOT_TOKEN="test_token"
     export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 
     mkdir -p "$BATS_TEST_TMPDIR/bin"
     echo "0" > "$BATS_TEST_TMPDIR/curl_attempts"
 
-    # Mock log function
-    log() { echo "$*" >&2; }
-    export -f log
+    # Create mock curl upfront to prevent any real API calls
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'EOF'
+#!/bin/bash
+echo '{"ok":true}'
+echo "200"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
 
     source "$BATS_TEST_DIRNAME/../lib/telegram.sh"
 }
