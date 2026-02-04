@@ -278,7 +278,10 @@ telegram_setup() {
         local wh_ok
         wh_ok=$(echo "$result" | jq -r '.ok')
         if [ "$wh_ok" != "true" ]; then
-            echo "Warning: Failed to set webhook. It will be set on next service restart."
+            local error_desc
+            error_desc=$(echo "$result" | jq -r '.description // "Unknown error"')
+            echo "Warning: Failed to set webhook: ${error_desc}"
+            echo "It will be set on next service restart."
         else
             echo "Webhook set to: ${wh_url}"
         fi

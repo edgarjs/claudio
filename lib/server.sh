@@ -82,7 +82,15 @@ cloudflared_start() {
                 curl_args+=("-d" "secret_token=${WEBHOOK_SECRET}")
             fi
             result=$(curl "${curl_args[@]}")
-            log "telegram" "Webhook registration: ${result}"
+            local wh_ok
+            wh_ok=$(echo "$result" | jq -r '.ok')
+            if [ "$wh_ok" = "true" ]; then
+                log "telegram" "Webhook registered successfully."
+            else
+                local error_desc
+                error_desc=$(echo "$result" | jq -r '.description // "Unknown error"')
+                log_error "telegram" "Webhook registration failed: ${error_desc}"
+            fi
         fi
 
     elif [ "$TUNNEL_TYPE" = "named" ]; then

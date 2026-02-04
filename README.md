@@ -160,9 +160,9 @@ bats tests/db.bats
 - [x] No retries with backoff for Telegram API
 - [x] Health check (`/health`) doesn't verify actual system state
 - [x] Auto-install dependencies (`sqlite3`, `jq`, `cloudflared`) during `claudio install`
+- [x] Show webhook registration failure reason instead of generic warning
 
 **Future**
-- [ ] Show webhook registration failure reason instead of generic warning
 - [ ] Fix install/update to add `claudio` to `$PATH` (currently contradicts README)
 - [ ] Support for editing messages and reactions
 - [ ] File uploads
