@@ -315,13 +315,14 @@ service_status() {
     local service_running=false
     if [[ "$(uname)" == "Darwin" ]]; then
         if launchctl list 2>/dev/null | grep -q "com.claudio.server"; then
-            local exit_code
-            exit_code=$(launchctl list | grep "com.claudio.server" | awk '{print $2}')
-            if [ "$exit_code" = "0" ] || [ "$exit_code" = "-" ]; then
+            local pid
+            pid=$(launchctl list | grep "com.claudio.server" | awk '{print $1}')
+            # If PID is a number (not "-"), service is running
+            if [[ "$pid" =~ ^[0-9]+$ ]]; then
                 service_running=true
-                echo "Service:  ✅ Running"
+                echo "Service:  ✅ Running (PID: $pid)"
             else
-                echo "Service:  ❌ Stopped (exit code: $exit_code)"
+                echo "Service:  ❌ Stopped"
             fi
         else
             echo "Service:  ❌ Not installed"

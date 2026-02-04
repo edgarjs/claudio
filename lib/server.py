@@ -14,7 +14,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CLAUDIO_BIN = os.path.join(SCRIPT_DIR, "..", "bin", "claudio")
+CLAUDIO_BIN = os.path.join(SCRIPT_DIR, "..", "claudio")
 PORT = int(os.environ.get("PORT", 8421))
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
