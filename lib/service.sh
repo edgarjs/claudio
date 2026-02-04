@@ -108,11 +108,44 @@ symlink_install() {
 
     # Check if ~/.local/bin is in PATH
     if [[ ":$PATH:" != *":$target_dir:"* ]]; then
-        print_warning "$target_dir is not in your PATH."
-        echo "Add this line to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-        echo ""
+        path_add_to_profile "$target_dir"
     fi
+}
+
+path_add_to_profile() {
+    local dir="$1"
+    local export_line="export PATH=\"\$HOME/.local/bin:\$PATH\""
+    local profile_file
+
+    # Determine the shell profile file
+    case "$(basename "$SHELL")" in
+        zsh)  profile_file="$HOME/.zshrc" ;;
+        bash)
+            if [[ -f "$HOME/.bash_profile" ]]; then
+                profile_file="$HOME/.bash_profile"
+            else
+                profile_file="$HOME/.bashrc"
+            fi
+            ;;
+        *)    profile_file="$HOME/.profile" ;;
+    esac
+
+    # Check if already present in profile
+    if [[ -f "$profile_file" ]] && grep -qE 'export\s+PATH=.*\.local/bin' "$profile_file"; then
+        print_warning "$dir is not in your current PATH but is configured in $profile_file"
+        echo "Restart your shell or run: source $profile_file"
+        echo ""
+        return
+    fi
+
+    # Add to profile
+    echo "" >> "$profile_file"
+    echo "# Added by claudio installer" >> "$profile_file"
+    echo "$export_line" >> "$profile_file"
+
+    print_success "Added $dir to PATH in $profile_file"
+    echo "Restart your shell or run: source $profile_file"
+    echo ""
 }
 
 symlink_uninstall() {
