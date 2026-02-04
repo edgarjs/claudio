@@ -291,7 +291,7 @@ telegram_setup() {
     done
 
     print_success "Received /start from chat_id: ${TELEGRAM_CHAT_ID}"
-    telegram_send_message "$TELEGRAM_CHAT_ID" "_Hola!_ Send me a message and I'll forward it to Claude Code."
+    telegram_send_message "$TELEGRAM_CHAT_ID" "👋 Hola! Please return to your terminal to complete the webhook setup."
 
     # Verify tunnel is configured
     if [ -z "$TUNNEL_TYPE" ] || [ -z "$WEBHOOK_URL" ]; then

@@ -24,6 +24,10 @@ register_webhook() {
         if [ "$wh_ok" = "true" ]; then
             log "telegram" "Webhook registered successfully."
             print_success "Webhook registered successfully."
+            # Notify user via Telegram
+            if [ -n "$TELEGRAM_CHAT_ID" ]; then
+                telegram_send_message "$TELEGRAM_CHAT_ID" "✅ Webhook registered! We can chat now. What are you up to?"
+            fi
             return 0
         fi
 
@@ -70,4 +74,3 @@ cloudflared_start() {
     trap 'kill $CLOUDFLARED_PID 2>/dev/null' EXIT
     log "cloudflared" "Named tunnel '$TUNNEL_NAME' started."
 }
-
