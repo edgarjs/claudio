@@ -37,7 +37,7 @@ Usage: claudio <command> [options]
 Commands:
   status             Show service and webhook status
   start              Start the HTTP server
-  install            Install and start the system service
+  install [--user <name>]  Install the service (--user creates system user, requires root)
   uninstall [--purge] Stop and remove the service (--purge removes all data)
   update             Update to the latest release
   restart            Restart the service
@@ -67,7 +67,16 @@ case "${1:-}" in
         server_start
         ;;
     install)
-        service_install
+        target_user=""
+        if [ "${2:-}" = "--user" ]; then
+            target_user="${3:-}"
+            if [ -z "$target_user" ]; then
+                echo "Error: --user requires a username argument"
+                echo "Usage: claudio install --user <username>"
+                exit 1
+            fi
+        fi
+        service_install "$target_user"
         ;;
     uninstall)
         service_uninstall "${2:-}"

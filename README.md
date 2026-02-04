@@ -53,6 +53,19 @@ cd claudio
 ./claudio install
 ```
 
+#### Installing as root (servers)
+
+If you're installing as root, you must specify a user for the service to run as:
+
+```bash
+./claudio install --user claudio
+```
+
+This is required because the Claude CLI cannot run as root for security reasons. The command will:
+- Create a system user named `claudio` (if it doesn't exist)
+- Install a system-level systemd service that runs as that user
+- Set up all configuration files with proper ownership
+
 This will:
 
 - Install dependencies (`sqlite3`, `jq`, `cloudflared`) if not already present

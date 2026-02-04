@@ -11,7 +11,35 @@ CLAUDIO_LIB="$(_service_script_dir)"
 CLAUDIO_BIN="${CLAUDIO_LIB}/../claudio"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.claudio.server.plist"
 SYSTEMD_UNIT="$HOME/.config/systemd/user/claudio.service"
+SYSTEMD_SYSTEM_UNIT="/etc/systemd/system/claudio.service"
 CRON_MARKER="# claudio-health-check"
+
+is_root() {
+    [ "$(id -u)" -eq 0 ]
+}
+
+validate_username() {
+    local username="$1"
+    if ! [[ "$username" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        print_error "Invalid username. Use lowercase letters, digits, underscores, hyphens."
+        exit 1
+    fi
+    if [ ${#username} -gt 32 ]; then
+        print_error "Username too long (max 32 characters)."
+        exit 1
+    fi
+}
+
+create_system_user() {
+    local username="$1"
+    if id "$username" &>/dev/null; then
+        print_success "User '$username' already exists."
+    else
+        echo "Creating system user '$username'..."
+        useradd --system --shell /usr/sbin/nologin --home-dir "/home/$username" --create-home "$username"
+        print_success "System user '$username' created."
+    fi
+}
 
 deps_install() {
     echo "Checking dependencies..."
@@ -156,20 +184,103 @@ symlink_uninstall() {
     fi
 }
 
+symlink_install_system() {
+    local target_user="$1"
+    local target_home
+    target_home=$(getent passwd "$target_user" | cut -d: -f6)
+    local target_dir="$target_home/.local/bin"
+    local target="$target_dir/claudio"
+
+    mkdir -p "$target_dir"
+
+    if [ -L "$target" ] || [ -f "$target" ]; then
+        rm -f "$target"
+    fi
+
+    ln -s "$CLAUDIO_BIN" "$target"
+    chown -R "$target_user:$target_user" "$target_home/.local"
+    print_success "Symlink created: $target -> $CLAUDIO_BIN"
+}
+
 service_install() {
+    local target_user="${1:-}"
+
+    # Validate root/user requirements
+    if is_root; then
+        if [ -z "$target_user" ]; then
+            print_error "Running as root requires the --user flag."
+            echo ""
+            echo "The Claude CLI cannot run as root for security reasons."
+            echo "You must specify a non-root user to run the service."
+            echo ""
+            echo "Usage: claudio install --user <username>"
+            echo ""
+            echo "This creates a dedicated system user and installs a system-level service."
+            exit 1
+        fi
+        if [[ "$(uname)" == "Darwin" ]]; then
+            print_error "The --user flag is only supported on Linux."
+            exit 1
+        fi
+        validate_username "$target_user"
+        create_system_user "$target_user"
+
+        # Set paths for target user
+        local target_home
+        target_home=$(getent passwd "$target_user" | cut -d: -f6)
+        export CLAUDIO_PATH="$target_home/.claudio"
+        export CLAUDIO_ENV_FILE="$CLAUDIO_PATH/service.env"
+        export CLAUDIO_LOG_FILE="$CLAUDIO_PATH/claudio.log"
+        export CLAUDIO_PROMPT_FILE="$CLAUDIO_PATH/SYSTEM_PROMPT.md"
+
+        mkdir -p "$CLAUDIO_PATH"
+        chown "$target_user:$target_user" "$CLAUDIO_PATH"
+    elif [ -n "$target_user" ]; then
+        print_error "The --user flag requires root privileges."
+        echo "Run: sudo claudio install --user $target_user"
+        exit 1
+    fi
+
     deps_install
-    symlink_install
+
+    if [ -n "$target_user" ]; then
+        symlink_install_system "$target_user"
+    else
+        symlink_install
+    fi
+
     claudio_init
-    cloudflared_setup
+
+    if [ -n "$target_user" ]; then
+        cloudflared_setup_as_user "$target_user"
+    else
+        cloudflared_setup
+    fi
+
     claudio_save_env
+
+    # Set ownership after saving env (contains secrets)
+    if [ -n "$target_user" ]; then
+        chown -R "$target_user:$target_user" "$CLAUDIO_PATH"
+        chmod 700 "$CLAUDIO_PATH"
+        chmod 600 "$CLAUDIO_ENV_FILE"
+    fi
 
     if [[ "$(uname)" == "Darwin" ]]; then
         service_install_launchd
     else
-        service_install_systemd
+        if [ -n "$target_user" ]; then
+            service_install_systemd_system "$target_user"
+        else
+            service_install_systemd
+        fi
     fi
 
-    cron_install
+    if [ -n "$target_user" ]; then
+        cron_install_system "$target_user"
+    else
+        cron_install
+    fi
 
     echo ""
     print_success "Claudio service installed and started."
@@ -242,6 +353,103 @@ cloudflared_setup_named() {
     print_success "Named tunnel configured: https://${hostname}"
 }
 
+cloudflared_setup_as_user() {
+    local target_user="$1"
+    local target_home
+    target_home=$(getent passwd "$target_user" | cut -d: -f6)
+    local cloudflared_dir="$target_home/.cloudflared"
+
+    echo ""
+    echo "Setting up Cloudflare tunnel (requires free Cloudflare account)..."
+    # shellcheck disable=SC2034  # Used by claudio_save_env
+    TUNNEL_TYPE="named"
+
+    # Create .cloudflared directory with proper ownership
+    mkdir -p "$cloudflared_dir"
+    chown "$target_user:$target_user" "$cloudflared_dir"
+    chmod 700 "$cloudflared_dir"
+
+    echo ""
+    echo "Cloudflare tunnel authentication requires a web browser."
+    echo "Options:"
+    echo "  1) Run authentication now (requires display/browser access)"
+    echo "  2) Skip and configure manually later"
+    echo ""
+    read -rp "Run cloudflared authentication now? [y/N]: " run_auth
+
+    if [[ "$run_auth" =~ ^[Yy]$ ]]; then
+        # Check if already authenticated
+        if [ -f "$cloudflared_dir/cert.pem" ]; then
+            print_success "Cloudflare credentials found."
+        else
+            echo "Authenticating with Cloudflare (this will open your browser)..."
+            if ! sudo -u "$target_user" -H cloudflared tunnel login; then
+                print_error "cloudflared login failed."
+                echo "You can retry later with: sudo -u $target_user cloudflared tunnel login"
+                exit 1
+            fi
+        fi
+
+        echo ""
+        read -rp "Enter a name for the tunnel (e.g. claudio): " tunnel_name
+        if [ -z "$tunnel_name" ]; then
+            tunnel_name="claudio"
+        fi
+        TUNNEL_NAME="$tunnel_name"
+
+        # Create tunnel as target user
+        local create_output
+        if create_output=$(sudo -u "$target_user" -H cloudflared tunnel create "$TUNNEL_NAME" 2>&1); then
+            echo "$create_output"
+        elif echo "$create_output" | grep -qi "already exists"; then
+            print_success "Tunnel '$TUNNEL_NAME' already exists, reusing it."
+        else
+            print_error "Creating tunnel failed: $create_output"
+            exit 1
+        fi
+
+        read -rp "Enter the hostname for this tunnel (e.g. claudio.example.com): " hostname
+        if [ -z "$hostname" ]; then
+            print_error "Hostname cannot be empty."
+            exit 1
+        fi
+        # shellcheck disable=SC2034  # Used by claudio_save_env
+        TUNNEL_HOSTNAME="$hostname"
+        # shellcheck disable=SC2034  # Used by claudio_save_env
+        WEBHOOK_URL="https://${hostname}"
+
+        # Route DNS as target user
+        local route_output
+        if route_output=$(sudo -u "$target_user" -H cloudflared tunnel route dns "$TUNNEL_NAME" "$hostname" 2>&1); then
+            echo "$route_output"
+        elif echo "$route_output" | grep -qi "already exists"; then
+            print_success "DNS route for '${hostname}' already exists."
+        else
+            print_error "Routing DNS failed: $route_output"
+            exit 1
+        fi
+
+        # Ensure credentials ownership
+        chown -R "$target_user:$target_user" "$cloudflared_dir"
+
+        echo ""
+        print_success "Named tunnel configured: https://${hostname}"
+    else
+        echo ""
+        print_warning "Cloudflare tunnel setup skipped."
+        echo "To configure later, run as the service user:"
+        echo "  sudo -u $target_user cloudflared tunnel login"
+        echo "  sudo -u $target_user cloudflared tunnel create claudio"
+        echo "  sudo -u $target_user cloudflared tunnel route dns claudio <hostname>"
+        echo ""
+        echo "Then update $CLAUDIO_ENV_FILE with:"
+        echo "  TUNNEL_NAME=claudio"
+        echo "  TUNNEL_HOSTNAME=<hostname>"
+        echo "  WEBHOOK_URL=https://<hostname>"
+        echo ""
+    fi
+}
+
 service_install_launchd() {
     mkdir -p "$(dirname "$LAUNCHD_PLIST")"
     cat > "$LAUNCHD_PLIST" <<EOF
@@ -309,6 +517,38 @@ EOF
     systemctl --user start claudio
 }
 
+service_install_systemd_system() {
+    local target_user="$1"
+    local target_home
+    target_home=$(getent passwd "$target_user" | cut -d: -f6)
+
+    cat > "$SYSTEMD_SYSTEM_UNIT" <<EOF
+[Unit]
+Description=Claudio - Telegram to Claude Code bridge
+After=network.target
+
+[Service]
+Type=simple
+User=${target_user}
+Group=${target_user}
+ExecStart=${CLAUDIO_BIN} start
+Restart=always
+RestartSec=5
+EnvironmentFile=${target_home}/.claudio/service.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:${target_home}/.local/bin
+Environment=HOME=${target_home}
+Environment=USER=${target_user}
+Environment=TERM=dumb
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl stop claudio 2>/dev/null || true
+    systemctl daemon-reload
+    systemctl enable claudio
+    systemctl start claudio
+}
+
 service_uninstall() {
     local purge=false
     [ "$1" = "--purge" ] && purge=true
@@ -318,10 +558,18 @@ service_uninstall() {
         launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
         rm -f "$LAUNCHD_PLIST"
     else
-        systemctl --user stop claudio 2>/dev/null || true
-        systemctl --user disable claudio 2>/dev/null || true
-        rm -f "$SYSTEMD_UNIT"
-        systemctl --user daemon-reload 2>/dev/null
+        # Check for system-level service first, then user-level
+        if [ -f "$SYSTEMD_SYSTEM_UNIT" ]; then
+            systemctl stop claudio 2>/dev/null || true
+            systemctl disable claudio 2>/dev/null || true
+            rm -f "$SYSTEMD_SYSTEM_UNIT"
+            systemctl daemon-reload 2>/dev/null
+        elif [ -f "$SYSTEMD_UNIT" ]; then
+            systemctl --user stop claudio 2>/dev/null || true
+            systemctl --user disable claudio 2>/dev/null || true
+            rm -f "$SYSTEMD_UNIT"
+            systemctl --user daemon-reload 2>/dev/null
+        fi
     fi
 
     cron_uninstall
@@ -339,7 +587,11 @@ service_restart() {
         launchctl stop com.claudio.server 2>/dev/null || true
         launchctl start com.claudio.server
     else
-        systemctl --user restart claudio
+        if [ -f "$SYSTEMD_SYSTEM_UNIT" ]; then
+            systemctl restart claudio
+        else
+            systemctl --user restart claudio
+        fi
     fi
     print_success "Claudio service restarted."
 }
@@ -365,11 +617,21 @@ service_status() {
             echo "Service:  ❌ Not installed"
         fi
     else
-        if systemctl --user is-active --quiet claudio 2>/dev/null; then
-            service_running=true
-            echo "Service:  ✅ Running"
-        elif systemctl --user list-unit-files 2>/dev/null | grep -q "claudio"; then
-            echo "Service:  ❌ Stopped"
+        # Check system-level service first, then user-level
+        if [ -f "$SYSTEMD_SYSTEM_UNIT" ]; then
+            if systemctl is-active --quiet claudio 2>/dev/null; then
+                service_running=true
+                echo "Service:  ✅ Running (system)"
+            else
+                echo "Service:  ❌ Stopped (system)"
+            fi
+        elif [ -f "$SYSTEMD_UNIT" ]; then
+            if systemctl --user is-active --quiet claudio 2>/dev/null; then
+                service_running=true
+                echo "Service:  ✅ Running (user)"
+            else
+                echo "Service:  ❌ Stopped (user)"
+            fi
         else
             echo "Service:  ❌ Not installed"
         fi
@@ -417,6 +679,16 @@ cron_install() {
     # Remove existing entry if present, then add new one
     (crontab -l 2>/dev/null | grep -v "$CRON_MARKER"; echo "$cron_entry") | crontab -
     print_success "Health check cron job installed (runs every 5 minutes)."
+}
+
+cron_install_system() {
+    local target_user="$1"
+    local health_script="${CLAUDIO_LIB}/health-check.sh"
+    local cron_entry="*/5 * * * * ${health_script} ${CRON_MARKER}"
+
+    # Install crontab for the target user
+    (sudo -u "$target_user" crontab -l 2>/dev/null | grep -v "$CRON_MARKER"; echo "$cron_entry") | sudo -u "$target_user" crontab -
+    print_success "Health check cron job installed for user $target_user (runs every 5 minutes)."
 }
 
 cron_uninstall() {
