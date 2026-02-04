@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# shellcheck source=lib/log.sh
+source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
+
 _service_script_dir() {
     local src="${BASH_SOURCE[0]:-$0}"
     cd "$(dirname "$src")" && pwd
@@ -26,7 +29,7 @@ deps_install() {
         echo "Missing: ${missing[*]}"
         if [[ "$(uname)" == "Darwin" ]]; then
             if ! command -v brew > /dev/null 2>&1; then
-                echo "Error: Homebrew is required to install dependencies on macOS."
+                print_error "Homebrew is required to install dependencies on macOS."
                 echo "Install it from https://brew.sh/ then run 'claudio install' again."
                 exit 1
             fi
@@ -43,7 +46,7 @@ deps_install() {
             elif command -v apk > /dev/null 2>&1; then
                 sudo apk add "${missing[@]}"
             else
-                echo "Error: Could not detect package manager."
+                print_error "Could not detect package manager."
                 echo "Please install manually: ${missing[*]}"
                 exit 1
             fi
@@ -51,7 +54,7 @@ deps_install() {
 
         for cmd in "${missing[@]}"; do
             if ! command -v "$cmd" > /dev/null 2>&1; then
-                echo "Error: Failed to install $cmd."
+                print_error "Failed to install $cmd."
                 exit 1
             fi
         done
@@ -62,7 +65,7 @@ deps_install() {
         echo "Installing cloudflared..."
         if [[ "$(uname)" == "Darwin" ]]; then
             if ! command -v brew > /dev/null 2>&1; then
-                echo "Error: Homebrew is required to install cloudflared on macOS."
+                print_error "Homebrew is required to install cloudflared on macOS."
                 echo "Install it from https://brew.sh/ then run 'claudio install' again."
                 exit 1
             fi
@@ -81,12 +84,12 @@ deps_install() {
         fi
 
         if ! command -v cloudflared > /dev/null 2>&1; then
-            echo "Error: Failed to install cloudflared."
+            print_error "Failed to install cloudflared."
             exit 1
         fi
     fi
 
-    echo "All dependencies installed."
+    print_success "All dependencies installed."
 }
 
 service_install() {
@@ -104,7 +107,7 @@ service_install() {
     cron_install
 
     echo ""
-    echo "Claudio service installed and started."
+    print_success "Claudio service installed and started."
     # shellcheck disable=SC2016  # Backticks intentionally not expanded (documentation)
     echo 'Run `claudio telegram setup` to connect your Telegram bot.'
 }
@@ -131,7 +134,7 @@ cloudflared_setup() {
             cloudflared_setup_named
             ;;
         *)
-            echo "Invalid choice. Defaulting to ephemeral tunnel."
+            print_warning "Invalid choice. Defaulting to ephemeral tunnel."
             # shellcheck disable=SC2034  # Used by claudio_save_env
             TUNNEL_TYPE="ephemeral"
             ;;
@@ -143,11 +146,11 @@ cloudflared_setup_named() {
 
     # Check if already authenticated
     if [ -f "$HOME/.cloudflared/cert.pem" ]; then
-        echo "Cloudflare credentials found."
+        print_success "Cloudflare credentials found."
     else
         echo "Authenticating with Cloudflare (this will open your browser)..."
         if ! cloudflared tunnel login; then
-            echo "Error: cloudflared login failed."
+            print_error "cloudflared login failed."
             exit 1
         fi
     fi
@@ -164,15 +167,15 @@ cloudflared_setup_named() {
     if create_output=$(cloudflared tunnel create "$TUNNEL_NAME" 2>&1); then
         echo "$create_output"
     elif echo "$create_output" | grep -qi "already exists"; then
-        echo "Tunnel '$TUNNEL_NAME' already exists, reusing it."
+        print_success "Tunnel '$TUNNEL_NAME' already exists, reusing it."
     else
-        echo "Error creating tunnel: $create_output"
+        print_error "Creating tunnel failed: $create_output"
         exit 1
     fi
 
     read -rp "Enter the hostname for this tunnel (e.g. claudio.example.com): " hostname
     if [ -z "$hostname" ]; then
-        echo "Error: Hostname cannot be empty."
+        print_error "Hostname cannot be empty."
         exit 1
     fi
     # shellcheck disable=SC2034  # Used by claudio_save_env
@@ -185,14 +188,14 @@ cloudflared_setup_named() {
     if route_output=$(cloudflared tunnel route dns "$TUNNEL_NAME" "$hostname" 2>&1); then
         echo "$route_output"
     elif echo "$route_output" | grep -qi "already exists"; then
-        echo "DNS route for '${hostname}' already exists."
+        print_success "DNS route for '${hostname}' already exists."
     else
-        echo "Error routing DNS: $route_output"
+        print_error "Routing DNS failed: $route_output"
         exit 1
     fi
 
     echo ""
-    echo "Named tunnel configured: https://${hostname}"
+    print_success "Named tunnel configured: https://${hostname}"
 }
 
 service_install_launchd() {
@@ -274,11 +277,11 @@ service_uninstall() {
     fi
 
     cron_uninstall
-    echo "Claudio service removed."
+    print_success "Claudio service removed."
 
     if [ "$purge" = true ]; then
         rm -rf "$CLAUDIO_PATH"
-        echo "Removed ${CLAUDIO_PATH}"
+        print_success "Removed ${CLAUDIO_PATH}"
     fi
 }
 
@@ -289,7 +292,7 @@ service_restart() {
     else
         systemctl --user restart claudio
     fi
-    echo "Claudio service restarted."
+    print_success "Claudio service restarted."
 }
 
 cron_install() {
@@ -298,13 +301,13 @@ cron_install() {
 
     # Remove existing entry if present, then add new one
     (crontab -l 2>/dev/null | grep -v "$CRON_MARKER"; echo "$cron_entry") | crontab -
-    echo "Health check cron job installed (runs every 5 minutes)."
+    print_success "Health check cron job installed (runs every 5 minutes)."
 }
 
 cron_uninstall() {
     if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
         crontab -l 2>/dev/null | grep -v "$CRON_MARKER" | crontab -
-        echo "Health check cron job removed."
+        print_success "Health check cron job removed."
     fi
 }
 
@@ -322,12 +325,12 @@ service_update() {
     latest_url=$(curl -s "https://api.github.com/repos/edgarjs/claudio/releases/latest" | jq -r '.assets[] | select(.name | contains("'"${os}"'") and contains("'"${arch}"'")) | .browser_download_url')
 
     if [ -z "$latest_url" ] || [ "$latest_url" = "null" ]; then
-        echo "No release found for ${os}/${arch}. Downloading generic binary..."
+        print_warning "No release found for ${os}/${arch}. Downloading generic binary..."
         latest_url=$(curl -s "https://api.github.com/repos/edgarjs/claudio/releases/latest" | jq -r '.assets[0].browser_download_url // empty')
     fi
 
     if [ -z "$latest_url" ]; then
-        echo "Error: Could not find a release to download."
+        print_error "Could not find a release to download."
         exit 1
     fi
 
@@ -339,6 +342,6 @@ service_update() {
     chmod +x "$target.tmp"
     mv "$target.tmp" "$target"
 
-    echo "Updated claudio binary."
+    print_success "Updated claudio binary."
     service_restart
 }

@@ -5,6 +5,21 @@
 
 CLAUDIO_LOG_FILE="${CLAUDIO_LOG_FILE:-$HOME/.claudio/claudio.log}"
 
+# Print error message
+print_error() {
+    echo "‼️ Error: $*" >&2
+}
+
+# Print warning message
+print_warning() {
+    echo "⚠️  Warning: $*"
+}
+
+# Print success message
+print_success() {
+    echo "✅ $*"
+}
+
 # Log a message with module prefix
 # Usage: log "module" "message"
 # Example: log "server" "Starting on port 8421"

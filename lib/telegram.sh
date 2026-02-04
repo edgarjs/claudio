@@ -190,7 +190,7 @@ telegram_setup() {
 
     read -rp "Enter your Telegram Bot Token: " token
     if [ -z "$token" ]; then
-        echo "Error: Token cannot be empty."
+        print_error "Token cannot be empty."
         exit 1
     fi
 
@@ -201,13 +201,13 @@ telegram_setup() {
     local ok
     ok=$(echo "$me" | jq -r '.ok')
     if [ "$ok" != "true" ]; then
-        echo "Error: Invalid bot token."
+        print_error "Invalid bot token."
         exit 1
     fi
     local bot_name
     bot_name=$(echo "$me" | jq -r '.result.username')
     local bot_url="https://t.me/${bot_name}"
-    echo "Bot verified: @${bot_name}"
+    print_success "Bot verified: @${bot_name}"
     echo "Bot URL: ${bot_url}"
 
     # Remove webhook temporarily so getUpdates works for polling
@@ -234,7 +234,7 @@ telegram_setup() {
         now=$(date +%s)
         local elapsed=$(( now - start_time ))
         if [ "$elapsed" -ge "$timeout" ]; then
-            echo "Timed out waiting for /start message. Please try again."
+            print_error "Timed out waiting for /start message. Please try again."
             exit 1
         fi
 
@@ -257,7 +257,7 @@ telegram_setup() {
         sleep 1
     done
 
-    echo "Received /start from chat_id: ${TELEGRAM_CHAT_ID}"
+    print_success "Received /start from chat_id: ${TELEGRAM_CHAT_ID}"
     telegram_send_message "$TELEGRAM_CHAT_ID" "_Hola!_ Send me a message and I'll forward it to Claude Code."
 
     # Re-register webhook
@@ -280,15 +280,15 @@ telegram_setup() {
         if [ "$wh_ok" != "true" ]; then
             local error_desc
             error_desc=$(echo "$result" | jq -r '.description // "Unknown error"')
-            echo "Warning: Failed to set webhook: ${error_desc}"
+            print_warning "Failed to set webhook: ${error_desc}"
             echo "It will be set on next service restart."
         else
-            echo "Webhook set to: ${wh_url}"
+            print_success "Webhook set to: ${wh_url}"
         fi
     fi
 
     claudio_save_env
     echo ""
-    echo "Setup complete! Restarting service..."
-    service_restart 2>/dev/null || echo "Service not installed yet. Run 'claudio install' to set up the service."
+    print_success "Setup complete! Restarting service..."
+    service_restart 2>/dev/null || print_warning "Service not installed yet. Run 'claudio install' to set up the service."
 }
