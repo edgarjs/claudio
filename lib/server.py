@@ -51,12 +51,21 @@ def process_queue(chat_id):
 
         # Process this message (blocking)
         try:
-            proc = subprocess.Popen(
-                [CLAUDIO_BIN, "_webhook", body],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            proc.wait()  # Wait for completion before processing next
+            with open(log_file, "a") as log_fh:
+                # Ensure PATH includes ~/.local/bin for claude command
+                env = os.environ.copy()
+                home = os.path.expanduser("~")
+                local_bin = os.path.join(home, ".local", "bin")
+                if local_bin not in env.get("PATH", ""):
+                    env["PATH"] = f"{local_bin}:{env.get('PATH', '')}"
+
+                proc = subprocess.Popen(
+                    [CLAUDIO_BIN, "_webhook", body],
+                    stdout=log_fh,
+                    stderr=log_fh,
+                    env=env,
+                )
+                proc.wait()  # Wait for completion before processing next
         except Exception as e:
             sys.stderr.write(f"[queue] Error processing message for chat {chat_id}: {e}\n")
 
