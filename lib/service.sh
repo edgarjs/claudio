@@ -307,6 +307,71 @@ service_restart() {
     print_success "Claudio service restarted."
 }
 
+service_status() {
+    echo "=== Claudio Status ==="
+    echo ""
+
+    # Check service status
+    local service_running=false
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if launchctl list 2>/dev/null | grep -q "com.claudio.server"; then
+            local exit_code
+            exit_code=$(launchctl list | grep "com.claudio.server" | awk '{print $2}')
+            if [ "$exit_code" = "0" ] || [ "$exit_code" = "-" ]; then
+                service_running=true
+                echo "Service:  ✅ Running"
+            else
+                echo "Service:  ❌ Stopped (exit code: $exit_code)"
+            fi
+        else
+            echo "Service:  ❌ Not installed"
+        fi
+    else
+        if systemctl --user is-active --quiet claudio 2>/dev/null; then
+            service_running=true
+            echo "Service:  ✅ Running"
+        elif systemctl --user list-unit-files 2>/dev/null | grep -q "claudio"; then
+            echo "Service:  ❌ Stopped"
+        else
+            echo "Service:  ❌ Not installed"
+        fi
+    fi
+
+    # Check health endpoint
+    if [ "$service_running" = true ]; then
+        local health
+        health=$(curl -s "http://localhost:${PORT:-8421}/health" 2>/dev/null || echo '{}')
+        local webhook_status
+        webhook_status=$(echo "$health" | jq -r '.checks.telegram_webhook.status // "unknown"' 2>/dev/null)
+
+        if [ "$webhook_status" = "ok" ]; then
+            echo "Webhook:  ✅ Registered"
+        elif [ "$webhook_status" = "mismatch" ]; then
+            local expected actual
+            expected=$(echo "$health" | jq -r '.checks.telegram_webhook.expected // "unknown"' 2>/dev/null)
+            actual=$(echo "$health" | jq -r '.checks.telegram_webhook.actual // "none"' 2>/dev/null)
+            echo "Webhook:  ❌ Mismatch"
+            echo "          Expected: $expected"
+            echo "          Actual:   $actual"
+        else
+            echo "Webhook:  ❌ Not registered"
+        fi
+    else
+        echo "Webhook:  ⚠️  Unknown (service not running)"
+    fi
+
+    # Show tunnel info
+    echo ""
+    if [ -n "$TUNNEL_NAME" ]; then
+        echo "Tunnel:   $TUNNEL_NAME"
+    fi
+    if [ -n "$WEBHOOK_URL" ]; then
+        echo "URL:      $WEBHOOK_URL"
+    fi
+
+    echo ""
+}
+
 cron_install() {
     local health_script="${CLAUDIO_LIB}/health-check.sh"
     local cron_entry="*/5 * * * * ${health_script} ${CRON_MARKER}"

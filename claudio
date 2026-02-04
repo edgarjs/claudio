@@ -32,6 +32,7 @@ usage() {
 Usage: claudio <command> [options]
 
 Commands:
+  status             Show service and webhook status
   start              Start the HTTP server
   install            Install and start the system service
   uninstall [--purge] Stop and remove the service (--purge removes all data)
@@ -49,6 +50,9 @@ history_init
 case "${1:-}" in
     _webhook)
         telegram_handle_webhook "$2"
+        ;;
+    status)
+        service_status
         ;;
     start)
         server_start
