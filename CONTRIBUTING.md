@@ -22,14 +22,14 @@ Claudio is a shell/Python project with no build system or linter.
 Run locally with:
 
 ```bash
-bash bin/claudio start
+./claudio start
 ```
 
 Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo).
 
 ## Project Structure
 
-- `bin/claudio` — Main CLI entry point, dispatches subcommands
+- `claudio` — Main CLI entry point, dispatches subcommands
 - `lib/config.sh` — Config loading and env file management
 - `lib/server.sh` — Starts the Python HTTP server and cloudflared tunnel
 - `lib/server.py` — Python HTTP server (stdlib `http.server`, port 8421)

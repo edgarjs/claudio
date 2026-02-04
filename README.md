@@ -50,14 +50,17 @@ As you should know already, Claude Code has direct access to your machine termin
 ```bash
 git clone https://github.com/edgarjs/claudio.git
 cd claudio
-bin/claudio install
+./claudio install
 ```
 
 This will:
 
 - Install dependencies (`sqlite3`, `jq`, `cloudflared`) if not already present
+- Create a symlink at `~/.local/bin/claudio` so you can run `claudio` from anywhere
 - Prompt you to choose between a **quick tunnel** (ephemeral, no account needed, URL changes on restart) or a **named tunnel** (permanent URL, requires a free Cloudflare account)
 - Configure the tunnel and install a systemd/launchd service
+
+> **Note:** If `~/.local/bin` is not in your PATH, you'll need to add it. See the installation output for instructions.
 
 2. Set up Telegram bot
 
@@ -161,9 +164,9 @@ bats tests/db.bats
 - [x] Health check (`/health`) doesn't verify actual system state
 - [x] Auto-install dependencies (`sqlite3`, `jq`, `cloudflared`) during `claudio install`
 - [x] Show webhook registration failure reason instead of generic warning
+- [x] Add `claudio` to `$PATH` via symlink during install
 
 **Future**
-- [ ] Fix install/update to add `claudio` to `$PATH` (currently contradicts README)
 - [ ] Support for editing messages and reactions
 - [ ] File uploads
 - [ ] Image uploads

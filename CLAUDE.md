@@ -8,7 +8,7 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 
 ## Architecture
 
-- `bin/claudio` — Main CLI entry point, dispatches subcommands (`start`, `install`, `uninstall`, `update`, `restart`, `telegram setup`).
+- `claudio` — Main CLI entry point, dispatches subcommands (`start`, `install`, `uninstall`, `update`, `restart`, `telegram setup`).
 - `lib/config.sh` — Shared config loading, env file management (`$HOME/.claudio/service.env`).
 - `lib/server.sh` — Starts the Python HTTP server and cloudflared tunnel together. Handles ephemeral URL detection and auto webhook registration.
 - `lib/server.py` — Python HTTP server (stdlib `http.server`), listens on port 8421, routes POST `/telegram/webhook`.
@@ -20,6 +20,6 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 
 ## Development
 
-Run locally with `bash bin/claudio start`. Requires `jq`, `curl`, `python3`, `cloudflared`, and `claude` CLI.
+Run locally with `./claudio start`. Requires `jq`, `curl`, `python3`, `cloudflared`, and `claude` CLI.
 
 **Tests:** Run `bats tests/` (requires [bats-core](https://github.com/bats-core/bats-core)). Tests use an isolated `$CLAUDIO_HOME` to avoid touching production data.

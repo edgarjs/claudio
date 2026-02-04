@@ -8,7 +8,7 @@ _service_script_dir() {
     cd "$(dirname "$src")" && pwd
 }
 CLAUDIO_LIB="$(_service_script_dir)"
-CLAUDIO_BIN="${CLAUDIO_LIB}/../bin/claudio"
+CLAUDIO_BIN="${CLAUDIO_LIB}/../claudio"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.claudio.server.plist"
 SYSTEMD_UNIT="$HOME/.config/systemd/user/claudio.service"
 CRON_MARKER="# claudio-health-check"
@@ -92,8 +92,40 @@ deps_install() {
     print_success "All dependencies installed."
 }
 
+symlink_install() {
+    local target_dir="$HOME/.local/bin"
+    local target="$target_dir/claudio"
+
+    mkdir -p "$target_dir"
+
+    # Remove existing symlink or file
+    if [ -L "$target" ] || [ -f "$target" ]; then
+        rm -f "$target"
+    fi
+
+    ln -s "$CLAUDIO_BIN" "$target"
+    print_success "Symlink created: $target -> $CLAUDIO_BIN"
+
+    # Check if ~/.local/bin is in PATH
+    if [[ ":$PATH:" != *":$target_dir:"* ]]; then
+        print_warning "$target_dir is not in your PATH."
+        echo "Add this line to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+    fi
+}
+
+symlink_uninstall() {
+    local target="$HOME/.local/bin/claudio"
+    if [ -L "$target" ]; then
+        rm -f "$target"
+        print_success "Symlink removed: $target"
+    fi
+}
+
 service_install() {
     deps_install
+    symlink_install
     claudio_init
     cloudflared_setup
     claudio_save_env
@@ -277,6 +309,7 @@ service_uninstall() {
     fi
 
     cron_uninstall
+    symlink_uninstall
     print_success "Claudio service removed."
 
     if [ "$purge" = true ]; then
@@ -312,36 +345,42 @@ cron_uninstall() {
 }
 
 service_update() {
-    local os arch
-    os=$(uname -s | tr '[:upper:]' '[:lower:]')
-    arch=$(uname -m)
-    case "$arch" in
-        x86_64) arch="amd64" ;;
-        aarch64|arm64) arch="arm64" ;;
-    esac
+    # Get the project root directory (parent of lib/)
+    local project_dir
+    project_dir="$(cd "$CLAUDIO_LIB/.." && pwd)"
 
-    echo "Checking for updates..."
-    local latest_url
-    latest_url=$(curl -s "https://api.github.com/repos/edgarjs/claudio/releases/latest" | jq -r '.assets[] | select(.name | contains("'"${os}"'") and contains("'"${arch}"'")) | .browser_download_url')
-
-    if [ -z "$latest_url" ] || [ "$latest_url" = "null" ]; then
-        print_warning "No release found for ${os}/${arch}. Downloading generic binary..."
-        latest_url=$(curl -s "https://api.github.com/repos/edgarjs/claudio/releases/latest" | jq -r '.assets[0].browser_download_url // empty')
-    fi
-
-    if [ -z "$latest_url" ]; then
-        print_error "Could not find a release to download."
+    # Check if it's a git repository
+    if [ ! -d "$project_dir/.git" ]; then
+        print_error "Not a git repository: $project_dir"
+        echo "Updates require the original cloned repository."
         exit 1
     fi
 
-    local target
-    target=$(which claudio 2>/dev/null || echo "/usr/local/bin/claudio")
+    echo "Checking for updates in $project_dir..."
 
-    echo "Downloading from: ${latest_url}"
-    curl -sL "$latest_url" -o "$target.tmp"
-    chmod +x "$target.tmp"
-    mv "$target.tmp" "$target"
+    # Fetch and check for updates
+    if ! git -C "$project_dir" fetch origin main 2>/dev/null; then
+        print_error "Failed to fetch updates. Check your internet connection."
+        exit 1
+    fi
 
-    print_success "Updated claudio binary."
+    local local_hash remote_hash
+    local_hash=$(git -C "$project_dir" rev-parse HEAD)
+    remote_hash=$(git -C "$project_dir" rev-parse origin/main)
+
+    if [ "$local_hash" = "$remote_hash" ]; then
+        print_success "Already up to date."
+        return 0
+    fi
+
+    echo "Updating from $(echo "$local_hash" | cut -c1-7) to $(echo "$remote_hash" | cut -c1-7)..."
+
+    if ! git -C "$project_dir" pull --ff-only origin main; then
+        print_error "Failed to update. You may have local changes."
+        echo "Run 'git -C $project_dir status' to check."
+        exit 1
+    fi
+
+    print_success "Claudio updated successfully."
     service_restart
 }
