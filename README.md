@@ -38,8 +38,10 @@ As you should know already, Claude Code has direct access to your machine termin
 ### Requirements
 
 - Claude Code CLI (with Pro/Max subscription)
-- Linux/MacOS/WSL
+- Linux/macOS/WSL
 - Telegram bot token
+- Homebrew (macOS only, for installing dependencies)
+- `sqlite3`, `jq`, `cloudflared` (auto-installed if missing)
 
 ### Setup
 
@@ -53,7 +55,7 @@ bin/claudio install
 
 This will:
 
-- Install `cloudflared` if not already present
+- Install dependencies (`sqlite3`, `jq`, `cloudflared`) if not already present
 - Prompt you to choose between a **quick tunnel** (ephemeral, no account needed, URL changes on restart) or a **named tunnel** (permanent URL, requires a free Cloudflare account)
 - Configure the tunnel and install a systemd/launchd service
 
@@ -157,10 +159,9 @@ bats tests/db.bats
 - [x] Webhook health check cron job
 - [x] No retries with backoff for Telegram API
 - [x] Health check (`/health`) doesn't verify actual system state
+- [x] Auto-install dependencies (`sqlite3`, `jq`, `cloudflared`) during `claudio install`
 
 **Future**
-
-- [ ] Auto-install dependencies (`sqlite3`, `jq`) during `claudio install`
 - [ ] Show webhook registration failure reason instead of generic warning
 - [ ] Fix install/update to add `claudio` to `$PATH` (currently contradicts README)
 - [ ] Support for editing messages and reactions

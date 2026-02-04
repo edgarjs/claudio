@@ -10,7 +10,87 @@ LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.claudio.server.plist"
 SYSTEMD_UNIT="$HOME/.config/systemd/user/claudio.service"
 CRON_MARKER="# claudio-health-check"
 
+deps_install() {
+    echo "Checking dependencies..."
+
+    # Check for missing package-manager dependencies
+    local missing=()
+    for cmd in sqlite3 jq; do
+        if ! command -v "$cmd" > /dev/null 2>&1; then
+            missing+=("$cmd")
+        fi
+    done
+
+    # Install missing packages via package manager
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "Missing: ${missing[*]}"
+        if [[ "$(uname)" == "Darwin" ]]; then
+            if ! command -v brew > /dev/null 2>&1; then
+                echo "Error: Homebrew is required to install dependencies on macOS."
+                echo "Install it from https://brew.sh/ then run 'claudio install' again."
+                exit 1
+            fi
+            brew install "${missing[@]}"
+        else
+            if command -v apt-get > /dev/null 2>&1; then
+                sudo apt-get update && sudo apt-get install -y "${missing[@]}"
+            elif command -v dnf > /dev/null 2>&1; then
+                sudo dnf install -y "${missing[@]}"
+            elif command -v yum > /dev/null 2>&1; then
+                sudo yum install -y "${missing[@]}"
+            elif command -v pacman > /dev/null 2>&1; then
+                sudo pacman -S --noconfirm "${missing[@]}"
+            elif command -v apk > /dev/null 2>&1; then
+                sudo apk add "${missing[@]}"
+            else
+                echo "Error: Could not detect package manager."
+                echo "Please install manually: ${missing[*]}"
+                exit 1
+            fi
+        fi
+
+        for cmd in "${missing[@]}"; do
+            if ! command -v "$cmd" > /dev/null 2>&1; then
+                echo "Error: Failed to install $cmd."
+                exit 1
+            fi
+        done
+    fi
+
+    # Install cloudflared (requires special handling on Linux)
+    if ! command -v cloudflared > /dev/null 2>&1; then
+        echo "Installing cloudflared..."
+        if [[ "$(uname)" == "Darwin" ]]; then
+            if ! command -v brew > /dev/null 2>&1; then
+                echo "Error: Homebrew is required to install cloudflared on macOS."
+                echo "Install it from https://brew.sh/ then run 'claudio install' again."
+                exit 1
+            fi
+            brew install cloudflared
+        else
+            local arch
+            arch=$(uname -m)
+            case "$arch" in
+                x86_64) arch="amd64" ;;
+                aarch64|arm64) arch="arm64" ;;
+            esac
+            local url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}"
+            echo "Downloading from ${url}..."
+            sudo curl -sL "$url" -o /usr/local/bin/cloudflared
+            sudo chmod +x /usr/local/bin/cloudflared
+        fi
+
+        if ! command -v cloudflared > /dev/null 2>&1; then
+            echo "Error: Failed to install cloudflared."
+            exit 1
+        fi
+    fi
+
+    echo "All dependencies installed."
+}
+
 service_install() {
+    deps_install
     claudio_init
     cloudflared_setup
     claudio_save_env
@@ -30,40 +110,6 @@ service_install() {
 }
 
 cloudflared_setup() {
-    # Install cloudflared if missing
-    if ! command -v cloudflared > /dev/null 2>&1; then
-        echo "cloudflared not found. Installing..."
-        if [[ "$(uname)" == "Darwin" ]]; then
-            if command -v brew > /dev/null 2>&1; then
-                brew install cloudflared
-            else
-                echo "Error: Homebrew is required to install cloudflared on macOS."
-                echo "Install it from https://brew.sh/ then run 'claudio install' again."
-                exit 1
-            fi
-        else
-            # Linux: install via official package
-            local arch
-            arch=$(uname -m)
-            case "$arch" in
-                x86_64) arch="amd64" ;;
-                aarch64|arm64) arch="arm64" ;;
-            esac
-            local url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}"
-            echo "Downloading cloudflared from ${url}..."
-            curl -sL "$url" -o /usr/local/bin/cloudflared
-            chmod +x /usr/local/bin/cloudflared
-        fi
-
-        if ! command -v cloudflared > /dev/null 2>&1; then
-            echo "Error: Failed to install cloudflared."
-            exit 1
-        fi
-        echo "cloudflared installed."
-    else
-        echo "cloudflared found: $(which cloudflared)"
-    fi
-
     echo ""
     echo "Choose tunnel type:"
     echo "  1) Quick tunnel (ephemeral, no account needed, URL changes on restart)"
