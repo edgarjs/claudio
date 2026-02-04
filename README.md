@@ -88,6 +88,21 @@ To update Claudio to the latest stable release:
 claudio update
 ```
 
+### Logs
+
+To view recent logs (default 50 lines):
+
+```bash
+claudio log
+```
+
+Follow logs in real time with `-f`, or change the line count with `-n`:
+
+```bash
+claudio log -f
+claudio log -n 100
+```
+
 ### Uninstall
 
 To stop and remove the service run:
