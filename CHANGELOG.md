@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.1.1] - 2026-02-05
+
+### Added
+
+- Health check auto-restart: service automatically restarts when health check fails (max 3 attempts with 3-minute throttle)
+- Telegram alert when service fails to recover after 3 restart attempts
+- Health check state files (`.last_restart_attempt`, `.restart_fail_count`) for tracking restart history
+
+### Changed
+
+- Health check cron interval from every 5 minutes to every 1 minute
+- Progress messages replaced with typing indicator only (no more "Still working on it..." text spam)
+- `IS_SANDBOX` now auto-sets to `1` only when running as root; non-root users don't need it
+
+### Fixed
+
+- Off-by-one in retry count log message (said "4 retries" when there were 5 attempts)
+- Fallback message send now verifies API response (previously silent on failure)
+- `_env_quote` now escapes newlines (prevents malformed service.env)
+- `server.py` OSError handler calls `proc.wait()` to prevent zombie processes
+- `claude.sh` exits with error if HOME cannot be determined
+- Unclosed code blocks in TTS text cleaning no longer delete to EOF
+
+### Security
+
+- Magic byte validation for voice messages (OGG header `4f676753`)
+- Timeouts on voice file downloads (`--connect-timeout 10 --max-time 60`)
+- Voice temp files cleaned up in RETURN trap (prevents orphan files)
+
 ## [1.1.0] - 2026-02-04
 
 ### Added
