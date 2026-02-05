@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.1.0] - 2026-02-04
+
+### Added
+
+- Image upload support: send photos (compressed) or image documents (lossless) to the bot for Claude analysis
+- Per-chat message queue size limit (100) to prevent unbounded memory growth
+- Queue capacity warning when reaching 80% per chat
+- Typing indicator self-terminates if parent process is killed (prevents orphan processes)
+
+### Changed
+
+- Threaded HTTP server to prevent health checks from blocking during long webhook processing
+- Health check caching (30s TTL); only healthy results are cached so recovery is detected immediately
+- Switched conversation history from TSV parsing to SQLite JSON mode + jq (fixes multiline content)
+- Use unit separator delimiter for webhook field parsing (fixes empty field collapse)
+
+### Fixed
+
+- Multiline message content breaking conversation history retrieval
+- SIGTERM deadlock by using `threading.Event` instead of direct `server.shutdown()` in signal handler
+- Literal `\n` in prompt concatenation (use `printf -v`)
+- `echo` to `printf` in log module to prevent flag misinterpretation
+- systemd `EnvironmentFile` compatibility (use double-quoted format instead of `printf %q`)
+- Subprocess proc reference guard in timeout handler
+- HOME fallback uses tilde expansion instead of hardcoded `/root`
+
+### Security
+
+- Image file path whitelist regex (path traversal prevention)
+- Magic byte validation for uploaded images (JPEG, PNG, GIF, WebP)
+- 20 MB file size limit with cleanup on validation failure
+- `curl --max-redirs 0` for image downloads (redirect attack prevention)
+- `chmod 600` on downloaded image files
+- Chat ID validation in Python server (defense in depth)
+
 ## [1.0.0] - 2026-02-04
 
 ### Added
