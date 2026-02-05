@@ -142,6 +142,7 @@ telegram_parse_webhook() {
         .message.caption // "",
         (.message.document.file_id // ""),
         (.message.document.mime_type // ""),
+        (.message.document.file_name // ""),
         (.message.voice.file_id // ""),
         (.message.voice.duration // "")
     ] | join("\u001f")')
@@ -150,7 +151,7 @@ telegram_parse_webhook() {
     IFS=$'\x1f' read -r WEBHOOK_CHAT_ID WEBHOOK_MESSAGE_ID WEBHOOK_TEXT \
         WEBHOOK_FROM_ID WEBHOOK_REPLY_TO_TEXT WEBHOOK_REPLY_TO_FROM \
         WEBHOOK_PHOTO_FILE_ID WEBHOOK_CAPTION \
-        WEBHOOK_DOC_FILE_ID WEBHOOK_DOC_MIME \
+        WEBHOOK_DOC_FILE_ID WEBHOOK_DOC_MIME WEBHOOK_DOC_FILE_NAME \
         WEBHOOK_VOICE_FILE_ID WEBHOOK_VOICE_DURATION <<< "$parsed"
 }
 
@@ -177,11 +178,12 @@ telegram_get_image_info() {
     return 1
 }
 
-telegram_download_file() {
+# Internal helper: resolves file_id, downloads, validates size/empty
+_telegram_download_raw() {
     local file_id="$1"
     local output_path="$2"
+    local label="$3"
 
-    # Resolve file_id to file_path via Telegram API
     local result
     result=$(telegram_api "getFile" -d "file_id=${file_id}")
 
@@ -189,20 +191,20 @@ telegram_download_file() {
     file_path=$(printf '%s' "$result" | jq -r '.result.file_path // empty')
 
     if [ -z "$file_path" ]; then
-        log_error "telegram" "Failed to get file path for file_id: $file_id"
+        log_error "telegram" "Failed to get file path for ${label} file_id: $file_id"
         return 1
     fi
 
     # Whitelist allowed characters in file_path to prevent path traversal and injection
-    if [[ ! "$file_path" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
-        log_error "telegram" "Invalid characters in file path from API"
+    if [[ ! "$file_path" =~ ^[a-zA-Z0-9/_.-]+$ ]] || [[ "$file_path" == *".."* ]]; then
+        log_error "telegram" "Invalid characters in ${label} file path from API"
         return 1
     fi
 
-    # Download the binary file (--max-redirs 0 prevents redirect-based attacks)
+    # Download the file (--max-redirs 0 prevents redirect-based attacks)
     local download_url="https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file_path}"
     if ! curl -sf --connect-timeout 10 --max-time 60 --max-redirs 0 -o "$output_path" "$download_url"; then
-        log_error "telegram" "Failed to download file: $file_path"
+        log_error "telegram" "Failed to download ${label}: $file_path"
         return 1
     fi
 
@@ -211,14 +213,25 @@ telegram_download_file() {
     local file_size
     file_size=$(wc -c < "$output_path")
     if [ "$file_size" -gt "$max_size" ]; then
-        log_error "telegram" "Downloaded file exceeds size limit: ${file_size} bytes"
+        log_error "telegram" "Downloaded ${label} exceeds size limit: ${file_size} bytes"
         rm -f "$output_path"
         return 1
     fi
 
     if [ "$file_size" -eq 0 ]; then
-        log_error "telegram" "Downloaded file is empty"
+        log_error "telegram" "Downloaded ${label} is empty"
         rm -f "$output_path"
+        return 1
+    fi
+
+    log "telegram" "Downloaded ${label} to: $output_path (${file_size} bytes)"
+}
+
+telegram_download_file() {
+    local file_id="$1"
+    local output_path="$2"
+
+    if ! _telegram_download_raw "$file_id" "$output_path" "image"; then
         return 1
     fi
 
@@ -236,48 +249,17 @@ telegram_download_file() {
             return 1
             ;;
     esac
+}
 
-    log "telegram" "Downloaded file to: $output_path (${file_size} bytes)"
+telegram_download_document() {
+    _telegram_download_raw "$1" "$2" "document"
 }
 
 telegram_download_voice() {
     local file_id="$1"
     local output_path="$2"
 
-    local result
-    result=$(telegram_api "getFile" -d "file_id=${file_id}")
-
-    local file_path
-    file_path=$(printf '%s' "$result" | jq -r '.result.file_path // empty')
-
-    if [ -z "$file_path" ]; then
-        log_error "telegram" "Failed to get file path for voice file_id: $file_id"
-        return 1
-    fi
-
-    if [[ ! "$file_path" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
-        log_error "telegram" "Invalid characters in voice file path from API"
-        return 1
-    fi
-
-    local download_url="https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file_path}"
-    if ! curl -sf --connect-timeout 10 --max-time 60 --max-redirs 0 -o "$output_path" "$download_url"; then
-        log_error "telegram" "Failed to download voice file: $file_path"
-        return 1
-    fi
-
-    local max_size=$((20 * 1024 * 1024))
-    local file_size
-    file_size=$(wc -c < "$output_path")
-    if [ "$file_size" -gt "$max_size" ]; then
-        log_error "telegram" "Downloaded voice file exceeds size limit: ${file_size} bytes"
-        rm -f "$output_path"
-        return 1
-    fi
-
-    if [ "$file_size" -eq 0 ]; then
-        log_error "telegram" "Downloaded voice file is empty"
-        rm -f "$output_path"
+    if ! _telegram_download_raw "$file_id" "$output_path" "voice"; then
         return 1
     fi
 
@@ -292,8 +274,6 @@ telegram_download_voice() {
             return 1
             ;;
     esac
-
-    log "telegram" "Downloaded voice file to: $output_path (${file_size} bytes)"
 }
 
 telegram_handle_webhook() {
@@ -316,6 +296,12 @@ telegram_handle_webhook() {
         has_image=true
     fi
 
+    # Determine if this message contains a document (non-image file)
+    local has_document=false
+    if [ -n "$WEBHOOK_DOC_FILE_ID" ] && [[ "$WEBHOOK_DOC_MIME" != image/* ]]; then
+        has_document=true
+    fi
+
     # Determine if this message contains a voice message
     local has_voice=false
     if [ -n "$WEBHOOK_VOICE_FILE_ID" ]; then
@@ -326,8 +312,8 @@ telegram_handle_webhook() {
     local text="${WEBHOOK_TEXT:-$WEBHOOK_CAPTION}"
     local message_id="$WEBHOOK_MESSAGE_ID"
 
-    # Must have either text, image, or voice
-    if [ -z "$text" ] && [ "$has_image" != true ] && [ "$has_voice" != true ]; then
+    # Must have either text, image, document, or voice
+    if [ -z "$text" ] && [ "$has_image" != true ] && [ "$has_document" != true ] && [ "$has_voice" != true ]; then
         return
     fi
 
@@ -387,32 +373,59 @@ ${text}"
         chmod 600 "$image_file"
     fi
 
+    # Download document if present (after command check to avoid unnecessary downloads)
+    local doc_file=""
+    if [ "$has_document" = true ]; then
+        local doc_tmpdir="${CLAUDIO_PATH}/tmp"
+        if ! mkdir -p "$doc_tmpdir"; then
+            log_error "telegram" "Failed to create document temp directory: $doc_tmpdir"
+            rm -f "$image_file"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't process your file. Please try again." "$message_id"
+            return
+        fi
+        # Derive extension from original file name, fallback to mime type
+        local doc_ext="bin"
+        if [ -n "$WEBHOOK_DOC_FILE_NAME" ]; then
+            local name_ext="${WEBHOOK_DOC_FILE_NAME##*.}"
+            if [ -n "$name_ext" ] && [ "$name_ext" != "$WEBHOOK_DOC_FILE_NAME" ] && [[ "$name_ext" =~ ^[a-zA-Z0-9]+$ ]] && [ ${#name_ext} -le 10 ]; then
+                doc_ext="$name_ext"
+            fi
+        fi
+        doc_file=$(mktemp "${doc_tmpdir}/claudio-doc-XXXXXX.${doc_ext}")
+        if ! telegram_download_document "$WEBHOOK_DOC_FILE_ID" "$doc_file"; then
+            rm -f "$doc_file" "$image_file"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't download your file. Please try again." "$message_id"
+            return
+        fi
+        chmod 600 "$doc_file"
+    fi
+
     # Download and transcribe voice message if present
     local voice_file=""
     local transcription=""
     if [ "$has_voice" = true ]; then
         if [[ -z "$ELEVENLABS_API_KEY" ]]; then
-            rm -f "$image_file"
+            rm -f "$image_file" "$doc_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "_Voice messages require ELEVENLABS_API_KEY to be configured._" "$message_id"
             return
         fi
         local voice_tmpdir="${CLAUDIO_PATH}/tmp"
         if ! mkdir -p "$voice_tmpdir"; then
             log_error "telegram" "Failed to create voice temp directory: $voice_tmpdir"
-            rm -f "$image_file"
+            rm -f "$image_file" "$doc_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't process your voice message. Please try again." "$message_id"
             return
         fi
         voice_file=$(mktemp "${voice_tmpdir}/claudio-voice-XXXXXX.oga")
         if ! telegram_download_voice "$WEBHOOK_VOICE_FILE_ID" "$voice_file"; then
-            rm -f "$voice_file" "$image_file"
+            rm -f "$voice_file" "$image_file" "$doc_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't download your voice message. Please try again." "$message_id"
             return
         fi
         chmod 600 "$voice_file"
 
         if ! transcription=$(stt_transcribe "$voice_file"); then
-            rm -f "$voice_file" "$image_file"
+            rm -f "$voice_file" "$image_file" "$doc_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't transcribe your voice message. Please try again." "$message_id"
             return
         fi
@@ -443,6 +456,23 @@ Describe this image."
         fi
     fi
 
+    # Build prompt with document reference
+    if [ -n "$doc_file" ]; then
+        local doc_name="${WEBHOOK_DOC_FILE_NAME:-document}"
+        # Sanitize filename: strip chars that could break prompt framing or enable injection
+        doc_name=$(printf '%s' "$doc_name" | tr -cd 'a-zA-Z0-9._- ' | head -c 255)
+        doc_name="${doc_name:-document}"
+        if [ -n "$text" ]; then
+            text="[The user sent a file \"${doc_name}\" at ${doc_file}]
+
+${text}"
+        else
+            text="[The user sent a file \"${doc_name}\" at ${doc_file}]
+
+Read this file and summarize its contents."
+        fi
+    fi
+
     # Store descriptive text in history (temp file path is meaningless after cleanup)
     local history_text="$text"
     if [ "$has_voice" = true ]; then
@@ -453,6 +483,13 @@ Describe this image."
             history_text="[Sent an image with caption: ${caption}]"
         else
             history_text="[Sent an image]"
+        fi
+    elif [ -n "$doc_file" ]; then
+        local caption="${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}"
+        if [ -n "$caption" ]; then
+            history_text="[Sent a file \"${doc_name}\" with caption: ${caption}]"
+        else
+            history_text="[Sent a file \"${doc_name}\"]"
         fi
     fi
     history_add "user" "$history_text"
@@ -470,7 +507,7 @@ Describe this image."
     ) &
     local typing_pid=$!
     local tts_file=""
-    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null; rm -f "$image_file" "$voice_file" "$tts_file"' RETURN
+    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null; rm -f "$image_file" "$doc_file" "$voice_file" "$tts_file"' RETURN
 
     local response
     response=$(claude_run "$text")

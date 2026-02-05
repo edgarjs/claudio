@@ -153,6 +153,15 @@ You can send photos or image files directly to Claudio. Include an optional capt
 
 Images are validated (magic byte verification, size check) and stored temporarily during processing, then deleted immediately after Claude responds.
 
+### Files
+
+You can send documents (PDF, text files, CSV, code files, etc.) to Claudio. Include an optional caption to tell Claude what to do with the file, or send it without a caption and Claude will read and summarize it.
+
+- **Any file type** supported by Telegram's document upload (files with image MIME types are routed through the image pipeline instead)
+- **Size limit:** 20 MB (Telegram bot API constraint)
+- Claude reads the file directly from disk — text-based formats (PDF, CSV, code, plain text) work best; binary files may produce limited results
+- Files are stored temporarily during processing, then deleted immediately after Claude responds
+
 ### System Prompt
 
 Claudio appends a system prompt that defines its persona, core principles, and communication style (optimized for chat). The default is generated on first run at `$HOME/.claudio/SYSTEM_PROMPT.md`. You can customize it by editing that file — it's read at runtime so no need to restart.
@@ -237,11 +246,11 @@ bats tests/db.bats
 - [x] Image uploads
 - [x] Voice messages from bot (TTS)
 - [x] Voice messages from human (STT)
+- [x] File uploads
 
 **Future**
 
 - [ ] Support for editing messages and reactions
-- [ ] File uploads
 - [ ] Rate limiting
 - [ ] Support for group chats
 
