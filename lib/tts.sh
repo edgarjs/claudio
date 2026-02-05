@@ -84,8 +84,10 @@ tts_convert() {
 tts_strip_markdown() {
     local text="$1"
 
-    printf '%s' "$text" | sed -E \
-        -e '/^```/,/^```/d' \
+    printf '%s' "$text" | awk '
+        /^```/ { in_code = !in_code; next }
+        !in_code { print }
+    ' | sed -E \
         -e 's/`[^`]*`//g' \
         -e 's/\*\*\*([^*]*)\*\*\*/\1/g' \
         -e 's/\*\*([^*]*)\*\*/\1/g' \

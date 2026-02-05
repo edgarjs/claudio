@@ -15,7 +15,7 @@ TUNNEL_NAME="${TUNNEL_NAME:-}"
 TUNNEL_HOSTNAME="${TUNNEL_HOSTNAME:-}"
 MAX_HISTORY_LINES="${MAX_HISTORY_LINES:-100}"
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
-IS_SANDBOX=1
+IS_SANDBOX="${IS_SANDBOX:-}"
 WEBHOOK_RETRY_DELAY="${WEBHOOK_RETRY_DELAY:-60}"
 ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-}"
 ELEVENLABS_VOICE_ID="${ELEVENLABS_VOICE_ID:-iP95p4xoKVk53GoZ742B}"
@@ -29,6 +29,12 @@ claudio_init() {
         # shellcheck source=/dev/null
         source "$CLAUDIO_ENV_FILE"
         set +a
+    fi
+
+    # Claude Code requires IS_SANDBOX=1 when running as root
+    if [ "$(id -u)" -eq 0 ] && [ "$IS_SANDBOX" != "1" ]; then
+        IS_SANDBOX=1
+        export IS_SANDBOX
     fi
 
     # Auto-generate WEBHOOK_SECRET if not set (required for security)
@@ -91,6 +97,7 @@ _env_quote() {
     val="${val//\"/\\\"}"
     val="${val//\$/\\\$}"
     val="${val//\`/\\\`}"
+    val="${val//$'\n'/\\n}"
     printf '%s' "$val"
 }
 

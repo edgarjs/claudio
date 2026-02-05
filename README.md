@@ -37,7 +37,7 @@ The whole purpose of Claudio is to give you remote access to Claude Code from yo
 
 **⚠️ CLAUDE CODE IS EXECUTED WITH `--dangerously-skip-permissions`, `--permission-mode bypassPermissions`, AND `--disable-slash-commands`**
 
-**The environment variable `IS_SANDBOX=1` is also set to bypass the root user restriction.**
+**When running as root, `IS_SANDBOX=1` is required for Claude Code to start. Claudio sets this automatically when it detects root. For non-root users, this variable is optional.**
 
 These flags are intentional. Since there's no human in front of the terminal to approve permission prompts, Claude Code must run autonomously. Claudio mitigates the risk through: webhook secret validation (HMAC), single authorized `chat_id`, and binding the HTTP server to localhost only (external access goes through cloudflared).
 
@@ -177,6 +177,7 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 
 - `MODEL` — Claude model to use. Accepts `haiku`, `sonnet`, or `opus`. Default: `haiku`. Can also be changed at runtime via Telegram commands `/haiku`, `/sonnet`, `/opus`.
 - `MAX_HISTORY_LINES` — Maximum number of conversation messages to keep in the database. Older messages are trimmed automatically. Default: `100`.
+- `IS_SANDBOX` — Set to `1` to allow Claude Code to run in sandbox mode. Automatically enabled when running as root. Optional for non-root users.
 
 **Telegram**
 
