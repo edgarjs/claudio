@@ -333,13 +333,16 @@ Describe this image."
     history_add "user" "$history_text"
 
     # Send typing indicator first, then progress messages if Claude takes long
+    # The subshell monitors its parent PID to self-terminate if the parent
+    # is killed (e.g., SIGKILL), which would prevent the RETURN trap from firing
     (
+        parent_pid=$$
         telegram_send_typing "$WEBHOOK_CHAT_ID"
         sleep 15
         iteration=0
-        while true; do
+        while kill -0 "$parent_pid" 2>/dev/null; do
             telegram_send_progress "$WEBHOOK_CHAT_ID" "$iteration"
-            ((iteration++))
+            ((++iteration))
             sleep 30
         done
     ) &

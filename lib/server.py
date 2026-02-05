@@ -121,9 +121,12 @@ def enqueue_webhook(body):
             chat_queues[chat_id] = deque()
 
         # Prevent unbounded queue growth
-        if len(chat_queues[chat_id]) >= MAX_QUEUE_SIZE:
-            sys.stderr.write(f"[queue] Queue full for chat {chat_id}, dropping message\n")
+        queue_size = len(chat_queues[chat_id])
+        if queue_size >= MAX_QUEUE_SIZE:
+            sys.stderr.write(f"[queue] Queue full for chat {chat_id} ({queue_size}/{MAX_QUEUE_SIZE}), dropping message\n")
             return
+        if queue_size >= MAX_QUEUE_SIZE * 0.8:
+            sys.stderr.write(f"[queue] Warning: queue for chat {chat_id} at {queue_size}/{MAX_QUEUE_SIZE} ({queue_size * 100 // MAX_QUEUE_SIZE}%)\n")
 
         chat_queues[chat_id].append(body)
 
@@ -237,8 +240,13 @@ def check_health():
         checks["telegram_webhook"] = {"status": "not_configured"}
 
     result = {"status": status, "checks": checks}
-    _health_cache["result"] = result
-    _health_cache["time"] = time.time()
+    # Only cache healthy results — unhealthy states should be re-checked
+    # immediately so recovery is detected without waiting for TTL expiry
+    if status == "healthy":
+        _health_cache["result"] = result
+        _health_cache["time"] = time.time()
+    else:
+        _health_cache["result"] = None
     return result
 
 
