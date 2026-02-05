@@ -33,7 +33,7 @@ After Claude Code finishes, it outputs the response in plain text to stdout for 
 
 As you should know already, Claude Code has direct access to your machine terminal and filesystem. Beware this will expose it to your Telegram account.
 
-**⚠️ CLAUDE CODE IS EXECUTED WITH `--dangerously-skip-permissions`, `--disable-slash-commands`, AND `--permission-mode bypassPermissions`**
+**⚠️ CLAUDE CODE IS EXECUTED WITH `IS_SANDBOX=1`, `--dangerously-skip-permissions`, `--disable-slash-commands`, AND `--permission-mode bypassPermissions`**
 
 ### Requirements
 
@@ -182,6 +182,7 @@ bats tests/db.bats
 - [x] Add `claudio` to `$PATH` via symlink during install
 
 **Future**
+
 - [ ] Support for editing messages and reactions
 - [ ] File uploads
 - [ ] Image uploads
