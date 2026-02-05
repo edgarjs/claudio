@@ -47,7 +47,7 @@ claude_run() {
     local claude_cmd
     local home="${HOME:-}"
     if [ -z "$home" ]; then
-        home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6) || home="/root"
+        home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6) || home=$(eval echo "~")
     fi
     if [ -x "$home/.local/bin/claude" ]; then
         claude_cmd="$home/.local/bin/claude"
