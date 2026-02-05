@@ -364,7 +364,11 @@ ${text}"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't process your image. Please try again." "$message_id"
             return
         fi
-        image_file=$(mktemp "${img_tmpdir}/claudio-img-XXXXXX.${WEBHOOK_IMAGE_EXT}")
+        image_file=$(mktemp "${img_tmpdir}/claudio-img-XXXXXX.${WEBHOOK_IMAGE_EXT}") || {
+            log_error "telegram" "Failed to create temp file for image"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't process your image. Please try again." "$message_id"
+            return
+        }
         if ! telegram_download_file "$WEBHOOK_IMAGE_FILE_ID" "$image_file"; then
             rm -f "$image_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't download your image. Please try again." "$message_id"
@@ -391,7 +395,12 @@ ${text}"
                 doc_ext="$name_ext"
             fi
         fi
-        doc_file=$(mktemp "${doc_tmpdir}/claudio-doc-XXXXXX.${doc_ext}")
+        doc_file=$(mktemp "${doc_tmpdir}/claudio-doc-XXXXXX.${doc_ext}") || {
+            log_error "telegram" "Failed to create temp file for document"
+            rm -f "$image_file"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't process your file. Please try again." "$message_id"
+            return
+        }
         if ! telegram_download_document "$WEBHOOK_DOC_FILE_ID" "$doc_file"; then
             rm -f "$doc_file" "$image_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't download your file. Please try again." "$message_id"
@@ -416,7 +425,12 @@ ${text}"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't process your voice message. Please try again." "$message_id"
             return
         fi
-        voice_file=$(mktemp "${voice_tmpdir}/claudio-voice-XXXXXX.oga")
+        voice_file=$(mktemp "${voice_tmpdir}/claudio-voice-XXXXXX.oga") || {
+            log_error "telegram" "Failed to create temp file for voice"
+            rm -f "$image_file" "$doc_file"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't process your voice message. Please try again." "$message_id"
+            return
+        }
         if ! telegram_download_voice "$WEBHOOK_VOICE_FILE_ID" "$voice_file"; then
             rm -f "$voice_file" "$image_file" "$doc_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't download your voice message. Please try again." "$message_id"
@@ -523,7 +537,11 @@ Read this file and summarize its contents."
                 log_error "telegram" "Failed to create TTS temp directory: $tts_tmpdir"
                 telegram_send_message "$WEBHOOK_CHAT_ID" "$response" "$message_id"
             else
-                tts_file=$(mktemp "${tts_tmpdir}/claudio-tts-XXXXXX.mp3")
+                tts_file=$(mktemp "${tts_tmpdir}/claudio-tts-XXXXXX.mp3") || {
+                    log_error "telegram" "Failed to create temp file for TTS"
+                    telegram_send_message "$WEBHOOK_CHAT_ID" "$response" "$message_id"
+                    return
+                }
                 chmod 600 "$tts_file"
 
                 if tts_convert "$response" "$tts_file"; then
