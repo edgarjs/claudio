@@ -232,13 +232,13 @@ bats tests/db.bats
 - [x] Add `claudio` to `$PATH` via symlink during install
 - [x] Environment variables documentation
 - [x] Image uploads
+- [x] Voice messages from bot (TTS)
 
 **Future**
 
 - [ ] Support for editing messages and reactions
 - [ ] File uploads
 - [ ] Rate limiting
-- [x] Voice messages from bot (TTS)
 - [ ] Voice messages from human (STT)
 - [ ] Support for group chats
 
