@@ -377,11 +377,11 @@ service_status() {
 
 cron_install() {
     local health_script="${CLAUDIO_LIB}/health-check.sh"
-    local cron_entry="*/5 * * * * export PATH=/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin:\$PATH && . ${CLAUDIO_ENV_FILE} && ${health_script} >> ${CLAUDIO_PATH}/cron.log 2>&1 ${CRON_MARKER}"
+    local cron_entry="* * * * * export PATH=/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin:\$PATH && . ${CLAUDIO_ENV_FILE} && ${health_script} >> ${CLAUDIO_PATH}/cron.log 2>&1 ${CRON_MARKER}"
 
     # Remove existing entry if present, then add new one
     (crontab -l 2>/dev/null | grep -v "$CRON_MARKER"; echo "$cron_entry") | crontab -
-    print_success "Health check cron job installed (runs every 5 minutes)."
+    print_success "Health check cron job installed (runs every minute)."
 }
 
 cron_uninstall() {
