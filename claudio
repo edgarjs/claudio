@@ -27,6 +27,8 @@ source "$LIB_DIR/telegram.sh"
 source "$LIB_DIR/server.sh"
 # shellcheck source=lib/service.sh
 source "$LIB_DIR/service.sh"
+# shellcheck source=lib/backup.sh
+source "$LIB_DIR/backup.sh"
 
 usage() {
     cat <<EOF
@@ -43,6 +45,9 @@ Commands:
   restart            Restart the service
   telegram setup     Set up Telegram bot and webhook
   log [-f] [-n N]    Show logs (-f to follow, -n for line count)
+  backup <dest>      Run backup (--hours N, --days N for retention)
+  backup status <dest> Show backup status
+  backup cron <dest> Install/remove hourly backup cron job
   version            Show version
 
 EOF
@@ -50,6 +55,28 @@ EOF
 }
 
 claudio_init
+
+# Parse --hours and --days flags from remaining args, setting
+# parsed_hours and parsed_days variables in the caller's scope
+_parse_retention_args() {
+    parsed_hours=24
+    parsed_days=7
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --hours)
+                if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
+                    echo "Error: --hours requires a positive integer." >&2; exit 1
+                fi
+                parsed_hours="$2"; shift 2 ;;
+            --days)
+                if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
+                    echo "Error: --days requires a positive integer." >&2; exit 1
+                fi
+                parsed_days="$2"; shift 2 ;;
+            *) echo "Error: Unknown argument '$1'." >&2; exit 1 ;;
+        esac
+    done
+}
 
 case "${1:-}" in
     version|--version|-v)
@@ -105,6 +132,57 @@ case "${1:-}" in
             tail_args+=(-f)
         fi
         tail "${tail_args[@]}" "$CLAUDIO_LOG_FILE"
+        ;;
+    backup)
+        shift
+        backup_subcmd="${1:-}"
+        case "$backup_subcmd" in
+            status)
+                if [[ -z "${2:-}" ]]; then
+                    echo "Usage: claudio backup status <destination>" >&2
+                    exit 1
+                fi
+                backup_status "$2"
+                ;;
+            cron)
+                shift
+                cron_action="${1:-install}"
+                case "$cron_action" in
+                    install)
+                        shift || true
+                        backup_dest="${1:-}"
+                        if [[ -z "$backup_dest" ]]; then
+                            echo "Usage: claudio backup cron install <destination> [--hours N] [--days N]" >&2
+                            exit 1
+                        fi
+                        shift
+                        _parse_retention_args "$@"
+                        backup_cron_install "$backup_dest" "$parsed_hours" "$parsed_days"
+                        ;;
+                    uninstall|remove)
+                        backup_cron_uninstall
+                        ;;
+                    *)
+                        echo "Usage: claudio backup cron {install <dest> [--hours N] [--days N]|uninstall}" >&2
+                        exit 1
+                        ;;
+                esac
+                ;;
+            ""|--help|-h)
+                echo "Usage: claudio backup <destination> [--hours N] [--days N]"
+                echo "       claudio backup status <destination>"
+                echo "       claudio backup cron install <destination> [--hours N] [--days N]"
+                echo "       claudio backup cron uninstall"
+                exit 0
+                ;;
+            *)
+                # Direct backup run: claudio backup <dest> [--hours N] [--days N]
+                backup_dest="$backup_subcmd"
+                shift || true
+                _parse_retention_args "$@"
+                backup_run "$backup_dest" "$parsed_hours" "$parsed_days"
+                ;;
+        esac
         ;;
     telegram)
         case "${2:-}" in
