@@ -8,18 +8,21 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 
 ## Architecture
 
-- `claudio` — Main CLI entry point, dispatches subcommands (`start`, `install`, `uninstall`, `update`, `restart`, `telegram setup`).
+- `claudio` — Main CLI entry point, dispatches subcommands (`status`, `start`, `install`, `uninstall`, `update`, `restart`, `log`, `telegram setup`, `version`).
 - `lib/config.sh` — Shared config loading, env file management (`$HOME/.claudio/service.env`).
-- `lib/server.sh` — Starts the Python HTTP server and cloudflared tunnel together. Handles ephemeral URL detection and auto webhook registration.
+- `lib/server.sh` — Starts the Python HTTP server and cloudflared named tunnel together. Handles webhook registration with retry logic.
 - `lib/server.py` — Python HTTP server (stdlib `http.server`), listens on port 8421, routes POST `/telegram/webhook`.
 - `lib/telegram.sh` — Telegram Bot API integration (send messages, parse webhooks, setup wizard).
 - `lib/claude.sh` — Claude Code CLI wrapper with conversation context injection.
 - `lib/history.sh` — Conversation history wrapper, delegates to `lib/db.sh` for SQLite storage.
-- `lib/service.sh` — systemd (Linux) and launchd (macOS) service management. Also handles cloudflared installation and tunnel setup (ephemeral or named) during `claudio install`.
+- `lib/db.sh` — SQLite database layer for conversation storage.
+- `lib/log.sh` — Centralized logging with module prefix and file output.
+- `lib/health-check.sh` — Cron health-check script that calls `/health` endpoint.
+- `lib/service.sh` — systemd (Linux) and launchd (macOS) service management. Also handles cloudflared installation and named tunnel setup during `claudio install`.
 - Runtime config/state lives in `$HOME/.claudio/` (not in the repo).
 
 ## Development
 
 Run locally with `./claudio start`. Requires `jq`, `curl`, `python3`, `cloudflared`, and `claude` CLI.
 
-**Tests:** Run `bats tests/` (requires [bats-core](https://github.com/bats-core/bats-core)). Tests use an isolated `$CLAUDIO_HOME` to avoid touching production data.
+**Tests:** Run `bats tests/` (requires [bats-core](https://github.com/bats-core/bats-core)). Tests use an isolated `$CLAUDIO_PATH` to avoid touching production data.

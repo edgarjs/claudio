@@ -4,18 +4,16 @@
 # All log messages go to a single file with module prefix
 
 CLAUDIO_LOG_FILE="${CLAUDIO_LOG_FILE:-$HOME/.claudio/claudio.log}"
+_LOG_DIR_INIT=false
 
-# Print error message
 print_error() {
     echo "‼️ Error: $*" >&2
 }
 
-# Print warning message
 print_warning() {
     echo "⚠️  Warning: $*"
 }
 
-# Print success message
 print_success() {
     echo "✅ $*"
 }
@@ -29,11 +27,12 @@ log() {
     local msg
     msg="[$(date '+%Y-%m-%d %H:%M:%S')] [$module] $*"
 
-    # Ensure log directory exists
-    mkdir -p "$(dirname "$CLAUDIO_LOG_FILE")"
+    if ! $_LOG_DIR_INIT; then
+        mkdir -p "$(dirname "$CLAUDIO_LOG_FILE")"
+        _LOG_DIR_INIT=true
+    fi
 
-    # Write to log file
-    echo "$msg" >> "$CLAUDIO_LOG_FILE"
+    printf '%s\n' "$msg" >> "$CLAUDIO_LOG_FILE"
 }
 
 # Log an error message (same as log but marked as ERROR)

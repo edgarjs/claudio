@@ -21,9 +21,9 @@ Claudio is an adapter for Claude Code CLI and Telegram. It makes a tunnel betwee
 
 ## Overview
 
-Claudio starts a local HTTP server that listens on port 8421, and creates a tunnel using [cloudflared](https://github.com/cloudflare/cloudflared). When the user sends a message from Telegram, it's sent to `<cloudflare-tunnel-url>/telegram/webhook` and forwarded it to the Claude Code CLI.
+Claudio starts a local HTTP server that listens on port 8421, and creates a tunnel using [cloudflared](https://github.com/cloudflare/cloudflared). When the user sends a message from Telegram, it's sent to `<cloudflare-tunnel-url>/telegram/webhook` and forwarded to the Claude Code CLI.
 
-The user message is passed as a one-shot prompt, along with some context to maintain continuity. Only the last 5 message pairs (user + assistant) are injected in the context to keep it small.
+The user message is passed as a one-shot prompt, along with some context to maintain continuity. The last 100 messages are kept by default (configurable via `MAX_HISTORY_LINES`).
 
 After Claude Code finishes, it outputs the response in plain text to stdout for Claudio to capture it and forward it to Telegram API.
 
@@ -33,9 +33,13 @@ After Claude Code finishes, it outputs the response in plain text to stdout for 
 
 ### **CAUTION: Security Risk**
 
-As you should know already, Claude Code has direct access to your machine terminal and filesystem. Beware this will expose it to your Telegram account.
+The whole purpose of Claudio is to give you remote access to Claude Code from your Telegram app — without breaking Anthropic's Terms of Service. This means Claude Code runs with full permissions by design:
 
-**⚠️ CLAUDE CODE IS EXECUTED WITH `IS_SANDBOX=1`, `--dangerously-skip-permissions`, `--disable-slash-commands`, AND `--permission-mode bypassPermissions`**
+**⚠️ CLAUDE CODE IS EXECUTED WITH `--dangerously-skip-permissions`, `--permission-mode bypassPermissions`, AND `--disable-slash-commands`**
+
+**The environment variable `IS_SANDBOX=1` is also set to bypass the root user restriction.**
+
+These flags are intentional. Since there's no human in front of the terminal to approve permission prompts, Claude Code must run autonomously. Claudio mitigates the risk through: webhook secret validation (HMAC), single authorized `chat_id`, and binding the HTTP server to localhost only (external access goes through cloudflared).
 
 ### Requirements
 
@@ -43,6 +47,7 @@ As you should know already, Claude Code has direct access to your machine termin
 - Linux/macOS/WSL
 - Telegram bot token
 - Homebrew (macOS only, for installing dependencies)
+- `python3`, `curl`
 - `sqlite3`, `jq`, `cloudflared` (auto-installed if missing)
 
 ### Setup
@@ -59,8 +64,8 @@ This will:
 
 - Install dependencies (`sqlite3`, `jq`, `cloudflared`) if not already present
 - Create a symlink at `~/.local/bin/claudio` so you can run `claudio` from anywhere
-- Prompt you to choose between a **quick tunnel** (ephemeral, no account needed, URL changes on restart) or a **named tunnel** (permanent URL, requires a free Cloudflare account)
-- Configure the tunnel and install a systemd/launchd service
+- Set up a Cloudflare **named tunnel** (permanent URL, requires a free Cloudflare account)
+- Install a systemd/launchd service
 
 > **Note:** If `~/.local/bin` is not in your PATH, you'll need to add it. See the installation output for instructions.
 
@@ -78,9 +83,15 @@ The setup wizard will confirm when it receives the message and finish. Once done
 
 > For security, only the `chat_id` captured during setup is authorized to send messages.
 
-> If using a quick tunnel, the Telegram webhook is re-registered automatically each time the service starts.
-
 > A cron job runs every 5 minutes to verify the webhook is registered and re-registers it if needed.
+
+### Status
+
+Check the service and webhook status:
+
+```bash
+claudio status
+```
 
 ### Update
 
@@ -129,18 +140,7 @@ Claudio uses Haiku by default. If you want to switch to another model, just send
 
 ### System Prompt
 
-To make Claude Code respond with chat-friendly formatted messages, Claudio adjusts the system prompt by appending this:
-
-```markdown
-## Communication Style
-
-- You communicate through a chat interface. Messages should feel like chat — not essays.
-- Keep response to 1-2 short paragraphs. If more detail is needed, give the key point first, then ask if the human wants you to elaborate.
-- NEVER use markdown tables under any circumstances. Use lists instead.
-- NEVER use markdown headers (`#`), horizontal rules (`---`), or image syntax (`![](...)`). These are not supported in chat apps. Use **bold text** for emphasis instead of headers.
-```
-
-Once Claudio is installed, you can customize this prompt by editing the file at `$HOME/.claudio/SYSTEM_PROMPT.md`. The file is read at runtime so no need to restart.
+Claudio appends a system prompt that defines its persona, core principles, and communication style (optimized for chat). The default is generated on first run at `$HOME/.claudio/SYSTEM_PROMPT.md`. You can customize it by editing that file — it's read at runtime so no need to restart.
 
 ### Configuration
 
@@ -169,7 +169,7 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `TELEGRAM_CHAT_ID` — Authorized Telegram chat ID. Only messages from this chat are processed. Set automatically during `claudio telegram setup`.
 - `WEBHOOK_URL` — Public URL where Telegram sends webhook updates (e.g. `https://claudio.example.com`). Set automatically when using a named tunnel.
 - `WEBHOOK_SECRET` — HMAC secret for validating incoming webhook requests. Auto-generated on first run if not set.
-- `WEBHOOK_RETRY_DELAY` — Seconds between webhook registration retry attempts on startup. Default: `60`.
+- `WEBHOOK_RETRY_DELAY` — Seconds between webhook registration retry attempts. Default: `60`.
 
 **Tunnel**
 

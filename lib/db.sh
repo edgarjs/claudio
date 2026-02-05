@@ -47,22 +47,24 @@ db_get_context() {
         return 1
     fi
 
-    local context="Here is the recent conversation history for context:\n\n"
-    local has_history=false
+    # Use JSON output to safely handle multiline content
+    local json_result
+    json_result=$(printf '.mode json\nSELECT role, content FROM (SELECT role, content, id FROM messages ORDER BY id DESC LIMIT %d) ORDER BY id ASC;\n' "$limit" | sqlite3 "$CLAUDIO_DB_FILE")
 
-    while IFS='|' read -r role content; do
-        if [ -n "$role" ]; then
-            if [ "$role" = "user" ]; then
-                context+="H: ${content}\n\n"
-            else
-                context+="A: ${content}\n\n"
-            fi
-            has_history=true
-        fi
-    done < <(printf "SELECT role, content FROM (SELECT role, content, id FROM messages ORDER BY id DESC LIMIT %d) ORDER BY id ASC;\n" "$limit" | sqlite3 "$CLAUDIO_DB_FILE")
+    if [ -z "$json_result" ] || [ "$json_result" = "[]" ]; then
+        echo ""
+        return
+    fi
 
-    if [ "$has_history" = true ]; then
-        echo -e "$context"
+    local context
+    context=$(printf '%s' "$json_result" | jq -r '
+        "Here is the recent conversation history for context:\n\n" +
+        ([.[] | (if .role == "user" then "H" else "A" end) + ": " + .content] | join("\n\n")) +
+        "\n\n"
+    ')
+
+    if [ -n "$context" ]; then
+        printf '%s\n' "$context"
     else
         echo ""
     fi

@@ -202,6 +202,7 @@ ${text}"
         done
     ) &
     local typing_pid=$!
+    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null' RETURN
 
     local response
     response=$(claude_run "$text")

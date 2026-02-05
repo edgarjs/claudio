@@ -3,14 +3,22 @@
 import hmac
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 import urllib.error
-from collections import deque
+from collections import deque, OrderedDict
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+
+MAX_BODY_SIZE = 1024 * 1024  # 1 MB
+MAX_QUEUE_SIZE = 100  # Max queued messages per chat
+WEBHOOK_TIMEOUT = 600  # 10 minutes max per Claude invocation
+HEALTH_CACHE_TTL = 30  # seconds between health check API calls
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,13 +28,17 @@ LOG_FILE = os.path.join(CLAUDIO_PATH, "claudio.log")
 PORT = int(os.environ.get("PORT", 8421))
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 
 # Per-chat message queues for serial processing
 chat_queues = {}  # chat_id -> deque of webhook bodies
-queue_lock = threading.Lock()  # Global lock for accessing chat_queues
-seen_updates = set()  # Track processed update_ids to prevent duplicates
-MAX_SEEN_UPDATES = 1000  # Limit memory usage
+queue_lock = threading.Lock()
+seen_updates = OrderedDict()  # Track processed update_ids to prevent duplicates
+MAX_SEEN_UPDATES = 1000
+
+# Health check cache
+_health_cache = {"result": None, "time": 0}
 
 
 def parse_webhook(body):
@@ -51,7 +63,7 @@ def process_queue(chat_id):
                 return
             body = chat_queues[chat_id].popleft()
 
-        # Process this message (blocking)
+        proc = None
         try:
             with open(LOG_FILE, "a") as log_fh:
                 # Ensure PATH includes ~/.local/bin for claude command
@@ -62,12 +74,25 @@ def process_queue(chat_id):
                     env["PATH"] = f"{local_bin}{os.pathsep}{env.get('PATH', '')}"
 
                 proc = subprocess.Popen(
-                    [CLAUDIO_BIN, "_webhook", body],
+                    [CLAUDIO_BIN, "_webhook"],
+                    stdin=subprocess.PIPE,
                     stdout=log_fh,
                     stderr=log_fh,
                     env=env,
+                    start_new_session=True,
                 )
-                proc.wait()  # Wait for completion before processing next
+                proc.communicate(input=body.encode(), timeout=WEBHOOK_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            if proc is not None:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+                except OSError:
+                    pass  # Process already exited
+            sys.stderr.write(f"[queue] Timeout processing message for chat {chat_id}\n")
         except Exception as e:
             sys.stderr.write(f"[queue] Error processing message for chat {chat_id}: {e}\n")
 
@@ -78,26 +103,30 @@ def enqueue_webhook(body):
     if not chat_id:
         return  # Invalid webhook, skip
 
+    # Validate chat_id against authorized chat (defense in depth, also checked in bash)
+    if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
+        return
+
     with queue_lock:
         # Deduplicate: skip if we've already seen this update_id
         if update_id is not None:
             if update_id in seen_updates:
                 return  # Duplicate webhook, skip
-            seen_updates.add(update_id)
-            # Limit memory usage by pruning old entries
-            if len(seen_updates) > MAX_SEEN_UPDATES:
-                # Remove oldest entries (set doesn't preserve order, so clear half)
-                to_remove = list(seen_updates)[:MAX_SEEN_UPDATES // 2]
-                for uid in to_remove:
-                    seen_updates.discard(uid)
+            seen_updates[update_id] = True
+            while len(seen_updates) > MAX_SEEN_UPDATES:
+                seen_updates.popitem(last=False)
 
         # Initialize queue for this chat if needed
         if chat_id not in chat_queues:
             chat_queues[chat_id] = deque()
 
+        # Prevent unbounded queue growth
+        if len(chat_queues[chat_id]) >= MAX_QUEUE_SIZE:
+            sys.stderr.write(f"[queue] Queue full for chat {chat_id}, dropping message\n")
+            return
+
         chat_queues[chat_id].append(body)
 
-        # Start processor thread if this is the only message (queue was empty)
         if len(chat_queues[chat_id]) == 1:
             thread = threading.Thread(
                 target=process_queue,
@@ -105,6 +134,10 @@ def enqueue_webhook(body):
                 daemon=True
             )
             thread.start()
+
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -121,16 +154,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/telegram/webhook":
-            # Verify webhook secret (required for security)
+            # Verify webhook secret before reading body
             token = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-            # Use constant-time comparison to prevent timing attacks
             if not hmac.compare_digest(token, WEBHOOK_SECRET):
                 self._respond(401, {"error": "unauthorized"})
                 return
-            length = int(self.headers.get("Content-Length", 0))
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (ValueError, TypeError):
+                self._respond(400, {"error": "invalid content-length"})
+                return
+            if length > MAX_BODY_SIZE:
+                self._respond(413, {"error": "payload too large"})
+                return
             body = self.rfile.read(length).decode("utf-8") if length else ""
             self._respond(200, {"ok": True})
-            # Add to per-chat queue for serial processing
             enqueue_webhook(body)
         else:
             self._respond(404, {"error": "not found"})
@@ -146,6 +184,10 @@ class Handler(BaseHTTPRequestHandler):
 
 def check_health():
     """Verify system health by checking Telegram webhook status."""
+    now = time.time()
+    if _health_cache["result"] and (now - _health_cache["time"]) < HEALTH_CACHE_TTL:
+        return _health_cache["result"]
+
     checks = {}
     status = "healthy"
 
@@ -194,16 +236,19 @@ def check_health():
     else:
         checks["telegram_webhook"] = {"status": "not_configured"}
 
-    return {"status": status, "checks": checks}
+    result = {"status": status, "checks": checks}
+    _health_cache["result"] = result
+    _health_cache["time"] = time.time()
+    return result
 
 
 def _register_webhook(webhook_url):
     """Attempt to re-register the Telegram webhook."""
     try:
-        data = f"url={webhook_url}"
+        params = {"url": webhook_url, "allowed_updates": '["message"]'}
         if WEBHOOK_SECRET:
-            data += f"&secret_token={WEBHOOK_SECRET}"
-        data += "&allowed_updates=[\"message\"]"
+            params["secret_token"] = WEBHOOK_SECRET
+        data = urllib.parse.urlencode(params)
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
         req = urllib.request.Request(
@@ -238,8 +283,18 @@ def main():
         sys.exit(1)
 
     # Bind to localhost only - cloudflared handles external access
-    server = HTTPServer(("127.0.0.1", PORT), Handler)
+    server = ThreadedHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Claudio server listening on port {PORT}")
+
+    # Use threading.Event to avoid calling server.shutdown() directly from
+    # signal handler, which can deadlock if a request is being processed
+    shutdown_event = threading.Event()
+    signal.signal(signal.SIGTERM, lambda s, f: shutdown_event.set())
+    shutdown_thread = threading.Thread(
+        target=lambda: (shutdown_event.wait(), server.shutdown()),
+        daemon=True,
+    )
+    shutdown_thread.start()
 
     # Run health check in background thread
     health_thread = threading.Thread(target=startup_health_check, daemon=True)

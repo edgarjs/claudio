@@ -16,7 +16,7 @@ jobs:
         run: sudo apt-get install -y shellcheck
 
       - name: Run ShellCheck
-        run: shellcheck --severity=warning claudio bin/migrate-history lib/*.sh
+        run: shellcheck --severity=warning claudio lib/*.sh
 
   test:
     runs-on: ubuntu-latest

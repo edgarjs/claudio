@@ -10,7 +10,7 @@ claude_run() {
 
     local full_prompt=""
     if [ -n "$context" ]; then
-        full_prompt="${context}---\n\nNow respond to this new message:\n\n${prompt}"
+        printf -v full_prompt '%s---\n\nNow respond to this new message:\n\n%s' "$context" "$prompt"
     else
         full_prompt="$prompt"
     fi
@@ -45,7 +45,10 @@ claude_run() {
     # Note: Don't use 'command -v' as it's a bash builtin that doesn't work correctly
     # when PATH is modified by parent processes (e.g., Python subprocess)
     local claude_cmd
-    local home="${HOME:=$(eval echo ~"$(whoami)")}"
+    local home="${HOME:-}"
+    if [ -z "$home" ]; then
+        home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6) || home="/root"
+    fi
     if [ -x "$home/.local/bin/claude" ]; then
         claude_cmd="$home/.local/bin/claude"
     elif [ -x "/usr/local/bin/claude" ]; then
@@ -63,5 +66,5 @@ claude_run() {
         log "claude" "$(cat "$stderr_output")"
     fi
 
-    echo "$response"
+    printf '%s\n' "$response"
 }

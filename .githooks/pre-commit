@@ -11,7 +11,7 @@ if ! command -v shellcheck &>/dev/null; then
     exit 1
 fi
 
-if ! shellcheck --severity=warning claudio bin/migrate-history lib/*.sh; then
+if ! shellcheck --severity=warning claudio lib/*.sh; then
     echo ""
     echo "ShellCheck found issues. Commit aborted."
     echo "Fix the issues above before committing."

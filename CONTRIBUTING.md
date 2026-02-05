@@ -17,7 +17,7 @@ Contributions are welcome! Bug reports, feature requests, documentation fixes, a
 
 ## Development Setup
 
-Claudio is a shell/Python project with no build system or linter.
+Claudio is a shell/Python project with no build system. [ShellCheck](https://www.shellcheck.net/) is used for linting and runs automatically via a pre-commit hook.
 
 Run locally with:
 
@@ -35,7 +35,10 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/server.py` — Python HTTP server (stdlib `http.server`, port 8421)
 - `lib/telegram.sh` — Telegram Bot API integration
 - `lib/claude.sh` — Claude Code CLI wrapper with conversation context
-- `lib/history.sh` — Conversation history management
+- `lib/history.sh` — Conversation history management, delegates to `lib/db.sh`
+- `lib/db.sh` — SQLite database layer for conversation storage
+- `lib/log.sh` — Centralized logging
+- `lib/health-check.sh` — Cron health-check script for webhook monitoring
 - `lib/service.sh` — systemd/launchd service management and cloudflared setup
 
 ## Running Tests
@@ -61,7 +64,7 @@ Tests are located in the `tests/` directory. When contributing, please:
 
 ## Git Hooks
 
-The project includes a pre-commit hook that runs tests before each commit. To enable it:
+The project includes a pre-commit hook that runs ShellCheck and tests before each commit. To enable it:
 
 ```bash
 git config core.hooksPath .githooks
@@ -85,7 +88,7 @@ This ensures tests pass before any commit is allowed.
 
 ## Security
 
-Claudio runs Claude Code with `--dangerously-skip-permissions`. When contributing:
+Claudio runs Claude Code with `--dangerously-skip-permissions` and `--permission-mode bypassPermissions` by design — there's no human at the terminal to approve prompts. When contributing:
 
 - Be mindful of security implications in any change
 - Do not introduce vulnerabilities that could expose user systems
@@ -93,4 +96,4 @@ Claudio runs Claude Code with `--dangerously-skip-permissions`. When contributin
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under the Apache License 2.0.

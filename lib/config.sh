@@ -16,6 +16,7 @@ TUNNEL_HOSTNAME="${TUNNEL_HOSTNAME:-}"
 MAX_HISTORY_LINES="${MAX_HISTORY_LINES:-100}"
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
 IS_SANDBOX=1
+WEBHOOK_RETRY_DELAY="${WEBHOOK_RETRY_DELAY:-60}"
 
 claudio_init() {
     mkdir -p "$CLAUDIO_PATH"
@@ -67,7 +68,7 @@ You bring **perspective** — seeing problems from angles your human might miss 
 
 ## Self improvement
 
-Part of your code lives at `$HOME/projects/claudio/`. When asked about **you** or **yourself**, they may be refering to this project.
+Part of your code lives at `$HOME/projects/claudio/`. When asked about **you** or **yourself**, they may be referring to this project.
 
 ## Communication style
 
@@ -79,21 +80,34 @@ PROMPT
     fi
 }
 
+_env_quote() {
+    # Escape for double-quoted env file values
+    # Compatible with both bash source and systemd EnvironmentFile
+    local val="$1"
+    val="${val//\\/\\\\}"
+    val="${val//\"/\\\"}"
+    val="${val//\$/\\\$}"
+    val="${val//\`/\\\`}"
+    printf '%s' "$val"
+}
+
 claudio_save_env() {
     # Use restrictive permissions for file with secrets
     (
         umask 077
-        cat > "$CLAUDIO_ENV_FILE" <<EOF
-PORT="${PORT}"
-MODEL="${MODEL}"
-TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}"
-TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID}"
-WEBHOOK_URL="${WEBHOOK_URL}"
-TUNNEL_NAME="${TUNNEL_NAME}"
-TUNNEL_HOSTNAME="${TUNNEL_HOSTNAME}"
-MAX_HISTORY_LINES="${MAX_HISTORY_LINES}"
-WEBHOOK_SECRET="${WEBHOOK_SECRET}"
-IS_SANDBOX="${IS_SANDBOX}"
-EOF
+        # Double-quoted values for bash source + systemd EnvironmentFile compatibility
+        {
+            printf 'PORT="%s"\n' "$(_env_quote "$PORT")"
+            printf 'MODEL="%s"\n' "$(_env_quote "$MODEL")"
+            printf 'TELEGRAM_BOT_TOKEN="%s"\n' "$(_env_quote "$TELEGRAM_BOT_TOKEN")"
+            printf 'TELEGRAM_CHAT_ID="%s"\n' "$(_env_quote "$TELEGRAM_CHAT_ID")"
+            printf 'WEBHOOK_URL="%s"\n' "$(_env_quote "$WEBHOOK_URL")"
+            printf 'TUNNEL_NAME="%s"\n' "$(_env_quote "$TUNNEL_NAME")"
+            printf 'TUNNEL_HOSTNAME="%s"\n' "$(_env_quote "$TUNNEL_HOSTNAME")"
+            printf 'MAX_HISTORY_LINES="%s"\n' "$(_env_quote "$MAX_HISTORY_LINES")"
+            printf 'WEBHOOK_SECRET="%s"\n' "$(_env_quote "$WEBHOOK_SECRET")"
+            printf 'WEBHOOK_RETRY_DELAY="%s"\n' "$(_env_quote "$WEBHOOK_RETRY_DELAY")"
+            printf 'IS_SANDBOX="%s"\n' "$(_env_quote "$IS_SANDBOX")"
+        } > "$CLAUDIO_ENV_FILE"
     )
 }

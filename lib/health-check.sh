@@ -25,7 +25,7 @@ set +a
 PORT="${PORT:-8421}"
 
 # Call health endpoint - it will check and fix webhook if needed
-response=$(curl -s -w "\n%{http_code}" "http://localhost:${PORT}/health" 2>/dev/null || echo -e "\n000")
+response=$(curl -s -w "\n%{http_code}" "http://localhost:${PORT}/health" 2>/dev/null || printf '\n000')
 http_code=$(echo "$response" | tail -n1)
 body=$(echo "$response" | sed '$d')
 

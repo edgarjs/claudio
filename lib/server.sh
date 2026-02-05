@@ -7,13 +7,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
 # Usage: register_webhook <tunnel_url>
 register_webhook() {
     local tunnel_url="$1"
-    local webhook_retry_delay="${WEBHOOK_RETRY_DELAY:-60}"  # 1 minute between retries
+    local webhook_retry_delay="${WEBHOOK_RETRY_DELAY:-60}"
+    local max_retries=10
+    local attempt=0
 
     log "telegram" "Registering webhook at ${tunnel_url}/telegram/webhook..."
 
-    while true; do
+    while [ "$attempt" -lt "$max_retries" ]; do
+        ((attempt++)) || true
         local result
-        local curl_args=("-s" "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" "-d" "url=${tunnel_url}/telegram/webhook")
+        local curl_args=("-s" "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" "-d" "url=${tunnel_url}/telegram/webhook" "-d" 'allowed_updates=["message"]')
         if [ -n "$WEBHOOK_SECRET" ]; then
             curl_args+=("-d" "secret_token=${WEBHOOK_SECRET}")
         fi
@@ -34,7 +37,7 @@ register_webhook() {
         local error_desc
         error_desc=$(echo "$result" | jq -r '.description // "Unknown error"')
 
-        log_warn "telegram" "Webhook registration failed: ${error_desc}. Retrying in ${webhook_retry_delay}s..."
+        log_warn "telegram" "Webhook registration failed (attempt ${attempt}/${max_retries}): ${error_desc}. Retrying in ${webhook_retry_delay}s..."
 
         # Countdown timer for interactive mode, simple sleep for daemon
         if [ -t 0 ]; then
@@ -47,6 +50,10 @@ register_webhook() {
             sleep "$webhook_retry_delay"
         fi
     done
+
+    log_error "telegram" "Webhook registration failed after ${max_retries} attempts."
+    print_error "Webhook registration failed after ${max_retries} attempts."
+    return 1
 }
 
 server_start() {
