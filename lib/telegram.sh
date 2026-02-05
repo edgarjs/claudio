@@ -40,11 +40,11 @@ telegram_api() {
             sleep "$delay"
         fi
 
-        ((attempt++))
+        ((attempt++)) || true
     done
 
     # All retries exhausted
-    log_error "telegram" "API failed after $max_retries retries (HTTP $http_code)"
+    log_error "telegram" "API failed after $((max_retries + 1)) attempts (HTTP $http_code)"
     echo "$body"
     return 1
 }
@@ -78,14 +78,18 @@ telegram_send_message() {
         result=$(telegram_api "sendMessage" "${args[@]}")
         # If markdown fails, retry without parse_mode
         local ok
-        ok=$(echo "$result" | jq -r '.ok // empty')
+        ok=$(echo "$result" | jq -r '.ok // empty' 2>/dev/null)
         if [ "$ok" != "true" ]; then
             # Rebuild args without parse_mode
             args=(-d "chat_id=${chat_id}" --data-urlencode "text=${chunk}")
             if [ "$should_reply" = true ]; then
                 args+=(-d "reply_to_message_id=${reply_to_message_id}")
             fi
-            telegram_api "sendMessage" "${args[@]}" > /dev/null 2>&1
+            result=$(telegram_api "sendMessage" "${args[@]}") || true
+            ok=$(echo "$result" | jq -r '.ok // empty' 2>/dev/null)
+            if [ "$ok" != "true" ]; then
+                log_error "telegram" "Failed to send message after markdown fallback for chat $chat_id"
+            fi
         fi
     done
 }
@@ -100,7 +104,14 @@ telegram_send_voice() {
         args+=(-F "reply_to_message_id=${reply_to_message_id}")
     fi
 
-    telegram_api "sendVoice" "${args[@]}"
+    local result
+    result=$(telegram_api "sendVoice" "${args[@]}")
+    local ok
+    ok=$(echo "$result" | jq -r '.ok // empty')
+    if [ "$ok" != "true" ]; then
+        log_error "telegram" "sendVoice failed: $result"
+        return 1
+    fi
 }
 
 telegram_send_typing() {
@@ -111,22 +122,6 @@ telegram_send_typing() {
         -d "action=typing" > /dev/null 2>&1 || true
 }
 
-# Progress messages to show while Claude is working
-PROGRESS_MESSAGES=(
-    "_Still working on it..._"
-    "_This is taking a bit longer, hang tight..._"
-    "_Still processing, almost there..._"
-    "_Working through this one..._"
-    "_Bear with me, still on it..._"
-)
-
-telegram_send_progress() {
-    local chat_id="$1"
-    local iteration="$2"
-    local index=$(( iteration % ${#PROGRESS_MESSAGES[@]} ))
-    local msg="${PROGRESS_MESSAGES[$index]}"
-    telegram_send_message "$chat_id" "$msg" > /dev/null 2>&1 || true
-}
 
 telegram_parse_webhook() {
     local body="$1"
@@ -265,15 +260,8 @@ telegram_handle_webhook() {
         return
     fi
 
-    # If this is a reply, prepend the original message as context
-    if [ -n "$text" ] && [ -n "$WEBHOOK_REPLY_TO_TEXT" ]; then
-        local reply_from="${WEBHOOK_REPLY_TO_FROM:-someone}"
-        text="[Replying to ${reply_from}: \"${WEBHOOK_REPLY_TO_TEXT}\"]
-
-${text}"
-    fi
-
-    # Handle commands (from text or caption)
+    # Handle commands BEFORE prepending reply context, so commands work
+    # even when sent as replies to other messages
     case "$text" in
         /opus)
             MODEL="opus"
@@ -315,6 +303,14 @@ ${text}"
             return
             ;;
     esac
+
+    # If this is a reply, prepend the original message as context
+    if [ -n "$text" ] && [ -n "$WEBHOOK_REPLY_TO_TEXT" ]; then
+        local reply_from="${WEBHOOK_REPLY_TO_FROM:-someone}"
+        text="[Replying to ${reply_from}: \"${WEBHOOK_REPLY_TO_TEXT}\"]
+
+${text}"
+    fi
 
     log "telegram" "Received message from chat_id=$WEBHOOK_CHAT_ID"
 
@@ -361,18 +357,15 @@ Describe this image."
     fi
     history_add "user" "$history_text"
 
-    # Send typing indicator first, then progress messages if Claude takes long
+    # Send typing indicator while Claude is working
+    # Telegram typing status lasts ~5s; we resend every 15s (gap is acceptable to avoid 429 rate limits)
     # The subshell monitors its parent PID to self-terminate if the parent
     # is killed (e.g., SIGKILL), which would prevent the RETURN trap from firing
     (
         parent_pid=$$
-        telegram_send_typing "$WEBHOOK_CHAT_ID"
-        sleep 15
-        iteration=0
         while kill -0 "$parent_pid" 2>/dev/null; do
-            telegram_send_progress "$WEBHOOK_CHAT_ID" "$iteration"
-            ((++iteration))
-            sleep 30
+            telegram_send_typing "$WEBHOOK_CHAT_ID"
+            sleep 15
         done
     ) &
     local typing_pid=$!
@@ -381,9 +374,6 @@ Describe this image."
 
     local response
     response=$(claude_run "$text")
-
-    kill "$typing_pid" 2>/dev/null || true
-    wait "$typing_pid" 2>/dev/null || true
 
     if [ -n "$response" ]; then
         history_add "assistant" "$response"

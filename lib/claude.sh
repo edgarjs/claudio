@@ -15,11 +15,6 @@ claude_run() {
         full_prompt="$prompt"
     fi
 
-    local system_prompt=""
-    if [ -f "$CLAUDIO_PROMPT_FILE" ]; then
-        system_prompt=$(cat "$CLAUDIO_PROMPT_FILE")
-    fi
-
     local -a claude_args=(
         --dangerously-skip-permissions
         --disable-slash-commands
@@ -27,9 +22,16 @@ claude_run() {
         --no-chrome
         --no-session-persistence
         --permission-mode bypassPermissions
-        --append-system-prompt "$system_prompt"
         -p "$full_prompt"
     )
+
+    if [ -f "$CLAUDIO_PROMPT_FILE" ]; then
+        local system_prompt
+        system_prompt=$(cat "$CLAUDIO_PROMPT_FILE")
+        if [ -n "$system_prompt" ]; then
+            claude_args+=(--append-system-prompt "$system_prompt")
+        fi
+    fi
 
     # Only add fallback model if it differs from the primary model
     if [ "$MODEL" != "haiku" ]; then
@@ -48,6 +50,10 @@ claude_run() {
     local home="${HOME:-}"
     if [ -z "$home" ]; then
         home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6) || home=$(eval echo "~")
+    fi
+    if [ -z "$home" ]; then
+        log "claude" "Error: Cannot determine HOME directory"
+        return 1
     fi
     if [ -x "$home/.local/bin/claude" ]; then
         claude_cmd="$home/.local/bin/claude"

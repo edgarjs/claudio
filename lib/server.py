@@ -34,6 +34,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 
 # Per-chat message queues for serial processing
 chat_queues = {}  # chat_id -> deque of webhook bodies
+chat_active = {}  # chat_id -> bool, True if a processor thread is running
 queue_lock = threading.Lock()
 seen_updates = OrderedDict()  # Track processed update_ids to prevent duplicates
 MAX_SEEN_UPDATES = 1000
@@ -61,6 +62,7 @@ def process_queue(chat_id):
                 # Queue empty, clean up
                 if chat_id in chat_queues:
                     del chat_queues[chat_id]
+                chat_active.pop(chat_id, None)
                 return
             body = chat_queues[chat_id].popleft()
 
@@ -83,6 +85,11 @@ def process_queue(chat_id):
                     start_new_session=True,
                 )
                 proc.communicate(input=body.encode(), timeout=WEBHOOK_TIMEOUT)
+                if proc.returncode != 0:
+                    sys.stderr.write(
+                        f"[queue] Webhook handler exited with code {proc.returncode} "
+                        f"for chat {chat_id}\n"
+                    )
         except subprocess.TimeoutExpired:
             if proc is not None:
                 try:
@@ -92,10 +99,14 @@ def process_queue(chat_id):
                     os.killpg(proc.pid, signal.SIGKILL)
                     proc.wait()
                 except OSError:
-                    pass  # Process already exited
+                    try:
+                        proc.wait()
+                    except Exception:
+                        pass
             sys.stderr.write(f"[queue] Timeout processing message for chat {chat_id}\n")
         except Exception as e:
             sys.stderr.write(f"[queue] Error processing message for chat {chat_id}: {e}\n")
+            time.sleep(1)  # Avoid tight loop on persistent errors
 
 
 def enqueue_webhook(body):
@@ -131,7 +142,8 @@ def enqueue_webhook(body):
 
         chat_queues[chat_id].append(body)
 
-        if len(chat_queues[chat_id]) == 1:
+        if not chat_active.get(chat_id):
+            chat_active[chat_id] = True
             thread = threading.Thread(
                 target=process_queue,
                 args=(chat_id,),
@@ -189,7 +201,7 @@ class Handler(BaseHTTPRequestHandler):
 def check_health():
     """Verify system health by checking Telegram webhook status."""
     now = time.time()
-    if _health_cache["result"] and (now - _health_cache["time"]) < HEALTH_CACHE_TTL:
+    if _health_cache["result"] and 0 <= (now - _health_cache["time"]) < HEALTH_CACHE_TTL:
         return _health_cache["result"]
 
     checks = {}
