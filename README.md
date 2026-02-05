@@ -140,7 +140,7 @@ Claudio uses Haiku by default. If you want to switch to another model, just send
 
 ### Voice
 
-Claudio supports voice messages in both directions using ElevenLabs. Set `ELEVENLABS_API_KEY` in your `service.env` to enable voice features. When you send a voice message, Claudio transcribes it (STT), processes it, and responds with both an audio message and text. Text messages always get text-only responses.
+Claudio supports voice messages in both directions using ElevenLabs. Set `ELEVENLABS_API_KEY` in your `service.env` to enable voice features (`ELEVENLABS_VOICE_ID` defaults to Chris if not set). When you send a voice message, Claudio transcribes it (STT), processes it, and responds with a voice message (as a reply) followed by a text version for reference. Text messages always get text-only responses. If `ELEVENLABS_API_KEY` is not set, voice messages will be rejected with an error reply.
 
 ### Images
 
@@ -191,6 +191,7 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 
 - `ELEVENLABS_API_KEY` — API key for ElevenLabs. Required for voice messages (both TTS and STT).
 - `ELEVENLABS_VOICE_ID` — ElevenLabs voice ID to use for TTS. Default: `iP95p4xoKVk53GoZ742B` (Chris).
+- `ELEVENLABS_MODEL` — ElevenLabs TTS model. Default: `eleven_multilingual_v2`.
 - `ELEVENLABS_STT_MODEL` — ElevenLabs STT model. Default: `scribe_v1`.
 
 **Tunnel**

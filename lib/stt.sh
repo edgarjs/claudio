@@ -4,7 +4,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
 
 ELEVENLABS_STT_API="https://api.elevenlabs.io/v1/speech-to-text"
-ELEVENLABS_STT_MODEL="${ELEVENLABS_STT_MODEL:-scribe_v1}"
+# ELEVENLABS_STT_MODEL default is set in config.sh
 
 # Transcribe audio file using ElevenLabs Speech-to-Text API
 # Usage: stt_transcribe <audio_file>

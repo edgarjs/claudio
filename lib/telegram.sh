@@ -201,7 +201,7 @@ telegram_download_file() {
 
     # Download the binary file (--max-redirs 0 prevents redirect-based attacks)
     local download_url="https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file_path}"
-    if ! curl -sf --max-redirs 0 -o "$output_path" "$download_url"; then
+    if ! curl -sf --connect-timeout 10 --max-time 60 --max-redirs 0 -o "$output_path" "$download_url"; then
         log_error "telegram" "Failed to download file: $file_path"
         return 1
     fi
@@ -212,6 +212,12 @@ telegram_download_file() {
     file_size=$(wc -c < "$output_path")
     if [ "$file_size" -gt "$max_size" ]; then
         log_error "telegram" "Downloaded file exceeds size limit: ${file_size} bytes"
+        rm -f "$output_path"
+        return 1
+    fi
+
+    if [ "$file_size" -eq 0 ]; then
+        log_error "telegram" "Downloaded file is empty"
         rm -f "$output_path"
         return 1
     fi
@@ -383,28 +389,30 @@ ${text}"
 
     # Download and transcribe voice message if present
     local voice_file=""
+    local transcription=""
     if [ "$has_voice" = true ]; then
         if [[ -z "$ELEVENLABS_API_KEY" ]]; then
+            rm -f "$image_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "_Voice messages require ELEVENLABS_API_KEY to be configured._" "$message_id"
             return
         fi
         local voice_tmpdir="${CLAUDIO_PATH}/tmp"
         if ! mkdir -p "$voice_tmpdir"; then
             log_error "telegram" "Failed to create voice temp directory: $voice_tmpdir"
+            rm -f "$image_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't process your voice message. Please try again." "$message_id"
             return
         fi
         voice_file=$(mktemp "${voice_tmpdir}/claudio-voice-XXXXXX.oga")
         if ! telegram_download_voice "$WEBHOOK_VOICE_FILE_ID" "$voice_file"; then
-            rm -f "$voice_file"
+            rm -f "$voice_file" "$image_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't download your voice message. Please try again." "$message_id"
             return
         fi
         chmod 600 "$voice_file"
 
-        local transcription
         if ! transcription=$(stt_transcribe "$voice_file"); then
-            rm -f "$voice_file"
+            rm -f "$voice_file" "$image_file"
             telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't transcribe your voice message. Please try again." "$message_id"
             return
         fi
@@ -438,7 +446,7 @@ Describe this image."
     # Store descriptive text in history (temp file path is meaningless after cleanup)
     local history_text="$text"
     if [ "$has_voice" = true ]; then
-        history_text="[Sent a voice message: ${text}]"
+        history_text="[Sent a voice message: ${transcription}]"
     elif [ -n "$image_file" ]; then
         local caption="${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}"
         if [ -n "$caption" ]; then
@@ -471,7 +479,8 @@ Describe this image."
         history_add "assistant" "$response"
 
         # Respond with voice when the user sent a voice message
-        if [ "$has_voice" = true ] && [[ -n "$ELEVENLABS_API_KEY" ]]; then
+        # (ELEVENLABS_API_KEY is guaranteed non-empty here — checked at voice download)
+        if [ "$has_voice" = true ]; then
             local tts_tmpdir="${CLAUDIO_PATH}/tmp"
             if ! mkdir -p "$tts_tmpdir"; then
                 log_error "telegram" "Failed to create TTS temp directory: $tts_tmpdir"
