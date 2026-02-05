@@ -1,5 +1,7 @@
 # Claudio
 
+![](header.png)
+
 Claudio is an adapter for Claude Code CLI and Telegram. It makes a tunnel between a private network and Telegram's API. So that users can chat with Claude Code remotely, in a safe way.
 
 ```

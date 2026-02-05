@@ -1,8 +1,31 @@
 # Changelog
 
+## [1.0.0] - 2026-02-04
+
+### Added
+
+- `claudio log` command with `-f` (follow) and `-n` (line count) options
+- Environment variables documentation in README
+
+### Changed
+
+- Set `IS_SANDBOX=1` in service env by default
+- Remove unused `TUNNEL_TYPE` variable; tunnel mode is now determined by `TUNNEL_NAME`
+
+### Fixed
+
+- Claude CLI command resolution in webhook handler and cron job
+- PATH and environment variables in systemd unit for claude CLI
+- Call `init` before `install` to ensure dependencies are available
+
+### Security
+
+- Stop logging conversation message content
+
 ## [1.0.0-beta] - 2026-02-03
 
 ### Added
+
 - Telegram bot integration with webhook support
 - Claude Code CLI integration for processing messages
 - Cloudflare named tunnel support for secure webhook delivery
@@ -19,6 +42,7 @@
 - PATH integration via symlink to ~/.local/bin
 
 ### Security
+
 - Webhook secret token validation
 - Chat ID restriction to authorized users only
 - Constant-time comparison for webhook authentication
