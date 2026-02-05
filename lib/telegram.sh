@@ -141,14 +141,17 @@ telegram_parse_webhook() {
         (.message.photo[-1].file_id // ""),
         .message.caption // "",
         (.message.document.file_id // ""),
-        (.message.document.mime_type // "")
+        (.message.document.mime_type // ""),
+        (.message.voice.file_id // ""),
+        (.message.voice.duration // "")
     ] | join("\u001f")')
 
-    # shellcheck disable=SC2034  # WEBHOOK_FROM_ID, WEBHOOK_DOC_* available for use by telegram_get_image_info
+    # shellcheck disable=SC2034  # WEBHOOK_FROM_ID, WEBHOOK_DOC_*, WEBHOOK_VOICE_* available for use
     IFS=$'\x1f' read -r WEBHOOK_CHAT_ID WEBHOOK_MESSAGE_ID WEBHOOK_TEXT \
         WEBHOOK_FROM_ID WEBHOOK_REPLY_TO_TEXT WEBHOOK_REPLY_TO_FROM \
         WEBHOOK_PHOTO_FILE_ID WEBHOOK_CAPTION \
-        WEBHOOK_DOC_FILE_ID WEBHOOK_DOC_MIME <<< "$parsed"
+        WEBHOOK_DOC_FILE_ID WEBHOOK_DOC_MIME \
+        WEBHOOK_VOICE_FILE_ID WEBHOOK_VOICE_DURATION <<< "$parsed"
 }
 
 telegram_get_image_info() {
@@ -231,6 +234,62 @@ telegram_download_file() {
     log "telegram" "Downloaded file to: $output_path (${file_size} bytes)"
 }
 
+telegram_download_voice() {
+    local file_id="$1"
+    local output_path="$2"
+
+    local result
+    result=$(telegram_api "getFile" -d "file_id=${file_id}")
+
+    local file_path
+    file_path=$(printf '%s' "$result" | jq -r '.result.file_path // empty')
+
+    if [ -z "$file_path" ]; then
+        log_error "telegram" "Failed to get file path for voice file_id: $file_id"
+        return 1
+    fi
+
+    if [[ ! "$file_path" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+        log_error "telegram" "Invalid characters in voice file path from API"
+        return 1
+    fi
+
+    local download_url="https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file_path}"
+    if ! curl -sf --connect-timeout 10 --max-time 60 --max-redirs 0 -o "$output_path" "$download_url"; then
+        log_error "telegram" "Failed to download voice file: $file_path"
+        return 1
+    fi
+
+    local max_size=$((20 * 1024 * 1024))
+    local file_size
+    file_size=$(wc -c < "$output_path")
+    if [ "$file_size" -gt "$max_size" ]; then
+        log_error "telegram" "Downloaded voice file exceeds size limit: ${file_size} bytes"
+        rm -f "$output_path"
+        return 1
+    fi
+
+    if [ "$file_size" -eq 0 ]; then
+        log_error "telegram" "Downloaded voice file is empty"
+        rm -f "$output_path"
+        return 1
+    fi
+
+    # Validate magic bytes to ensure the file is actually an OGG audio file
+    local header
+    header=$(od -An -tx1 -N4 "$output_path" | tr -d ' ')
+    case "$header" in
+        4f676753) ;; # OGG (Telegram voice = OGG Opus)
+        *)
+            log_error "telegram" "Downloaded voice file is not a recognized audio format"
+            rm -f "$output_path"
+            return 1
+            ;;
+    esac
+
+    log "telegram" "Downloaded voice file to: $output_path (${file_size} bytes)"
+}
+
 telegram_handle_webhook() {
     local body="$1"
     telegram_parse_webhook "$body"
@@ -251,12 +310,18 @@ telegram_handle_webhook() {
         has_image=true
     fi
 
+    # Determine if this message contains a voice message
+    local has_voice=false
+    if [ -n "$WEBHOOK_VOICE_FILE_ID" ]; then
+        has_voice=true
+    fi
+
     # Use text or caption as the message content
     local text="${WEBHOOK_TEXT:-$WEBHOOK_CAPTION}"
     local message_id="$WEBHOOK_MESSAGE_ID"
 
-    # Must have either text or image
-    if [ -z "$text" ] && [ "$has_image" != true ]; then
+    # Must have either text, image, or voice
+    if [ -z "$text" ] && [ "$has_image" != true ] && [ "$has_voice" != true ]; then
         return
     fi
 
@@ -280,22 +345,6 @@ telegram_handle_webhook() {
             MODEL="haiku"
             claudio_save_env
             telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Haiku model._" "$message_id"
-            return
-            ;;
-        /voice)
-            if [[ "$VOICE_MODE" == "1" ]]; then
-                VOICE_MODE="0"
-                claudio_save_env
-                telegram_send_message "$WEBHOOK_CHAT_ID" "_Voice mode disabled._" "$message_id"
-            else
-                if [[ -z "$ELEVENLABS_API_KEY" ]]; then
-                    telegram_send_message "$WEBHOOK_CHAT_ID" "_Cannot enable voice mode: ELEVENLABS_API_KEY not configured._" "$message_id"
-                    return
-                fi
-                VOICE_MODE="1"
-                claudio_save_env
-                telegram_send_message "$WEBHOOK_CHAT_ID" "_Voice mode enabled. Responses will be sent as audio._" "$message_id"
-            fi
             return
             ;;
         /start)
@@ -332,6 +381,47 @@ ${text}"
         chmod 600 "$image_file"
     fi
 
+    # Download and transcribe voice message if present
+    local voice_file=""
+    if [ "$has_voice" = true ]; then
+        if [[ -z "$ELEVENLABS_API_KEY" ]]; then
+            telegram_send_message "$WEBHOOK_CHAT_ID" "_Voice messages require ELEVENLABS_API_KEY to be configured._" "$message_id"
+            return
+        fi
+        local voice_tmpdir="${CLAUDIO_PATH}/tmp"
+        if ! mkdir -p "$voice_tmpdir"; then
+            log_error "telegram" "Failed to create voice temp directory: $voice_tmpdir"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't process your voice message. Please try again." "$message_id"
+            return
+        fi
+        voice_file=$(mktemp "${voice_tmpdir}/claudio-voice-XXXXXX.oga")
+        if ! telegram_download_voice "$WEBHOOK_VOICE_FILE_ID" "$voice_file"; then
+            rm -f "$voice_file"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't download your voice message. Please try again." "$message_id"
+            return
+        fi
+        chmod 600 "$voice_file"
+
+        local transcription
+        if ! transcription=$(stt_transcribe "$voice_file"); then
+            rm -f "$voice_file"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't transcribe your voice message. Please try again." "$message_id"
+            return
+        fi
+        rm -f "$voice_file"
+        voice_file=""
+
+        # stt_transcribe guarantees non-empty text on success
+        if [ -n "$text" ]; then
+            text="${transcription}
+
+${text}"
+        else
+            text="$transcription"
+        fi
+        log "telegram" "Voice message transcribed: ${#transcription} chars"
+    fi
+
     # Build prompt with image reference
     if [ -n "$image_file" ]; then
         if [ -n "$text" ]; then
@@ -347,7 +437,9 @@ Describe this image."
 
     # Store descriptive text in history (temp file path is meaningless after cleanup)
     local history_text="$text"
-    if [ -n "$image_file" ]; then
+    if [ "$has_voice" = true ]; then
+        history_text="[Sent a voice message: ${text}]"
+    elif [ -n "$image_file" ]; then
         local caption="${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}"
         if [ -n "$caption" ]; then
             history_text="[Sent an image with caption: ${caption}]"
@@ -370,7 +462,7 @@ Describe this image."
     ) &
     local typing_pid=$!
     local tts_file=""
-    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null; rm -f "$image_file" "$tts_file"' RETURN
+    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null; rm -f "$image_file" "$voice_file" "$tts_file"' RETURN
 
     local response
     response=$(claude_run "$text")
@@ -378,8 +470,8 @@ Describe this image."
     if [ -n "$response" ]; then
         history_add "assistant" "$response"
 
-        # Send voice message if voice mode is enabled
-        if [[ "$VOICE_MODE" == "1" ]] && [[ -n "$ELEVENLABS_API_KEY" ]]; then
+        # Respond with voice when the user sent a voice message
+        if [ "$has_voice" = true ] && [[ -n "$ELEVENLABS_API_KEY" ]]; then
             local tts_tmpdir="${CLAUDIO_PATH}/tmp"
             if ! mkdir -p "$tts_tmpdir"; then
                 log_error "telegram" "Failed to create TTS temp directory: $tts_tmpdir"

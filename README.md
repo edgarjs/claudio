@@ -140,7 +140,7 @@ Claudio uses Haiku by default. If you want to switch to another model, just send
 
 ### Voice
 
-Claudio can respond with voice messages using ElevenLabs TTS. To enable it, set `ELEVENLABS_API_KEY` in your `service.env` and send `/voice` in the chat to toggle voice mode on or off. When voice mode is on, Claudio sends both text and an audio version of each response.
+Claudio supports voice messages in both directions using ElevenLabs. Set `ELEVENLABS_API_KEY` in your `service.env` to enable voice features. When you send a voice message, Claudio transcribes it (STT), processes it, and responds with both an audio message and text. Text messages always get text-only responses.
 
 ### Images
 
@@ -187,10 +187,11 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `WEBHOOK_SECRET` — HMAC secret for validating incoming webhook requests. Auto-generated on first run if not set.
 - `WEBHOOK_RETRY_DELAY` — Seconds between webhook registration retry attempts. Default: `60`.
 
-**Voice (TTS)**
+**Voice (TTS/STT)**
 
-- `ELEVENLABS_API_KEY` — API key for ElevenLabs text-to-speech. Required for voice mode.
+- `ELEVENLABS_API_KEY` — API key for ElevenLabs. Required for voice messages (both TTS and STT).
 - `ELEVENLABS_VOICE_ID` — ElevenLabs voice ID to use for TTS. Default: `iP95p4xoKVk53GoZ742B` (Chris).
+- `ELEVENLABS_STT_MODEL` — ElevenLabs STT model. Default: `scribe_v1`.
 
 **Tunnel**
 
@@ -234,13 +235,13 @@ bats tests/db.bats
 - [x] Environment variables documentation
 - [x] Image uploads
 - [x] Voice messages from bot (TTS)
+- [x] Voice messages from human (STT)
 
 **Future**
 
 - [ ] Support for editing messages and reactions
 - [ ] File uploads
 - [ ] Rate limiting
-- [ ] Voice messages from human (STT)
 - [ ] Support for group chats
 
 ---
