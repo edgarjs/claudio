@@ -29,6 +29,8 @@ source "$LIB_DIR/server.sh"
 source "$LIB_DIR/service.sh"
 # shellcheck source=lib/backup.sh
 source "$LIB_DIR/backup.sh"
+# shellcheck source=lib/tts.sh
+source "$LIB_DIR/tts.sh"
 
 usage() {
     cat <<EOF
