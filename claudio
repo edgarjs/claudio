@@ -56,6 +56,28 @@ EOF
 
 claudio_init
 
+# Parse --hours and --days flags from remaining args, setting
+# parsed_hours and parsed_days variables in the caller's scope
+_parse_retention_args() {
+    parsed_hours=24
+    parsed_days=7
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --hours)
+                if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
+                    echo "Error: --hours requires a positive integer." >&2; exit 1
+                fi
+                parsed_hours="$2"; shift 2 ;;
+            --days)
+                if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
+                    echo "Error: --days requires a positive integer." >&2; exit 1
+                fi
+                parsed_days="$2"; shift 2 ;;
+            *) echo "Error: Unknown argument '$1'." >&2; exit 1 ;;
+        esac
+    done
+}
+
 case "${1:-}" in
     version|--version|-v)
         echo "claudio v${VERSION}"
@@ -134,24 +156,8 @@ case "${1:-}" in
                             exit 1
                         fi
                         shift
-                        cron_hours=24
-                        cron_days=7
-                        while [[ $# -gt 0 ]]; do
-                            case "$1" in
-                                --hours)
-                                    if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
-                                        echo "Error: --hours requires a positive integer." >&2; exit 1
-                                    fi
-                                    cron_hours="$2"; shift 2 ;;
-                                --days)
-                                    if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
-                                        echo "Error: --days requires a positive integer." >&2; exit 1
-                                    fi
-                                    cron_days="$2"; shift 2 ;;
-                                *) echo "Error: Unknown argument '$1'." >&2; exit 1 ;;
-                            esac
-                        done
-                        backup_cron_install "$backup_dest" "$cron_hours" "$cron_days"
+                        _parse_retention_args "$@"
+                        backup_cron_install "$backup_dest" "$parsed_hours" "$parsed_days"
                         ;;
                     uninstall|remove)
                         backup_cron_uninstall
@@ -172,25 +178,9 @@ case "${1:-}" in
             *)
                 # Direct backup run: claudio backup <dest> [--hours N] [--days N]
                 backup_dest="$backup_subcmd"
-                hours=24
-                days=7
                 shift || true
-                while [[ $# -gt 0 ]]; do
-                    case "$1" in
-                        --hours)
-                            if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
-                                echo "Error: --hours requires a positive integer." >&2; exit 1
-                            fi
-                            hours="$2"; shift 2 ;;
-                        --days)
-                            if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
-                                echo "Error: --days requires a positive integer." >&2; exit 1
-                            fi
-                            days="$2"; shift 2 ;;
-                        *) echo "Error: Unknown argument '$1'." >&2; exit 1 ;;
-                    esac
-                done
-                backup_run "$backup_dest" "$hours" "$days"
+                _parse_retention_args "$@"
+                backup_run "$backup_dest" "$parsed_hours" "$parsed_days"
                 ;;
         esac
         ;;

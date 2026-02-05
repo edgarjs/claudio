@@ -19,6 +19,7 @@ MAX_BODY_SIZE = 1024 * 1024  # 1 MB
 MAX_QUEUE_SIZE = 100  # Max queued messages per chat
 WEBHOOK_TIMEOUT = 600  # 10 minutes max per Claude invocation
 HEALTH_CACHE_TTL = 30  # seconds between health check API calls
+QUEUE_WARNING_RATIO = 0.8  # Warn when queue reaches this fraction of max
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -125,7 +126,7 @@ def enqueue_webhook(body):
         if queue_size >= MAX_QUEUE_SIZE:
             sys.stderr.write(f"[queue] Queue full for chat {chat_id} ({queue_size}/{MAX_QUEUE_SIZE}), dropping message\n")
             return
-        if queue_size >= MAX_QUEUE_SIZE * 0.8:
+        if queue_size >= MAX_QUEUE_SIZE * QUEUE_WARNING_RATIO:
             sys.stderr.write(f"[queue] Warning: queue for chat {chat_id} at {queue_size}/{MAX_QUEUE_SIZE} ({queue_size * 100 // MAX_QUEUE_SIZE}%)\n")
 
         chat_queues[chat_id].append(body)

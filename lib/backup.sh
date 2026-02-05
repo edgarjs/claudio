@@ -23,6 +23,9 @@ backup_run() {
         return 1
     fi
 
+    # Resolve to absolute path (important for cron context)
+    dest="$(cd "$dest" && pwd)"
+
     local backup_root="$dest/claudio-backups"
     local hourly_dir="$backup_root/hourly"
     local daily_dir="$backup_root/daily"
@@ -67,7 +70,7 @@ backup_run() {
     fi
 
     # --- Rotate hourly backups ---
-    _backup_rotate "$hourly_dir" "$max_hourly" "latest"
+    _backup_rotate "$hourly_dir" "$max_hourly"
 
     # --- Rotate daily backups ---
     _backup_rotate "$daily_dir" "$max_daily"
@@ -78,17 +81,11 @@ backup_run() {
 _backup_rotate() {
     local dir="$1"
     local keep="$2"
-    local skip_name="${3:-}"
 
     local -a snapshots=()
     local entry
     while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
-        local name
-        name=$(basename "$entry")
-        if [[ -n "$skip_name" && "$name" == "$skip_name" ]]; then
-            continue
-        fi
         snapshots+=("$entry")
     done < <(find "$dir" -maxdepth 1 -mindepth 1 -type d | sort)
 
@@ -124,15 +121,13 @@ backup_status() {
     echo ""
 
     if [[ -d "$hourly_dir" ]]; then
-        local hourly_count
-        hourly_count=$(find "$hourly_dir" -maxdepth 1 -mindepth 1 -type d | wc -l)
+        local -a hourly_snapshots
+        mapfile -t hourly_snapshots < <(find "$hourly_dir" -maxdepth 1 -mindepth 1 -type d | sort)
+        local hourly_count=${#hourly_snapshots[@]}
         echo "Hourly backups: $hourly_count"
         if (( hourly_count > 0 )); then
-            local oldest newest
-            oldest=$(find "$hourly_dir" -maxdepth 1 -mindepth 1 -type d | sort | head -1 | xargs basename)
-            newest=$(find "$hourly_dir" -maxdepth 1 -mindepth 1 -type d | sort | tail -1 | xargs basename)
-            echo "  Oldest: $oldest"
-            echo "  Newest: $newest"
+            echo "  Oldest: $(basename "${hourly_snapshots[0]}")"
+            echo "  Newest: $(basename "${hourly_snapshots[-1]}")"
         fi
     else
         echo "Hourly backups: 0"
@@ -141,15 +136,13 @@ backup_status() {
     echo ""
 
     if [[ -d "$daily_dir" ]]; then
-        local daily_count
-        daily_count=$(find "$daily_dir" -maxdepth 1 -mindepth 1 -type d | wc -l)
+        local -a daily_snapshots
+        mapfile -t daily_snapshots < <(find "$daily_dir" -maxdepth 1 -mindepth 1 -type d | sort)
+        local daily_count=${#daily_snapshots[@]}
         echo "Daily backups: $daily_count"
         if (( daily_count > 0 )); then
-            local oldest newest
-            oldest=$(find "$daily_dir" -maxdepth 1 -mindepth 1 -type d | sort | head -1 | xargs basename)
-            newest=$(find "$daily_dir" -maxdepth 1 -mindepth 1 -type d | sort | tail -1 | xargs basename)
-            echo "  Oldest: $oldest"
-            echo "  Newest: $newest"
+            echo "  Oldest: $(basename "${daily_snapshots[0]}")"
+            echo "  Newest: $(basename "${daily_snapshots[-1]}")"
         fi
     else
         echo "Daily backups: 0"
@@ -171,10 +164,26 @@ backup_cron_install() {
         return 1
     fi
 
+    if [[ ! -d "$dest" ]]; then
+        echo "Error: destination '$dest' does not exist or is not a directory." >&2
+        return 1
+    fi
+
+    # Resolve to absolute path
+    dest="$(cd "$dest" && pwd)"
+
+    # Validate dest path: reject shell metacharacters, newlines, and cron-special chars
+    if [[ "$dest" =~ [^a-zA-Z0-9_./-] ]]; then
+        echo "Error: backup destination contains invalid characters." >&2
+        return 1
+    fi
+
     local claudio_bin
     claudio_bin="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/claudio"
 
-    local cron_entry="0 * * * * ${claudio_bin} backup ${dest} --hours ${max_hourly} --days ${max_daily} >> ${CLAUDIO_PATH}/cron.log 2>&1 ${BACKUP_CRON_MARKER}"
+    local cron_entry
+    cron_entry="$(printf '0 * * * * %q backup %q --hours %d --days %d >> %q/cron.log 2>&1 %s' \
+        "$claudio_bin" "$dest" "$max_hourly" "$max_daily" "$CLAUDIO_PATH" "$BACKUP_CRON_MARKER")"
 
     (crontab -l 2>/dev/null | grep -v "$BACKUP_CRON_MARKER"; echo "$cron_entry") | crontab -
     print_success "Backup cron job installed (runs every hour)."
