@@ -147,8 +147,6 @@ service_install() {
 cloudflared_setup() {
     echo ""
     echo "Setting up Cloudflare tunnel (requires free Cloudflare account)..."
-    # shellcheck disable=SC2034  # Used by claudio_save_env
-    TUNNEL_TYPE="named"
     cloudflared_setup_named
 }
 

@@ -62,7 +62,7 @@ server_start() {
 }
 
 cloudflared_start() {
-    if [ -z "$TUNNEL_TYPE" ] || [ -z "$TUNNEL_NAME" ]; then
+    if [ -z "$TUNNEL_NAME" ]; then
         log "server" "No tunnel configured. Skipping cloudflared."
         return
     fi

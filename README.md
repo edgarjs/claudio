@@ -142,11 +142,39 @@ Once Claudio is installed, you can customize this prompt by editing the file at 
 
 ### Configuration
 
-Claudio stores its configuration and other files in `$HOME/.claudio/`. You can change some settings in the `service.env` file within that directory. If you do so, don't forget to restart to apply your changes:
+Claudio stores its configuration and other files in `$HOME/.claudio/`. Settings are managed in the `service.env` file within that directory. After any manual edits, restart to apply your changes:
 
 ```bash
 claudio restart
 ```
+
+#### Environment Variables
+
+The following variables can be set in `$HOME/.claudio/service.env`:
+
+**Server**
+
+- `PORT` — HTTP server listening port. Default: `8421`.
+
+**Claude**
+
+- `MODEL` — Claude model to use. Accepts `haiku`, `sonnet`, or `opus`. Default: `haiku`. Can also be changed at runtime via Telegram commands `/haiku`, `/sonnet`, `/opus`.
+- `MAX_HISTORY_LINES` — Maximum number of conversation messages to keep in the database. Older messages are trimmed automatically. Default: `100`.
+
+**Telegram**
+
+- `TELEGRAM_BOT_TOKEN` — Telegram Bot API token. Set automatically during `claudio telegram setup`.
+- `TELEGRAM_CHAT_ID` — Authorized Telegram chat ID. Only messages from this chat are processed. Set automatically during `claudio telegram setup`.
+- `WEBHOOK_URL` — Public URL where Telegram sends webhook updates (e.g. `https://claudio.example.com`). Set automatically when using a named tunnel.
+- `WEBHOOK_SECRET` — HMAC secret for validating incoming webhook requests. Auto-generated on first run if not set.
+- `WEBHOOK_RETRY_DELAY` — Seconds between webhook registration retry attempts on startup. Default: `60`.
+
+**Tunnel**
+
+- `TUNNEL_NAME` — Name of the Cloudflare named tunnel. Set during `claudio install`.
+- `TUNNEL_HOSTNAME` — Hostname for the named tunnel (e.g. `claudio.example.com`). Set during `claudio install`.
+
+> Most of these variables are configured automatically by `claudio install` and `claudio telegram setup`. Manual editing is only needed for fine-tuning.
 
 ---
 
@@ -180,6 +208,7 @@ bats tests/db.bats
 - [x] Auto-install dependencies (`sqlite3`, `jq`, `cloudflared`) during `claudio install`
 - [x] Show webhook registration failure reason instead of generic warning
 - [x] Add `claudio` to `$PATH` via symlink during install
+- [x] Environment variables documentation
 
 **Future**
 
@@ -189,7 +218,6 @@ bats tests/db.bats
 - [ ] Rate limiting
 - [ ] Voice messages from bot (TTS)
 - [ ] Voice messages from human (STT)
-- [ ] Environment variables documentation
 - [ ] Support for group chats
 
 ---

@@ -23,18 +23,7 @@ teardown() {
     rm -rf "$BATS_TEST_TMPDIR"
 }
 
-@test "cloudflared_start skips when TUNNEL_TYPE is not set" {
-    unset TUNNEL_TYPE
-    unset TUNNEL_NAME
-
-    run cloudflared_start
-
-    [ "$status" -eq 0 ]
-    [[ "$(cat "$CLAUDIO_LOG_FILE")" == *"No tunnel configured"* ]]
-}
-
 @test "cloudflared_start skips when TUNNEL_NAME is not set" {
-    export TUNNEL_TYPE="named"
     unset TUNNEL_NAME
 
     run cloudflared_start
@@ -44,7 +33,6 @@ teardown() {
 }
 
 @test "cloudflared_start starts named tunnel" {
-    export TUNNEL_TYPE="named"
     export TUNNEL_NAME="my-tunnel"
 
     cat > "$BATS_TEST_TMPDIR/bin/cloudflared" << 'EOF'

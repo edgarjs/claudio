@@ -294,7 +294,7 @@ telegram_setup() {
     telegram_send_message "$TELEGRAM_CHAT_ID" "👋 Hola! Please return to your terminal to complete the webhook setup."
 
     # Verify tunnel is configured
-    if [ -z "$TUNNEL_TYPE" ] || [ -z "$WEBHOOK_URL" ]; then
+    if [ -z "$WEBHOOK_URL" ]; then
         print_warning "No tunnel configured. Run 'claudio install' first."
         exit 1
     fi
