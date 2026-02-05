@@ -4,11 +4,17 @@
 
 ### Added
 
-- Voice mode: `/voice` command toggles TTS audio responses using ElevenLabs API
+- Voice messages: send a voice message and Claudio transcribes it (STT), processes it, and responds with both audio (TTS) and text
+- Speech-to-text transcription via ElevenLabs STT (`lib/stt.sh`)
+- `ELEVENLABS_STT_MODEL` environment variable for configuring the STT model
 - Image upload support: send photos (compressed) or image documents (lossless) to the bot for Claude analysis
 - Per-chat message queue size limit (100) to prevent unbounded memory growth
 - Queue capacity warning when reaching 80% per chat
 - Typing indicator self-terminates if parent process is killed (prevents orphan processes)
+
+### Removed
+
+- `/voice` toggle command — voice responses are now automatic when you send a voice message
 
 ### Changed
 

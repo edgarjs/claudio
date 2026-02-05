@@ -19,7 +19,7 @@ IS_SANDBOX="${IS_SANDBOX:-}"
 WEBHOOK_RETRY_DELAY="${WEBHOOK_RETRY_DELAY:-60}"
 ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-}"
 ELEVENLABS_VOICE_ID="${ELEVENLABS_VOICE_ID:-iP95p4xoKVk53GoZ742B}"
-VOICE_MODE="${VOICE_MODE:-0}"
+ELEVENLABS_STT_MODEL="${ELEVENLABS_STT_MODEL:-scribe_v1}"
 
 claudio_init() {
     mkdir -p "$CLAUDIO_PATH"
@@ -120,7 +120,7 @@ claudio_save_env() {
             printf 'IS_SANDBOX="%s"\n' "$(_env_quote "$IS_SANDBOX")"
             printf 'ELEVENLABS_API_KEY="%s"\n' "$(_env_quote "$ELEVENLABS_API_KEY")"
             printf 'ELEVENLABS_VOICE_ID="%s"\n' "$(_env_quote "$ELEVENLABS_VOICE_ID")"
-            printf 'VOICE_MODE="%s"\n' "$(_env_quote "$VOICE_MODE")"
+            printf 'ELEVENLABS_STT_MODEL="%s"\n' "$(_env_quote "$ELEVENLABS_STT_MODEL")"
         } > "$CLAUDIO_ENV_FILE"
     )
 }

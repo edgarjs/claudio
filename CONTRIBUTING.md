@@ -33,12 +33,14 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/config.sh` — Config loading and env file management
 - `lib/server.sh` — Starts the Python HTTP server and cloudflared tunnel
 - `lib/server.py` — Python HTTP server (stdlib `http.server`, port 8421)
-- `lib/telegram.sh` — Telegram Bot API integration
+- `lib/telegram.sh` — Telegram Bot API integration (messages, webhooks, images, voice)
 - `lib/claude.sh` — Claude Code CLI wrapper with conversation context
 - `lib/history.sh` — Conversation history management, delegates to `lib/db.sh`
 - `lib/db.sh` — SQLite database layer for conversation storage
 - `lib/log.sh` — Centralized logging
 - `lib/health-check.sh` — Cron health-check script (every minute) for webhook monitoring; auto-restarts service if unreachable (throttled to once per 3 minutes, max 3 attempts), sends Telegram alert on failure
+- `lib/tts.sh` — ElevenLabs text-to-speech for voice responses
+- `lib/stt.sh` — ElevenLabs speech-to-text for voice message transcription
 - `lib/service.sh` — systemd/launchd service management and cloudflared setup
 
 ## Running Tests
