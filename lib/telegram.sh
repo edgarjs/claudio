@@ -90,6 +90,19 @@ telegram_send_message() {
     done
 }
 
+telegram_send_voice() {
+    local chat_id="$1"
+    local audio_file="$2"
+    local reply_to_message_id="${3:-}"
+
+    local args=(-F "chat_id=${chat_id}" -F "voice=@${audio_file}")
+    if [ -n "$reply_to_message_id" ]; then
+        args+=(-F "reply_to_message_id=${reply_to_message_id}")
+    fi
+
+    telegram_api "sendVoice" "${args[@]}"
+}
+
 telegram_send_typing() {
     local chat_id="$1"
     # Fire-and-forget: don't retry typing indicators to avoid rate limit cascades
@@ -281,6 +294,22 @@ ${text}"
             telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Haiku model._" "$message_id"
             return
             ;;
+        /voice)
+            if [[ "$VOICE_MODE" == "1" ]]; then
+                VOICE_MODE="0"
+                claudio_save_env
+                telegram_send_message "$WEBHOOK_CHAT_ID" "_Voice mode disabled._" "$message_id"
+            else
+                if [[ -z "$ELEVENLABS_API_KEY" ]]; then
+                    telegram_send_message "$WEBHOOK_CHAT_ID" "_Cannot enable voice mode: ELEVENLABS_API_KEY not configured._" "$message_id"
+                    return
+                fi
+                VOICE_MODE="1"
+                claudio_save_env
+                telegram_send_message "$WEBHOOK_CHAT_ID" "_Voice mode enabled. Responses will be sent as audio._" "$message_id"
+            fi
+            return
+            ;;
         /start)
             telegram_send_message "$WEBHOOK_CHAT_ID" "_Hola!_ Send me a message and I'll forward it to Claude Code." "$message_id"
             return
@@ -347,18 +376,43 @@ Describe this image."
         done
     ) &
     local typing_pid=$!
-    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null; rm -f "$image_file"' RETURN
+    local tts_file=""
+    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null; rm -f "$image_file" "$tts_file"' RETURN
 
     local response
     response=$(claude_run "$text")
 
     kill "$typing_pid" 2>/dev/null || true
     wait "$typing_pid" 2>/dev/null || true
-    rm -f "$image_file"
 
     if [ -n "$response" ]; then
         history_add "assistant" "$response"
-        telegram_send_message "$WEBHOOK_CHAT_ID" "$response" "$message_id"
+
+        # Send voice message if voice mode is enabled
+        if [[ "$VOICE_MODE" == "1" ]] && [[ -n "$ELEVENLABS_API_KEY" ]]; then
+            local tts_tmpdir="${CLAUDIO_PATH}/tmp"
+            if ! mkdir -p "$tts_tmpdir"; then
+                log_error "telegram" "Failed to create TTS temp directory: $tts_tmpdir"
+                telegram_send_message "$WEBHOOK_CHAT_ID" "$response" "$message_id"
+            else
+                tts_file=$(mktemp "${tts_tmpdir}/claudio-tts-XXXXXX.mp3")
+                chmod 600 "$tts_file"
+
+                if tts_convert "$response" "$tts_file"; then
+                    if ! telegram_send_voice "$WEBHOOK_CHAT_ID" "$tts_file" "$message_id"; then
+                        log_error "telegram" "Failed to send voice message, sending text only"
+                    fi
+                    # Also send text as follow-up for reference
+                    telegram_send_message "$WEBHOOK_CHAT_ID" "$response"
+                else
+                    # TTS failed, fall back to text only
+                    log_error "telegram" "TTS conversion failed, sending text only"
+                    telegram_send_message "$WEBHOOK_CHAT_ID" "$response" "$message_id"
+                fi
+            fi
+        else
+            telegram_send_message "$WEBHOOK_CHAT_ID" "$response" "$message_id"
+        fi
     else
         telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't get a response. Please try again." "$message_id"
     fi

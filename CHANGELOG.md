@@ -4,6 +4,7 @@
 
 ### Added
 
+- Voice mode: `/voice` command toggles TTS audio responses using ElevenLabs API
 - Image upload support: send photos (compressed) or image documents (lossless) to the bot for Claude analysis
 - Per-chat message queue size limit (100) to prevent unbounded memory growth
 - Queue capacity warning when reaching 80% per chat

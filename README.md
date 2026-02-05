@@ -138,6 +138,10 @@ claudio uninstall --purge
 
 Claudio uses Haiku by default. If you want to switch to another model, just send the name of the model as a command: `/opus`, `/sonnet`, or `/haiku`. And then continue chatting.
 
+### Voice
+
+Claudio can respond with voice messages using ElevenLabs TTS. To enable it, set `ELEVENLABS_API_KEY` in your `service.env` and send `/voice` in the chat to toggle voice mode on or off. When voice mode is on, Claudio sends both text and an audio version of each response.
+
 ### Images
 
 You can send photos or image files directly to Claudio. Include an optional caption to tell Claude what to do with the image, or send it without a caption and Claude will describe it.
@@ -182,6 +186,11 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `WEBHOOK_SECRET` — HMAC secret for validating incoming webhook requests. Auto-generated on first run if not set.
 - `WEBHOOK_RETRY_DELAY` — Seconds between webhook registration retry attempts. Default: `60`.
 
+**Voice (TTS)**
+
+- `ELEVENLABS_API_KEY` — API key for ElevenLabs text-to-speech. Required for voice mode.
+- `ELEVENLABS_VOICE_ID` — ElevenLabs voice ID to use for TTS. Default: `iP95p4xoKVk53GoZ742B` (Chris).
+
 **Tunnel**
 
 - `TUNNEL_NAME` — Name of the Cloudflare named tunnel. Set during `claudio install`.
@@ -223,13 +232,13 @@ bats tests/db.bats
 - [x] Add `claudio` to `$PATH` via symlink during install
 - [x] Environment variables documentation
 - [x] Image uploads
+- [x] Voice messages from bot (TTS)
 
 **Future**
 
 - [ ] Support for editing messages and reactions
 - [ ] File uploads
 - [ ] Rate limiting
-- [ ] Voice messages from bot (TTS)
 - [ ] Voice messages from human (STT)
 - [ ] Support for group chats
 
