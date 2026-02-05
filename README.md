@@ -138,6 +138,17 @@ claudio uninstall --purge
 
 Claudio uses Haiku by default. If you want to switch to another model, just send the name of the model as a command: `/opus`, `/sonnet`, or `/haiku`. And then continue chatting.
 
+### Images
+
+You can send photos or image files directly to Claudio. Include an optional caption to tell Claude what to do with the image, or send it without a caption and Claude will describe it.
+
+- **Supported formats:** JPEG, PNG, GIF, WebP
+- **Sending as photo:** Telegram compresses images automatically
+- **Sending as document:** Attach an image file for lossless quality
+- **Size limit:** 20 MB (Telegram bot API constraint)
+
+Images are validated (magic byte verification, size check) and stored temporarily during processing, then deleted immediately after Claude responds.
+
 ### System Prompt
 
 Claudio appends a system prompt that defines its persona, core principles, and communication style (optimized for chat). The default is generated on first run at `$HOME/.claudio/SYSTEM_PROMPT.md`. You can customize it by editing that file — it's read at runtime so no need to restart.
@@ -211,12 +222,12 @@ bats tests/db.bats
 - [x] Show webhook registration failure reason instead of generic warning
 - [x] Add `claudio` to `$PATH` via symlink during install
 - [x] Environment variables documentation
+- [x] Image uploads
 
 **Future**
 
 - [ ] Support for editing messages and reactions
 - [ ] File uploads
-- [ ] Image uploads
 - [ ] Rate limiting
 - [ ] Voice messages from bot (TTS)
 - [ ] Voice messages from human (STT)

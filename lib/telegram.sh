@@ -121,25 +121,113 @@ telegram_parse_webhook() {
     # (echo could misinterpret data starting with -e, -n, etc.)
     # Extract all values in a single jq call for efficiency
     local parsed
+    # Use unit separator (0x1F) instead of tab to avoid bash collapsing
+    # consecutive whitespace delimiters when fields are empty
     parsed=$(printf '%s' "$body" | jq -r '[
         .message.chat.id // "",
         .message.message_id // "",
         .message.text // "",
         .message.from.id // "",
         .message.reply_to_message.text // "",
-        .message.reply_to_message.from.first_name // ""
-    ] | @tsv')
+        .message.reply_to_message.from.first_name // "",
+        (.message.photo[-1].file_id // ""),
+        .message.caption // "",
+        (.message.document.file_id // ""),
+        (.message.document.mime_type // "")
+    ] | join("\u001f")')
 
-    # shellcheck disable=SC2034  # WEBHOOK_FROM_ID available for future use
-    IFS=$'\t' read -r WEBHOOK_CHAT_ID WEBHOOK_MESSAGE_ID WEBHOOK_TEXT \
-        WEBHOOK_FROM_ID WEBHOOK_REPLY_TO_TEXT WEBHOOK_REPLY_TO_FROM <<< "$parsed"
+    # shellcheck disable=SC2034  # WEBHOOK_FROM_ID, WEBHOOK_DOC_* available for use by telegram_get_image_info
+    IFS=$'\x1f' read -r WEBHOOK_CHAT_ID WEBHOOK_MESSAGE_ID WEBHOOK_TEXT \
+        WEBHOOK_FROM_ID WEBHOOK_REPLY_TO_TEXT WEBHOOK_REPLY_TO_FROM \
+        WEBHOOK_PHOTO_FILE_ID WEBHOOK_CAPTION \
+        WEBHOOK_DOC_FILE_ID WEBHOOK_DOC_MIME <<< "$parsed"
+}
+
+telegram_get_image_info() {
+    # Check for compressed photo first (Telegram always sends multiple sizes)
+    if [ -n "$WEBHOOK_PHOTO_FILE_ID" ]; then
+        WEBHOOK_IMAGE_FILE_ID="$WEBHOOK_PHOTO_FILE_ID"
+        WEBHOOK_IMAGE_EXT="jpg"
+        return 0
+    fi
+
+    # Check for document with image mime type (uncompressed photo)
+    if [ -n "$WEBHOOK_DOC_FILE_ID" ] && [[ "$WEBHOOK_DOC_MIME" == image/* ]]; then
+        WEBHOOK_IMAGE_FILE_ID="$WEBHOOK_DOC_FILE_ID"
+        case "$WEBHOOK_DOC_MIME" in
+            image/png)  WEBHOOK_IMAGE_EXT="png" ;;
+            image/gif)  WEBHOOK_IMAGE_EXT="gif" ;;
+            image/webp) WEBHOOK_IMAGE_EXT="webp" ;;
+            *)          WEBHOOK_IMAGE_EXT="jpg" ;;
+        esac
+        return 0
+    fi
+
+    return 1
+}
+
+telegram_download_file() {
+    local file_id="$1"
+    local output_path="$2"
+
+    # Resolve file_id to file_path via Telegram API
+    local result
+    result=$(telegram_api "getFile" -d "file_id=${file_id}")
+
+    local file_path
+    file_path=$(printf '%s' "$result" | jq -r '.result.file_path // empty')
+
+    if [ -z "$file_path" ]; then
+        log_error "telegram" "Failed to get file path for file_id: $file_id"
+        return 1
+    fi
+
+    # Whitelist allowed characters in file_path to prevent path traversal and injection
+    if [[ ! "$file_path" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+        log_error "telegram" "Invalid characters in file path from API"
+        return 1
+    fi
+
+    # Download the binary file (--max-redirs 0 prevents redirect-based attacks)
+    local download_url="https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file_path}"
+    if ! curl -sf --max-redirs 0 -o "$output_path" "$download_url"; then
+        log_error "telegram" "Failed to download file: $file_path"
+        return 1
+    fi
+
+    # Validate file size (max 20 MB — Telegram bot API limit)
+    local max_size=$((20 * 1024 * 1024))
+    local file_size
+    file_size=$(wc -c < "$output_path")
+    if [ "$file_size" -gt "$max_size" ]; then
+        log_error "telegram" "Downloaded file exceeds size limit: ${file_size} bytes"
+        rm -f "$output_path"
+        return 1
+    fi
+
+    # Validate magic bytes to ensure the file is actually an image
+    local header
+    header=$(od -An -tx1 -N12 "$output_path" | tr -d ' ')
+    case "$header" in
+        ffd8ff*)                ;; # JPEG
+        89504e47*)              ;; # PNG
+        47494638*)              ;; # GIF
+        52494646????????57454250)   ;; # WebP (RIFF + 4 size bytes + "WEBP")
+        *)
+            log_error "telegram" "Downloaded file is not a recognized image format"
+            rm -f "$output_path"
+            return 1
+            ;;
+    esac
+
+    log "telegram" "Downloaded file to: $output_path (${file_size} bytes)"
 }
 
 telegram_handle_webhook() {
     local body="$1"
     telegram_parse_webhook "$body"
 
-    if [ -z "$WEBHOOK_CHAT_ID" ] || [ -z "$WEBHOOK_TEXT" ]; then
+    if [ -z "$WEBHOOK_CHAT_ID" ]; then
         return
     fi
 
@@ -149,17 +237,30 @@ telegram_handle_webhook() {
         return
     fi
 
-    local text="$WEBHOOK_TEXT"
+    # Determine if this message contains an image
+    local has_image=false
+    if telegram_get_image_info; then
+        has_image=true
+    fi
+
+    # Use text or caption as the message content
+    local text="${WEBHOOK_TEXT:-$WEBHOOK_CAPTION}"
     local message_id="$WEBHOOK_MESSAGE_ID"
 
+    # Must have either text or image
+    if [ -z "$text" ] && [ "$has_image" != true ]; then
+        return
+    fi
+
     # If this is a reply, prepend the original message as context
-    if [ -n "$WEBHOOK_REPLY_TO_TEXT" ]; then
+    if [ -n "$text" ] && [ -n "$WEBHOOK_REPLY_TO_TEXT" ]; then
         local reply_from="${WEBHOOK_REPLY_TO_FROM:-someone}"
         text="[Replying to ${reply_from}: \"${WEBHOOK_REPLY_TO_TEXT}\"]
 
 ${text}"
     fi
 
+    # Handle commands (from text or caption)
     case "$text" in
         /opus)
             MODEL="opus"
@@ -188,7 +289,48 @@ ${text}"
 
     log "telegram" "Received message from chat_id=$WEBHOOK_CHAT_ID"
 
-    history_add "user" "$text"
+    # Download image if present (after command check to avoid unnecessary downloads)
+    local image_file=""
+    if [ "$has_image" = true ]; then
+        local img_tmpdir="${CLAUDIO_PATH}/tmp"
+        if ! mkdir -p "$img_tmpdir"; then
+            log_error "telegram" "Failed to create image temp directory: $img_tmpdir"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't process your image. Please try again." "$message_id"
+            return
+        fi
+        image_file=$(mktemp "${img_tmpdir}/claudio-img-XXXXXX.${WEBHOOK_IMAGE_EXT}")
+        if ! telegram_download_file "$WEBHOOK_IMAGE_FILE_ID" "$image_file"; then
+            rm -f "$image_file"
+            telegram_send_message "$WEBHOOK_CHAT_ID" "Sorry, I couldn't download your image. Please try again." "$message_id"
+            return
+        fi
+        chmod 600 "$image_file"
+    fi
+
+    # Build prompt with image reference
+    if [ -n "$image_file" ]; then
+        if [ -n "$text" ]; then
+            text="[The user sent an image at ${image_file}]
+
+${text}"
+        else
+            text="[The user sent an image at ${image_file}]
+
+Describe this image."
+        fi
+    fi
+
+    # Store descriptive text in history (temp file path is meaningless after cleanup)
+    local history_text="$text"
+    if [ -n "$image_file" ]; then
+        local caption="${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}"
+        if [ -n "$caption" ]; then
+            history_text="[Sent an image with caption: ${caption}]"
+        else
+            history_text="[Sent an image]"
+        fi
+    fi
+    history_add "user" "$history_text"
 
     # Send typing indicator first, then progress messages if Claude takes long
     (
@@ -202,13 +344,14 @@ ${text}"
         done
     ) &
     local typing_pid=$!
-    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null' RETURN
+    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null; rm -f "$image_file"' RETURN
 
     local response
     response=$(claude_run "$text")
 
     kill "$typing_pid" 2>/dev/null || true
     wait "$typing_pid" 2>/dev/null || true
+    rm -f "$image_file"
 
     if [ -n "$response" ]; then
         history_add "assistant" "$response"

@@ -215,3 +215,217 @@ EOF
     [[ "$WEBHOOK_CHAT_ID" == "123" ]]
     [[ "$WEBHOOK_TEXT" == "hello" ]]
 }
+
+@test "telegram_parse_webhook extracts photo file_id (highest resolution)" {
+    body='{"message":{"message_id":42,"chat":{"id":123},"from":{"id":456},"photo":[{"file_id":"small_id","width":90,"height":90},{"file_id":"medium_id","width":320,"height":320},{"file_id":"large_id","width":800,"height":800}],"caption":"test caption"}}'
+
+    telegram_parse_webhook "$body"
+
+    [[ "$WEBHOOK_CHAT_ID" == "123" ]]
+    [[ "$WEBHOOK_PHOTO_FILE_ID" == "large_id" ]]
+    [[ "$WEBHOOK_CAPTION" == "test caption" ]]
+    [[ -z "$WEBHOOK_TEXT" ]]
+}
+
+@test "telegram_parse_webhook extracts document fields" {
+    body='{"message":{"message_id":42,"chat":{"id":123},"from":{"id":456},"document":{"file_id":"doc_id","mime_type":"image/png","file_name":"screenshot.png"}}}'
+
+    telegram_parse_webhook "$body"
+
+    [[ "$WEBHOOK_DOC_FILE_ID" == "doc_id" ]]
+    [[ "$WEBHOOK_DOC_MIME" == "image/png" ]]
+}
+
+@test "telegram_parse_webhook extracts caption without photo" {
+    body='{"message":{"message_id":42,"chat":{"id":123},"from":{"id":456},"caption":"just a caption"}}'
+
+    telegram_parse_webhook "$body"
+
+    [[ "$WEBHOOK_CAPTION" == "just a caption" ]]
+    [[ -z "$WEBHOOK_TEXT" ]]
+    [[ -z "$WEBHOOK_PHOTO_FILE_ID" ]]
+}
+
+@test "telegram_get_image_info detects compressed photo" {
+    WEBHOOK_PHOTO_FILE_ID="photo_id"
+    WEBHOOK_DOC_FILE_ID=""
+    WEBHOOK_DOC_MIME=""
+
+    telegram_get_image_info
+
+    [[ "$WEBHOOK_IMAGE_FILE_ID" == "photo_id" ]]
+    [[ "$WEBHOOK_IMAGE_EXT" == "jpg" ]]
+}
+
+@test "telegram_get_image_info detects document image" {
+    WEBHOOK_PHOTO_FILE_ID=""
+    WEBHOOK_DOC_FILE_ID="doc_id"
+    WEBHOOK_DOC_MIME="image/png"
+
+    telegram_get_image_info
+
+    [[ "$WEBHOOK_IMAGE_FILE_ID" == "doc_id" ]]
+    [[ "$WEBHOOK_IMAGE_EXT" == "png" ]]
+}
+
+@test "telegram_get_image_info ignores non-image document" {
+    WEBHOOK_PHOTO_FILE_ID=""
+    WEBHOOK_DOC_FILE_ID="doc_id"
+    WEBHOOK_DOC_MIME="application/pdf"
+
+    run telegram_get_image_info
+    [[ "$status" -ne 0 ]]
+}
+
+@test "telegram_get_image_info prefers photo over document" {
+    WEBHOOK_PHOTO_FILE_ID="photo_id"
+    WEBHOOK_DOC_FILE_ID="doc_id"
+    WEBHOOK_DOC_MIME="image/png"
+
+    telegram_get_image_info
+
+    [[ "$WEBHOOK_IMAGE_FILE_ID" == "photo_id" ]]
+    [[ "$WEBHOOK_IMAGE_EXT" == "jpg" ]]
+}
+
+@test "telegram_download_file resolves file_id and downloads binary" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ "$*" == *"getFile"* ]]; then
+    # getFile API call (has -w flag from telegram_api)
+    if [[ " $* " == *" -w "* ]]; then
+        echo '{"ok":true,"result":{"file_path":"photos/file_123.jpg"}}'
+        echo "200"
+    else
+        echo '{"ok":true,"result":{"file_path":"photos/file_123.jpg"}}'
+    fi
+elif [[ "$*" == *"/file/bot"* ]]; then
+    # Direct file download — write valid JPEG magic bytes
+    output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
+    printf '\xff\xd8\xff\xe0fake_jpeg_data' > "$output_file"
+else
+    echo '{"ok":true}'
+    echo "200"
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.jpg"
+    telegram_download_file "test_file_id" "$output_file"
+    [[ -f "$output_file" ]]
+}
+
+@test "telegram_download_file rejects path traversal in file_path" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ " $* " == *" -w "* ]]; then
+    echo '{"ok":true,"result":{"file_path":"../../../etc/passwd"}}'
+    echo "200"
+else
+    echo '{"ok":true,"result":{"file_path":"../../../etc/passwd"}}'
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.jpg"
+    run telegram_download_file "test_file_id" "$output_file"
+    [[ "$status" -ne 0 ]]
+    [[ ! -f "$output_file" ]]
+}
+
+@test "telegram_download_file rejects non-image file" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ "$*" == *"getFile"* ]]; then
+    if [[ " $* " == *" -w "* ]]; then
+        echo '{"ok":true,"result":{"file_path":"photos/file_123.jpg"}}'
+        echo "200"
+    else
+        echo '{"ok":true,"result":{"file_path":"photos/file_123.jpg"}}'
+    fi
+elif [[ "$*" == *"/file/bot"* ]]; then
+    # Write non-image content (plain text)
+    output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
+    echo "this is not an image" > "$output_file"
+else
+    echo '{"ok":true}'
+    echo "200"
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.jpg"
+    run telegram_download_file "test_file_id" "$output_file"
+    [[ "$status" -ne 0 ]]
+    # File should be cleaned up on validation failure
+    [[ ! -f "$output_file" ]]
+}
+
+@test "telegram_download_file rejects file_path with special characters" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ " $* " == *" -w "* ]]; then
+    echo '{"ok":true,"result":{"file_path":"photos/file%20name.jpg"}}'
+    echo "200"
+else
+    echo '{"ok":true,"result":{"file_path":"photos/file%20name.jpg"}}'
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.jpg"
+    run telegram_download_file "test_file_id" "$output_file"
+    [[ "$status" -ne 0 ]]
+}
+
+@test "telegram_download_file rejects RIFF non-WebP file" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ "$*" == *"getFile"* ]]; then
+    if [[ " $* " == *" -w "* ]]; then
+        echo '{"ok":true,"result":{"file_path":"photos/file_123.webp"}}'
+        echo "200"
+    else
+        echo '{"ok":true,"result":{"file_path":"photos/file_123.webp"}}'
+    fi
+elif [[ "$*" == *"/file/bot"* ]]; then
+    # Write RIFF header with AVI subtype (not WebP)
+    output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
+    printf 'RIFF\x00\x00\x00\x00AVI fake_data' > "$output_file"
+else
+    echo '{"ok":true}'
+    echo "200"
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.webp"
+    run telegram_download_file "test_file_id" "$output_file"
+    [[ "$status" -ne 0 ]]
+}
+
+@test "telegram_download_file accepts valid WebP file" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ "$*" == *"getFile"* ]]; then
+    if [[ " $* " == *" -w "* ]]; then
+        echo '{"ok":true,"result":{"file_path":"photos/file_123.webp"}}'
+        echo "200"
+    else
+        echo '{"ok":true,"result":{"file_path":"photos/file_123.webp"}}'
+    fi
+elif [[ "$*" == *"/file/bot"* ]]; then
+    # Write valid WebP header: RIFF + 4 size bytes + WEBP
+    output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
+    printf 'RIFF\x00\x10\x00\x00WEBP_fake_data' > "$output_file"
+else
+    echo '{"ok":true}'
+    echo "200"
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.webp"
+    telegram_download_file "test_file_id" "$output_file"
+    [[ -f "$output_file" ]]
+}
