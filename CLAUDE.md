@@ -17,7 +17,7 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 - `lib/history.sh` — Conversation history wrapper, delegates to `lib/db.sh` for SQLite storage.
 - `lib/db.sh` — SQLite database layer for conversation storage.
 - `lib/log.sh` — Centralized logging with module prefix and file output.
-- `lib/health-check.sh` — Cron health-check script that calls `/health` endpoint.
+- `lib/health-check.sh` — Cron health-check script (runs every minute) that calls `/health` endpoint. Auto-restarts the service if unreachable (throttled to once per 3 minutes, max 3 attempts). Sends Telegram alert after exhausting retries. State: `.last_restart_attempt`, `.restart_fail_count` in `$HOME/.claudio/`.
 - `lib/service.sh` — systemd (Linux) and launchd (macOS) service management. Also handles cloudflared installation and named tunnel setup during `claudio install`.
 - Runtime config/state lives in `$HOME/.claudio/` (not in the repo).
 

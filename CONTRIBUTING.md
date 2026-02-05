@@ -38,7 +38,7 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/history.sh` — Conversation history management, delegates to `lib/db.sh`
 - `lib/db.sh` — SQLite database layer for conversation storage
 - `lib/log.sh` — Centralized logging
-- `lib/health-check.sh` — Cron health-check script for webhook monitoring
+- `lib/health-check.sh` — Cron health-check script (every minute) for webhook monitoring; auto-restarts service if unreachable (throttled to once per 3 minutes, max 3 attempts), sends Telegram alert on failure
 - `lib/service.sh` — systemd/launchd service management and cloudflared setup
 
 ## Running Tests

@@ -83,7 +83,7 @@ The setup wizard will confirm when it receives the message and finish. Once done
 
 > For security, only the `chat_id` captured during setup is authorized to send messages.
 
-> A cron job runs every 5 minutes to verify the webhook is registered and re-registers it if needed.
+> A cron job runs every minute to verify the webhook is registered and re-registers it if needed. If the server is unreachable, the health check auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After 3 restart attempts without recovery, it sends a Telegram alert and stops retrying until the service recovers. State files: `$HOME/.claudio/.last_restart_attempt` (throttle), `$HOME/.claudio/.restart_fail_count` (attempt counter) — delete these to reset.
 
 ### Status
 
