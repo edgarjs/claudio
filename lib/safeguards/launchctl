@@ -48,7 +48,7 @@ if [ "$action_found" = true ] && [ "$target_found" = true ]; then
     echo "Reason: Running this command from a webhook handler would kill your own process." >&2
     echo "Changes to lib/*.sh take effect on the next webhook automatically." >&2
     # Log to claudio log file for audit trail
-    local_log="${CLAUDIO_PATH:-$HOME/.claudio}/claudio.log"
+    local_log="${CLAUDIO_PATH:-${HOME:-/tmp}/.claudio}/claudio.log"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [safeguard] BLOCKED: launchctl $*" >> "$local_log" 2>/dev/null || true
     exit 1
 fi
