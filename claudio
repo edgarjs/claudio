@@ -113,6 +113,12 @@ case "${1:-}" in
         service_update
         ;;
     restart)
+        # Block self-restart when running inside a webhook handler
+        if [[ "${CLAUDIO_WEBHOOK_ACTIVE:-}" == "1" ]]; then
+            echo "BLOCKED: 'claudio restart' refused — running inside a webhook handler." >&2
+            echo "Changes to lib/*.sh take effect on the next webhook automatically." >&2
+            exit 1
+        fi
         service_restart
         ;;
     log)

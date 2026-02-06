@@ -89,6 +89,13 @@ def _process_queue_loop(chat_id):
                 if local_bin not in env.get("PATH", "").split(os.pathsep):
                     env["PATH"] = f"{local_bin}{os.pathsep}{env.get('PATH', '')}"
 
+                # Self-restart protection: prepend safeguard wrappers to PATH
+                # and set marker so they know to intercept destructive commands
+                safeguards_dir = os.path.join(SCRIPT_DIR, "safeguards")
+                if os.path.isdir(safeguards_dir):
+                    env["PATH"] = f"{safeguards_dir}{os.pathsep}{env['PATH']}"
+                env["CLAUDIO_WEBHOOK_ACTIVE"] = "1"
+
                 proc = subprocess.Popen(
                     [CLAUDIO_BIN, "_webhook"],
                     stdin=subprocess.PIPE,
