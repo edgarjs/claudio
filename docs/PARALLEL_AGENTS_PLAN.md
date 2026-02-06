@@ -148,10 +148,14 @@ New bash module providing these functions:
 
 **`agent_spawn <prompt> [model] [timeout]`** — Spawns a new agent:
 1. Checks if max concurrent agents limit is reached; if so, returns error
-2. Generates a unique agent ID
-3. Inserts a row with `status=pending`
-4. Launches `_agent_wrapper` via `nohup setsid ... &` (new session, detached)
-5. Returns the agent ID immediately
+2. Resolves the `claude` binary path using the same logic as `lib/claude.sh` (checks
+   `~/.local/bin/claude`, `/usr/local/bin/claude`, `/usr/bin/claude`). This ensures the
+   wrapper works even in restricted environments (cron, systemd) where PATH is minimal.
+3. Generates a unique agent ID
+4. Inserts a row with `status=pending`
+5. Launches `_agent_wrapper` via `nohup setsid ... &` (new session, detached), passing the
+   resolved binary path as the 5th argument
+6. Returns the agent ID immediately
 
 **`agent_poll <parent_id>`** — Returns JSON array of agent statuses for the given parent.
 Used by the main process to check if agents are done.
@@ -180,6 +184,7 @@ _agent_wrapper() {
     local prompt="$2"
     local model="$3"
     local timeout_secs="$4"
+    local claude_cmd="$5"  # Resolved absolute path to claude binary
 
     # Update status to running + record PID
     _agent_db_update "$agent_id" "running" "" "" "" "$$"
@@ -190,9 +195,9 @@ _agent_wrapper() {
     local out_file="${AGENT_OUTPUT_DIR}/${agent_id}.out"
     local err_file="${AGENT_OUTPUT_DIR}/${agent_id}.err"
 
-    # Run claude with timeout
+    # Run claude with timeout (using resolved binary path from agent_spawn)
     local exit_code=0
-    timeout "$timeout_secs" claude --p "$prompt" \
+    timeout "$timeout_secs" "$claude_cmd" --p "$prompt" \
         --model "$model" \
         --no-chrome \
         --no-session-persistence \
