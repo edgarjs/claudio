@@ -513,7 +513,12 @@ teardown() {
 
 @test "agent_cleanup removes stale output files" {
     mkdir -p "$AGENT_OUTPUT_DIR"
-    touch -d "2 days ago" "${AGENT_OUTPUT_DIR}/agent_old.out"
+    # Cross-platform: GNU touch uses -d, BSD touch uses -t
+    if touch -d "2 days ago" "${AGENT_OUTPUT_DIR}/agent_old.out" 2>/dev/null; then
+        : # GNU touch worked
+    else
+        touch -t "$(date -v-2d '+%Y%m%d%H%M.%S')" "${AGENT_OUTPUT_DIR}/agent_old.out"
+    fi
     echo "content" > "${AGENT_OUTPUT_DIR}/agent_recent.out"
 
     agent_cleanup 24
@@ -727,7 +732,11 @@ teardown() {
 
 @test "integration: _agent_kill targets process group" {
     # Start a background process in its own session
-    setsid sleep 300 &
+    if command -v setsid > /dev/null 2>&1; then
+        setsid sleep 300 &
+    else
+        perl -e 'use POSIX qw(setsid); setsid(); exec "sleep", "300"' &
+    fi
     local bg_pid=$!
     sleep 0.2
 

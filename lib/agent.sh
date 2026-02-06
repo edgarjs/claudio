@@ -166,7 +166,9 @@ _agent_db_update() {
 _agent_resolve_claude() {
     local home="${HOME:-}"
     if [ -z "$home" ]; then
-        home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6) || home=$(eval echo "~")
+        home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6) || \
+            home=$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}') || \
+            home=$(eval echo "~")
     fi
     if [ -z "$home" ]; then
         return 1
@@ -290,11 +292,21 @@ _agent_wrapper() {
     fi
 
     # Run claude with timeout (gtimeout on macOS via coreutils)
-    local timeout_cmd="timeout"
-    command -v timeout > /dev/null 2>&1 || timeout_cmd="gtimeout"
+    # Falls back to running without timeout if neither is available
+    local timeout_cmd=""
+    if command -v timeout > /dev/null 2>&1; then
+        timeout_cmd="timeout"
+    elif command -v gtimeout > /dev/null 2>&1; then
+        timeout_cmd="gtimeout"
+    fi
     local exit_code=0
-    "$timeout_cmd" "$timeout_secs" "$claude_cmd" "${claude_args[@]}" \
-        > "$out_file" 2> "$err_file" || exit_code=$?
+    if [ -n "$timeout_cmd" ]; then
+        "$timeout_cmd" "$timeout_secs" "$claude_cmd" "${claude_args[@]}" \
+            > "$out_file" 2> "$err_file" || exit_code=$?
+    else
+        "$claude_cmd" "${claude_args[@]}" \
+            > "$out_file" 2> "$err_file" || exit_code=$?
+    fi
 
     # Determine final status
     local status="completed"

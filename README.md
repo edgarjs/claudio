@@ -168,7 +168,7 @@ Claudio can spawn independent `claude --p` subprocesses for parallel work (revie
 
 **How it works:**
 
-- `agent_spawn` launches each agent via `nohup setsid`, creating an independent process session. The agent runs `claude --p` with the given prompt and writes its output to SQLite when done.
+- `agent_spawn` launches each agent in an independent process session (`setsid` on Linux, `POSIX::setsid` via perl on macOS). The agent runs `claude --p` with the given prompt and writes its output to SQLite when done.
 - `agent_wait` polls the database every N seconds, sending Telegram typing indicators while agents work. It also enforces timeouts and detects dead processes.
 - `agent_get_results` returns a JSON array with all agent outputs for the parent invocation.
 - Each agent gets a unique ID, tracked in an `agents` table with status lifecycle: `pending` → `running` → `completed`/`failed`/`timeout`/`orphaned`.

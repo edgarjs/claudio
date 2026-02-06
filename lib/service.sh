@@ -24,6 +24,11 @@ deps_install() {
         fi
     done
 
+    # macOS needs coreutils for gtimeout (used by parallel agents)
+    if [[ "$(uname)" == "Darwin" ]] && ! command -v gtimeout > /dev/null 2>&1; then
+        missing+=("coreutils")
+    fi
+
     # Install missing packages via package manager
     if [ ${#missing[@]} -gt 0 ]; then
         echo "Missing: ${missing[*]}"
