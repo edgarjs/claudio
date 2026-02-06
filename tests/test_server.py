@@ -95,8 +95,11 @@ class TestGracefulShutdown(unittest.TestCase):
             body = _make_webhook(200)
             server.enqueue_webhook(body)
 
-            # Wait for the thread to finish
-            time.sleep(1)
+            # Wait for the processor thread to finish
+            with server.queue_lock:
+                threads_snapshot = list(server.active_threads)
+            for t in threads_snapshot:
+                t.join(timeout=5)
 
             with server.queue_lock:
                 self.assertEqual(len(server.active_threads), 0)

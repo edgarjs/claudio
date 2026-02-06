@@ -353,7 +353,7 @@ def main():
     shutdown_thread = threading.Thread(
         target=_graceful_shutdown,
         args=(server, shutdown_event),
-        daemon=True,
+        daemon=False,
     )
     shutdown_thread.start()
 
@@ -364,12 +364,9 @@ def main():
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        pass
-    # After serve_forever returns (from shutdown or Ctrl+C), wait for handlers
-    with queue_lock:
-        threads_to_wait = list(active_threads)
-    for t in threads_to_wait:
-        t.join()
+        shutdown_event.set()  # Trigger graceful shutdown on Ctrl+C too
+    # Wait for graceful shutdown to finish draining handlers
+    shutdown_thread.join()
     server.server_close()
 
 
