@@ -259,6 +259,7 @@ Type=simple
 ExecStart=${CLAUDIO_BIN} start
 Restart=always
 RestartSec=5
+TimeoutStopSec=630
 EnvironmentFile=${CLAUDIO_ENV_FILE}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin
 Environment=HOME=${HOME}
