@@ -803,7 +803,7 @@ agent_cleanup() {
             local _mtime
             _mtime=$(stat -c%Y "$_f" 2>/dev/null || stat -f%m "$_f" 2>/dev/null) || continue
             if (( _now - _mtime > _max_age_secs )); then
-                rm -f "$_f"
+                rm -f "$_f" || log_warn "agent" "Failed to remove stale output file: $_f"
             fi
         done
     fi

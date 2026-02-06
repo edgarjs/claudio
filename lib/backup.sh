@@ -69,7 +69,10 @@ backup_run() {
                 : # GNU cp hardlink succeeded
             else
                 # Fallback: rsync with hardlinks (portable)
-                rsync -a --link-dest="$oldest_today" "$oldest_today/" "$daily_today/"
+                if ! rsync -a --link-dest="$oldest_today" "$oldest_today/" "$daily_today/"; then
+                    log_error "backup" "rsync failed promoting daily backup"
+                    return 1
+                fi
             fi
             log "backup" "Daily backup promoted: $daily_today"
         fi
