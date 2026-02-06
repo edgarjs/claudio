@@ -1,0 +1,49 @@
+#!/bin/bash
+# Safeguard wrapper: prevents Claude from restarting/stopping its own service.
+# Shadows the real systemctl when CLAUDIO_WEBHOOK_ACTIVE=1.
+# Blocks only restart/stop/kill targeting the claudio service; all other
+# invocations are passed through to the real systemctl.
+
+set -euo pipefail
+
+_find_real() {
+    local self_dir
+    self_dir="$(cd "$(dirname "$0")" && pwd)"
+    local IFS=':'
+    for dir in $PATH; do
+        [ "$dir" = "$self_dir" ] && continue
+        if [ -x "$dir/systemctl" ]; then
+            printf '%s' "$dir/systemctl"
+            return 0
+        fi
+    done
+    echo "systemctl: real binary not found" >&2
+    return 127
+}
+
+# Only intercept when running inside a webhook handler
+if [ "${CLAUDIO_WEBHOOK_ACTIVE:-}" != "1" ]; then
+    real=$(_find_real)
+    exec "$real" "$@"
+fi
+
+# Check if this is a destructive command targeting the claudio service
+blocked=false
+action=""
+for arg in "$@"; do
+    case "$arg" in
+        restart|stop|kill) action="$arg" ;;
+        claudio|claudio.service) [ -n "$action" ] && blocked=true ;;
+    esac
+done
+
+if [ "$blocked" = true ]; then
+    echo "BLOCKED: 'systemctl $*' was blocked by Claudio's self-restart safeguard." >&2
+    echo "Reason: Running this command from a webhook handler would kill your own process." >&2
+    echo "Changes to lib/*.sh take effect on the next webhook automatically." >&2
+    exit 1
+fi
+
+# Pass through all other systemctl commands
+real=$(_find_real)
+exec "$real" "$@"

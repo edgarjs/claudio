@@ -309,6 +309,14 @@ service_uninstall() {
 }
 
 service_restart() {
+    # Block self-restart when running inside a webhook handler
+    if [[ "${CLAUDIO_WEBHOOK_ACTIVE:-}" == "1" ]]; then
+        echo "BLOCKED: service_restart refused — running inside a webhook handler." >&2
+        echo "Changes to lib/*.sh take effect on the next webhook automatically." >&2
+        echo "If a restart is truly needed (e.g. server.py changes), ask the user." >&2
+        return 1
+    fi
+
     if [[ "$(uname)" == "Darwin" ]]; then
         launchctl stop com.claudio.server 2>/dev/null || true
         launchctl start com.claudio.server
