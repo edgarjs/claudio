@@ -33,6 +33,8 @@ source "$LIB_DIR/backup.sh"
 source "$LIB_DIR/tts.sh"
 # shellcheck source=lib/stt.sh
 source "$LIB_DIR/stt.sh"
+# shellcheck source=lib/agent.sh
+source "$LIB_DIR/agent.sh"
 
 usage() {
     cat <<EOF
@@ -89,6 +91,8 @@ case "${1:-}" in
         ;;
     _webhook)
         history_init
+        agent_init
+        agent_cleanup_if_needed
         body=$(cat)
         telegram_handle_webhook "$body"
         ;;

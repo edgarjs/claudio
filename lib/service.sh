@@ -24,6 +24,11 @@ deps_install() {
         fi
     done
 
+    # macOS needs coreutils for gtimeout (used by parallel agents)
+    if [[ "$(uname)" == "Darwin" ]] && ! command -v gtimeout > /dev/null 2>&1; then
+        missing+=("coreutils")
+    fi
+
     # Install missing packages via package manager
     if [ ${#missing[@]} -gt 0 ]; then
         echo "Missing: ${missing[*]}"
@@ -53,7 +58,10 @@ deps_install() {
         fi
 
         for cmd in "${missing[@]}"; do
-            if ! command -v "$cmd" > /dev/null 2>&1; then
+            # coreutils is a package, not a command — on macOS it provides gtimeout
+            local check_cmd="$cmd"
+            [[ "$cmd" == "coreutils" ]] && check_cmd="gtimeout"
+            if ! command -v "$check_cmd" > /dev/null 2>&1; then
                 print_error "Failed to install $cmd."
                 exit 1
             fi
@@ -259,7 +267,7 @@ Type=simple
 ExecStart=${CLAUDIO_BIN} start
 Restart=always
 RestartSec=5
-TimeoutStopSec=660
+TimeoutStopSec=1800
 EnvironmentFile=${CLAUDIO_ENV_FILE}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin
 Environment=HOME=${HOME}

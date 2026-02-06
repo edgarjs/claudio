@@ -41,6 +41,8 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/health-check.sh` — Cron health-check script (every minute) for webhook monitoring; auto-restarts service if unreachable (throttled to once per 3 minutes, max 3 attempts), sends Telegram alert on failure
 - `lib/tts.sh` — ElevenLabs text-to-speech for voice responses
 - `lib/stt.sh` — ElevenLabs speech-to-text for voice message transcription
+- `lib/agent.sh` — Parallel agent management: spawns independent `claude --p` processes, tracks state in SQLite, handles crash recovery and orphan detection
+- `lib/backup.sh` — Automated backup utilities
 - `lib/service.sh` — systemd/launchd service management and cloudflared setup
 
 ## Running Tests

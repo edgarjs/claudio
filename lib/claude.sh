@@ -49,7 +49,9 @@ claude_run() {
     local claude_cmd
     local home="${HOME:-}"
     if [ -z "$home" ]; then
-        home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6) || home=$(eval echo "~")
+        home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6) || \
+            home=$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}') || \
+            home=$(eval echo "~")
     fi
     if [ -z "$home" ]; then
         log "claude" "Error: Cannot determine HOME directory"
