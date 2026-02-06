@@ -71,17 +71,6 @@ def _process_queue_loop(chat_id):
     """Inner loop for process_queue, separated for clean thread tracking."""
     while True:
         with queue_lock:
-            # Stop draining if shutdown was requested — only finish current message
-            if shutting_down:
-                if chat_id in chat_queues:
-                    remaining = len(chat_queues[chat_id])
-                    if remaining:
-                        sys.stderr.write(
-                            f"[queue] Shutdown: discarding {remaining} queued message(s) for chat {chat_id}\n"
-                        )
-                    del chat_queues[chat_id]
-                chat_active.pop(chat_id, None)
-                return
             if chat_id not in chat_queues or not chat_queues[chat_id]:
                 # Queue empty, clean up
                 if chat_id in chat_queues:

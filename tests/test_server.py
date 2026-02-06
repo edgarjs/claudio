@@ -155,11 +155,10 @@ class TestGracefulShutdown(unittest.TestCase):
             self.assertEqual(len(server.chat_queues), 0)
 
 
-    def test_queue_loop_stops_draining_on_shutdown(self):
-        """_process_queue_loop stops after current message when shutting_down."""
+    def test_queue_loop_drains_during_shutdown(self):
+        """_process_queue_loop processes remaining messages during shutdown."""
         original_bin = server.CLAUDIO_BIN
         original_log = server.LOG_FILE
-        processed = []
         try:
             server.CLAUDIO_BIN = "/bin/true"
             server.LOG_FILE = "/dev/null"
@@ -174,15 +173,14 @@ class TestGracefulShutdown(unittest.TestCase):
                     )
                 server.chat_active[chat_id] = True
 
-            # Set shutdown before the loop runs — it should exit immediately
-            # without processing any of the 3 messages
+            # Set shutdown before the loop runs — it should still drain all messages
             with server.queue_lock:
                 server.shutting_down = True
 
             server._process_queue_loop(chat_id)
 
             with server.queue_lock:
-                # Queue should have been cleaned up
+                # Queue should be fully drained and cleaned up
                 self.assertNotIn(chat_id, server.chat_queues)
                 self.assertNotIn(chat_id, server.chat_active)
         finally:
