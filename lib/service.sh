@@ -261,13 +261,17 @@ service_install_systemd() {
 [Unit]
 Description=Claudio - Telegram to Claude Code bridge
 After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
+ExecStartPre=-/usr/bin/pkill -f 'claude.*--dangerously-skip-permissions'
 ExecStart=${CLAUDIO_BIN} start
 Restart=always
 RestartSec=5
 TimeoutStopSec=1800
+KillMode=mixed
 EnvironmentFile=${CLAUDIO_ENV_FILE}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin
 Environment=HOME=${HOME}

@@ -472,6 +472,15 @@ agent_spawn() {
     # All values passed via env vars — no shell interpolation of user content
     # Uses setsid on Linux, perl POSIX::setsid on macOS (perl is pre-installed)
     # Only pass safe env vars to agents (no secrets like TELEGRAM_BOT_TOKEN, ELEVENLABS_API_KEY)
+
+    # Prepend safeguards dir to PATH so agents can't restart the service either
+    local agent_path="$PATH"
+    local safeguards_dir
+    safeguards_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/safeguards" 2>/dev/null && pwd)" || true
+    if [ -n "$safeguards_dir" ] && [ -d "$safeguards_dir" ]; then
+        agent_path="${safeguards_dir}:${agent_path}"
+    fi
+
     local wrapper_script='
         source "$_AGENT_SCRIPT"
         prompt=$(cat "$_AGENT_PROMPT_FILE")
@@ -481,7 +490,8 @@ agent_spawn() {
 
     if command -v setsid > /dev/null 2>&1; then
         env -i \
-            HOME="$HOME" PATH="$PATH" TERM="${TERM:-}" \
+            HOME="$HOME" PATH="$agent_path" TERM="${TERM:-}" \
+            CLAUDIO_WEBHOOK_ACTIVE="${CLAUDIO_WEBHOOK_ACTIVE:-}" \
             CLAUDIO_PATH="$CLAUDIO_PATH" \
             CLAUDIO_DB_FILE="$CLAUDIO_DB_FILE" \
             CLAUDIO_PROMPT_FILE="$CLAUDIO_PROMPT_FILE" \
@@ -497,7 +507,8 @@ agent_spawn() {
             nohup setsid bash -c "$wrapper_script" > /dev/null 2>&1 &
     else
         env -i \
-            HOME="$HOME" PATH="$PATH" TERM="${TERM:-}" \
+            HOME="$HOME" PATH="$agent_path" TERM="${TERM:-}" \
+            CLAUDIO_WEBHOOK_ACTIVE="${CLAUDIO_WEBHOOK_ACTIVE:-}" \
             CLAUDIO_PATH="$CLAUDIO_PATH" \
             CLAUDIO_DB_FILE="$CLAUDIO_DB_FILE" \
             CLAUDIO_PROMPT_FILE="$CLAUDIO_PROMPT_FILE" \

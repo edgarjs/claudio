@@ -27,9 +27,13 @@ teardown() {
 
 @test "service_restart: allowed outside webhook handler" {
     unset CLAUDIO_WEBHOOK_ACTIVE
+    # Create a fake systemctl that just exits 0 (don't run the real one!)
+    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
+    mkdir -p "$mock_dir"
+    printf '#!/bin/bash\necho "mock systemctl called with: $*"\n' > "$mock_dir/systemctl"
+    chmod +x "$mock_dir/systemctl"
+    export PATH="$mock_dir:$PATH"
     source "$PROJECT_DIR/lib/service.sh"
-    # Can't actually restart, so just verify it doesn't block
-    # It will fail because systemctl isn't available in test, but NOT with BLOCKED
     run service_restart
     [[ "$output" != *"BLOCKED"* ]]
 }
@@ -44,7 +48,12 @@ teardown() {
 
 @test "claudio restart: allowed outside webhook handler" {
     unset CLAUDIO_WEBHOOK_ACTIVE
-    # Will fail because systemctl isn't available, but NOT with BLOCKED
+    # Create a fake systemctl so the real service doesn't restart
+    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
+    mkdir -p "$mock_dir"
+    printf '#!/bin/bash\necho "mock systemctl called with: $*"\n' > "$mock_dir/systemctl"
+    chmod +x "$mock_dir/systemctl"
+    export PATH="$mock_dir:$PATH"
     run "$PROJECT_DIR/claudio" restart
     [[ "$output" != *"BLOCKED"* ]]
 }
@@ -88,24 +97,48 @@ teardown() {
 }
 
 @test "systemctl wrapper: allows 'status claudio' inside webhook" {
+    # Mock real systemctl so passthrough doesn't hit the real one
+    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
+    mkdir -p "$mock_dir"
+    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/systemctl"
+    chmod +x "$mock_dir/systemctl"
+    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
     run "$SAFEGUARDS_DIR/systemctl" --user status claudio
     [[ "$output" != *"BLOCKED"* ]]
 }
 
 @test "systemctl wrapper: allows 'daemon-reload' inside webhook" {
+    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
+    mkdir -p "$mock_dir"
+    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/systemctl"
+    chmod +x "$mock_dir/systemctl"
+    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
     run "$SAFEGUARDS_DIR/systemctl" --user daemon-reload
     [[ "$output" != *"BLOCKED"* ]]
 }
 
 @test "systemctl wrapper: allows 'restart other-service' inside webhook" {
+    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
+    mkdir -p "$mock_dir"
+    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/systemctl"
+    chmod +x "$mock_dir/systemctl"
+    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
     run "$SAFEGUARDS_DIR/systemctl" --user restart other-service
     [[ "$output" != *"BLOCKED"* ]]
 }
 
 @test "systemctl wrapper: passes through when CLAUDIO_WEBHOOK_ACTIVE unset" {
     unset CLAUDIO_WEBHOOK_ACTIVE
+    # Create a fake real systemctl so the wrapper passes through to it (not the real one)
+    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
+    mkdir -p "$mock_dir"
+    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/systemctl"
+    chmod +x "$mock_dir/systemctl"
+    # Put mock AFTER safeguards so wrapper finds mock as "real" systemctl
+    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
     run "$SAFEGUARDS_DIR/systemctl" --user restart claudio
     [[ "$output" != *"BLOCKED"* ]]
+    [[ "$output" == *"passthrough"* ]]
 }
 
 # ── Layer 3: launchctl PATH wrapper ──────────────────────────────
@@ -123,14 +156,42 @@ teardown() {
 }
 
 @test "launchctl wrapper: allows 'list' inside webhook" {
+    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
+    mkdir -p "$mock_dir"
+    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/launchctl"
+    chmod +x "$mock_dir/launchctl"
+    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
     run "$SAFEGUARDS_DIR/launchctl" list
     [[ "$output" != *"BLOCKED"* ]]
 }
 
 @test "launchctl wrapper: passes through when CLAUDIO_WEBHOOK_ACTIVE unset" {
     unset CLAUDIO_WEBHOOK_ACTIVE
+    # Create a fake real launchctl so the wrapper passes through to it
+    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
+    mkdir -p "$mock_dir"
+    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/launchctl"
+    chmod +x "$mock_dir/launchctl"
+    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
     run "$SAFEGUARDS_DIR/launchctl" stop com.claudio.server
     [[ "$output" != *"BLOCKED"* ]]
+    [[ "$output" == *"passthrough"* ]]
+}
+
+# ── Agent safeguards propagation ──────────────────────────────────
+
+@test "agent_spawn code includes CLAUDIO_WEBHOOK_ACTIVE env var" {
+    # Verify agent.sh passes CLAUDIO_WEBHOOK_ACTIVE in the env -i calls
+    run grep -c 'CLAUDIO_WEBHOOK_ACTIVE=' "$PROJECT_DIR/lib/agent.sh"
+    [ "$output" -ge 2 ]  # Should appear in both setsid and perl branches
+}
+
+@test "agent_spawn code prepends safeguards dir to PATH" {
+    # Verify agent.sh builds agent_path with safeguards dir
+    run grep 'safeguards_dir' "$PROJECT_DIR/lib/agent.sh"
+    [ "$status" -eq 0 ]
+    run grep 'agent_path=' "$PROJECT_DIR/lib/agent.sh"
+    [ "$status" -eq 0 ]
 }
 
 # ── PATH resolution ──────────────────────────────────────────────
@@ -145,4 +206,26 @@ teardown() {
     local wrapper
     wrapper=$(command -v launchctl)
     [ "$wrapper" = "$SAFEGUARDS_DIR/launchctl" ]
+}
+
+# ── Systemd unit file template ──────────────────────────────────
+
+@test "systemd template includes StartLimitIntervalSec" {
+    run grep -c "StartLimitIntervalSec=" "$PROJECT_DIR/lib/service.sh"
+    [ "$output" = "1" ]
+}
+
+@test "systemd template includes StartLimitBurst" {
+    run grep -c "StartLimitBurst=" "$PROJECT_DIR/lib/service.sh"
+    [ "$output" = "1" ]
+}
+
+@test "systemd template includes KillMode=mixed" {
+    run grep -c "KillMode=mixed" "$PROJECT_DIR/lib/service.sh"
+    [ "$output" = "1" ]
+}
+
+@test "systemd template includes ExecStartPre to kill orphans" {
+    run grep -c "ExecStartPre=" "$PROJECT_DIR/lib/service.sh"
+    [ "$output" = "1" ]
 }
