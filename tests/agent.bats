@@ -10,6 +10,15 @@ setup() {
     export AGENT_DEFAULT_TIMEOUT=300
     export AGENT_POLL_INTERVAL=1
     export AGENT_CLEANUP_AGE=24
+    export AGENT_DEFAULT_MODEL=haiku
+    export AGENT_MAX_GLOBAL_CONCURRENT=15
+
+    # Create a stub claude binary so _agent_resolve_claude works in CI
+    # where the real claude CLI is not installed
+    mkdir -p "$BATS_TEST_TMPDIR/.local/bin"
+    printf '#!/bin/sh\necho "stub claude"\n' > "$BATS_TEST_TMPDIR/.local/bin/claude"
+    chmod +x "$BATS_TEST_TMPDIR/.local/bin/claude"
+    export HOME="$BATS_TEST_TMPDIR"
 
     # Source dependencies
     source "$BATS_TEST_DIRNAME/../lib/log.sh"
@@ -180,9 +189,9 @@ teardown() {
 @test "_agent_resolve_claude finds claude binary" {
     local result
     result=$(_agent_resolve_claude)
-    # Should find it somewhere if claude is installed
     [[ -n "$result" ]]
     [[ -x "$result" ]]
+    [[ "$result" == "$BATS_TEST_TMPDIR/.local/bin/claude" ]]
 }
 
 # ==================== agent_spawn ====================

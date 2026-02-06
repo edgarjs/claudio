@@ -392,12 +392,8 @@ ${text}"
                 text="$agent_context"
             fi
         fi
-        # Mark these agents as reported only after successfully building context.
-        # If claude_run fails later, the results are still in $text and won't be lost
-        # since agent_recover already marked them atomically during recovery.
-        local reported_ids
-        reported_ids=$(printf '%s' "$agent_results" | jq -r '[.[].id] | join(",")' 2>/dev/null)
-        agent_mark_reported "$reported_ids"
+        # agent_recover already marked these as reported atomically (INSERT INTO agent_reports)
+        # during recovery, so no need to call agent_mark_reported again.
     fi
 
     log "telegram" "Received message from chat_id=$WEBHOOK_CHAT_ID"

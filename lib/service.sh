@@ -58,7 +58,10 @@ deps_install() {
         fi
 
         for cmd in "${missing[@]}"; do
-            if ! command -v "$cmd" > /dev/null 2>&1; then
+            # coreutils is a package, not a command — on macOS it provides gtimeout
+            local check_cmd="$cmd"
+            [[ "$cmd" == "coreutils" ]] && check_cmd="gtimeout"
+            if ! command -v "$check_cmd" > /dev/null 2>&1; then
                 print_error "Failed to install $cmd."
                 exit 1
             fi

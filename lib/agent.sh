@@ -286,8 +286,6 @@ _agent_wrapper() {
     # Re-source config so we have CLAUDIO_DB_FILE etc.
     # The wrapper runs in a new session, so env vars from the parent are
     # passed via the nohup invocation, but we need the functions too.
-    local lib_dir
-    lib_dir="$(dirname "${BASH_SOURCE[0]}")"
 
     # Record PID + start time for recycling detection
     local my_start_time
