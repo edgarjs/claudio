@@ -1,8 +1,8 @@
 #!/bin/bash
 # Safeguard wrapper: prevents Claude from restarting/stopping its own service.
 # Shadows the real systemctl when CLAUDIO_WEBHOOK_ACTIVE=1.
-# Blocks only restart/stop/kill targeting the claudio service; all other
-# invocations are passed through to the real systemctl.
+# Blocks only restart/stop/kill/reload-or-restart/try-restart targeting the
+# claudio service; all other invocations are passed through to the real systemctl.
 
 set -euo pipefail
 
@@ -21,10 +21,9 @@ _find_real() {
     return 127
 }
 
-real=$(_find_real) || real=""
-
 # Only intercept when running inside a webhook handler
 if [ "${CLAUDIO_WEBHOOK_ACTIVE:-}" != "1" ]; then
+    real=$(_find_real) || exit 127
     exec "$real" "$@"
 fi
 
@@ -33,7 +32,7 @@ action_found=false
 target_found=false
 for arg in "$@"; do
     case "$arg" in
-        restart|stop|kill) action_found=true ;;
+        restart|stop|kill|reload-or-restart|try-restart) action_found=true ;;
         claudio|claudio.service) target_found=true ;;
     esac
 done
@@ -42,8 +41,12 @@ if [ "$action_found" = true ] && [ "$target_found" = true ]; then
     echo "BLOCKED: 'systemctl $*' was blocked by Claudio's self-restart safeguard." >&2
     echo "Reason: Running this command from a webhook handler would kill your own process." >&2
     echo "Changes to lib/*.sh take effect on the next webhook automatically." >&2
+    # Log to claudio log file for audit trail
+    local_log="${CLAUDIO_PATH:-$HOME/.claudio}/claudio.log"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [safeguard] BLOCKED: systemctl $*" >> "$local_log" 2>/dev/null || true
     exit 1
 fi
 
 # Pass through all other systemctl commands
+real=$(_find_real) || exit 127
 exec "$real" "$@"

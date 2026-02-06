@@ -78,6 +78,18 @@ teardown() {
     [[ "$output" == *"BLOCKED"* ]]
 }
 
+@test "systemctl wrapper: blocks 'reload-or-restart claudio' inside webhook" {
+    run "$SAFEGUARDS_DIR/systemctl" --user reload-or-restart claudio
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "systemctl wrapper: blocks 'try-restart claudio' inside webhook" {
+    run "$SAFEGUARDS_DIR/systemctl" --user try-restart claudio
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"BLOCKED"* ]]
+}
+
 @test "systemctl wrapper: blocks 'restart claudio.service' inside webhook" {
     run "$SAFEGUARDS_DIR/systemctl" --user restart claudio.service
     [ "$status" -eq 1 ]
@@ -145,6 +157,12 @@ teardown() {
 
 @test "launchctl wrapper: blocks 'stop com.claudio.server' inside webhook" {
     run "$SAFEGUARDS_DIR/launchctl" stop com.claudio.server
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "launchctl wrapper: blocks 'bootout' with claudio inside webhook" {
+    run "$SAFEGUARDS_DIR/launchctl" bootout gui/501/com.claudio.server
     [ "$status" -eq 1 ]
     [[ "$output" == *"BLOCKED"* ]]
 }
@@ -225,7 +243,7 @@ teardown() {
     [ "$output" = "1" ]
 }
 
-@test "systemd template includes ExecStartPre to kill orphans" {
+@test "systemd template does not include ExecStartPre (agents must survive restarts)" {
     run grep -c "ExecStartPre=" "$PROJECT_DIR/lib/service.sh"
-    [ "$output" = "1" ]
+    [ "$output" = "0" ]
 }

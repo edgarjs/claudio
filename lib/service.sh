@@ -266,7 +266,6 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStartPre=-/usr/bin/pkill -f 'claude.*--dangerously-skip-permissions'
 ExecStart=${CLAUDIO_BIN} start
 Restart=always
 RestartSec=5
@@ -450,5 +449,9 @@ service_update() {
     fi
 
     print_success "Claudio updated successfully."
-    service_restart
+    if [[ "${CLAUDIO_WEBHOOK_ACTIVE:-}" == "1" ]]; then
+        print_warning "Restart blocked (running inside webhook handler). Ask the user to restart manually."
+    else
+        service_restart
+    fi
 }
