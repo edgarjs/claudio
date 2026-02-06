@@ -35,9 +35,11 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 # Per-chat message queues for serial processing
 chat_queues = {}  # chat_id -> deque of webhook bodies
 chat_active = {}  # chat_id -> bool, True if a processor thread is running
+active_threads = []  # Non-daemon processor threads to wait on during shutdown
 queue_lock = threading.Lock()
 seen_updates = OrderedDict()  # Track processed update_ids to prevent duplicates
 MAX_SEEN_UPDATES = 1000
+shutting_down = False  # Set to True on SIGTERM to reject new webhooks
 
 # Health check cache
 _health_cache = {"result": None, "time": 0}
@@ -56,6 +58,17 @@ def parse_webhook(body):
 
 def process_queue(chat_id):
     """Process messages for a chat one at a time."""
+    current = threading.current_thread()
+    try:
+        _process_queue_loop(chat_id)
+    finally:
+        with queue_lock:
+            if current in active_threads:
+                active_threads.remove(current)
+
+
+def _process_queue_loop(chat_id):
+    """Inner loop for process_queue, separated for clean thread tracking."""
     while True:
         with queue_lock:
             if chat_id not in chat_queues or not chat_queues[chat_id]:
@@ -120,6 +133,11 @@ def enqueue_webhook(body):
         return
 
     with queue_lock:
+        # Reject new messages during shutdown — let active handlers finish
+        if shutting_down:
+            sys.stderr.write(f"[queue] Rejecting webhook during shutdown for chat {chat_id}\n")
+            return
+
         # Deduplicate: skip if we've already seen this update_id
         if update_id is not None:
             if update_id in seen_updates:
@@ -147,8 +165,9 @@ def enqueue_webhook(body):
             thread = threading.Thread(
                 target=process_queue,
                 args=(chat_id,),
-                daemon=True
+                daemon=False,
             )
+            active_threads.append(thread)
             thread.start()
 
 
@@ -170,6 +189,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/telegram/webhook":
+            # Reject early during shutdown so Telegram retries later
+            if shutting_down:
+                self._respond(503, {"error": "shutting down"})
+                return
             # Verify webhook secret before reading body
             token = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
             if not hmac.compare_digest(token, WEBHOOK_SECRET):
@@ -296,6 +319,30 @@ def startup_health_check():
         print(f"Startup health check: {health}")
 
 
+def _graceful_shutdown(server, shutdown_event):
+    """Wait for SIGTERM, then stop accepting requests and drain active handlers."""
+    global shutting_down
+    shutdown_event.wait()
+
+    with queue_lock:
+        shutting_down = True
+    sys.stderr.write("[shutdown] SIGTERM received, draining active handlers...\n")
+
+    # Stop accepting new HTTP requests
+    server.shutdown()
+
+    # Wait for all active processor threads to finish their current message
+    with queue_lock:
+        threads_to_wait = list(active_threads)
+    if threads_to_wait:
+        sys.stderr.write(f"[shutdown] Waiting for {len(threads_to_wait)} active handler(s)...\n")
+        for t in threads_to_wait:
+            t.join(timeout=WEBHOOK_TIMEOUT + 10)
+            if t.is_alive():
+                sys.stderr.write(f"[shutdown] WARNING: thread {t.name} still alive after timeout\n")
+    sys.stderr.write("[shutdown] All handlers finished, exiting cleanly.\n")
+
+
 def main():
     # Require WEBHOOK_SECRET for security
     if not WEBHOOK_SECRET:
@@ -307,13 +354,13 @@ def main():
     server = ThreadedHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Claudio server listening on port {PORT}")
 
-    # Use threading.Event to avoid calling server.shutdown() directly from
-    # signal handler, which can deadlock if a request is being processed
+    # Graceful shutdown: SIGTERM → stop HTTP server → wait for active handlers
     shutdown_event = threading.Event()
     signal.signal(signal.SIGTERM, lambda s, f: shutdown_event.set())
     shutdown_thread = threading.Thread(
-        target=lambda: (shutdown_event.wait(), server.shutdown()),
-        daemon=True,
+        target=_graceful_shutdown,
+        args=(server, shutdown_event),
+        daemon=False,
     )
     shutdown_thread.start()
 
@@ -324,7 +371,9 @@ def main():
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        pass
+        shutdown_event.set()  # Trigger graceful shutdown on Ctrl+C too
+    # Wait for graceful shutdown to finish draining handlers
+    shutdown_thread.join()
     server.server_close()
 
 

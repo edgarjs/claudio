@@ -62,10 +62,10 @@ server_start() {
     # Start cloudflared tunnel in background
     cloudflared_start
 
-    # Start HTTP server (blocks)
+    # Start HTTP server (exec replaces bash so SIGTERM reaches Python directly)
     local server_py
     server_py="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/server.py"
-    PORT="$PORT" python3 "$server_py"
+    exec env PORT="$PORT" python3 "$server_py"
 }
 
 cloudflared_start() {
