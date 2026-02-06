@@ -75,6 +75,18 @@ teardown() {
     [[ "$output" == *"BLOCKED"* ]]
 }
 
+@test "systemctl wrapper: blocks when service name appears before action" {
+    run "$SAFEGUARDS_DIR/systemctl" --user claudio restart
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "launchctl wrapper: blocks when service name appears before action" {
+    run "$SAFEGUARDS_DIR/launchctl" com.claudio.server stop
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"BLOCKED"* ]]
+}
+
 @test "systemctl wrapper: allows 'status claudio' inside webhook" {
     run "$SAFEGUARDS_DIR/systemctl" --user status claudio
     [[ "$output" != *"BLOCKED"* ]]

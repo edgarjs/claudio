@@ -21,28 +21,30 @@ _find_real() {
     return 127
 }
 
+real=$(_find_real) || real=""
+
 # Only intercept when running inside a webhook handler
 if [ "${CLAUDIO_WEBHOOK_ACTIVE:-}" != "1" ]; then
-    real=$(_find_real)
     exec "$real" "$@"
 fi
 
 # Check if this is a destructive command targeting the claudio service
-blocked=false
-action=""
+action_found=false
+target_found=false
 for arg in "$@"; do
     case "$arg" in
-        stop|unload) action="$arg" ;;
-        *claudio*) [ -n "$action" ] && blocked=true ;;
+        stop|unload) action_found=true ;;
+        *claudio*) target_found=true ;;
     esac
 done
 
 # Also catch: launchctl kickstart -k ... claudio
 if [[ " $* " == *" kickstart "* ]] && [[ " $* " == *" -k "* ]] && [[ " $* " == *"claudio"* ]]; then
-    blocked=true
+    action_found=true
+    target_found=true
 fi
 
-if [ "$blocked" = true ]; then
+if [ "$action_found" = true ] && [ "$target_found" = true ]; then
     echo "BLOCKED: 'launchctl $*' was blocked by Claudio's self-restart safeguard." >&2
     echo "Reason: Running this command from a webhook handler would kill your own process." >&2
     echo "Changes to lib/*.sh take effect on the next webhook automatically." >&2
@@ -50,5 +52,4 @@ if [ "$blocked" = true ]; then
 fi
 
 # Pass through all other launchctl commands
-real=$(_find_real)
 exec "$real" "$@"
