@@ -632,10 +632,18 @@ teardown() {
     [[ -z "$exit_code" ]]
 }
 
-@test "integration: _agent_sql_escape strips NUL bytes from pipe" {
-    # Bash truncates NUL in variables, but tr -d '\0' protects when reading from files/pipes
-    result=$(printf 'hello\x00world' | tr -d '\0' | sed "s/'/''/g")
-    [[ "$result" == "helloworld" ]]
+@test "integration: _agent_sql_escape handles special characters" {
+    # Test that the function correctly escapes single quotes
+    result=$(_agent_sql_escape "hello'world")
+    [[ "$result" == "hello''world" ]]
+
+    # Test empty string
+    result=$(_agent_sql_escape "")
+    [[ -z "$result" ]]
+
+    # Test string with multiple quotes
+    result=$(_agent_sql_escape "it's a 'test'")
+    [[ "$result" == "it''s a ''test''" ]]
 }
 
 @test "integration: _agent_sql retries on WAL lock" {
