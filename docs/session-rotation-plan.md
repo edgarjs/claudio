@@ -24,6 +24,14 @@ This has several drawbacks:
 
 Simply switching to `--resume` with a persistent session would introduce **context rot** — after many compactions in a long-lived session, early instructions and conversation details degrade progressively.
 
+**Relationship with the cognitive memory system (PR #19):** Session rotation and cognitive memory solve different layers of the context problem. Session rotation handles **short-term continuity** (last ~20 messages, native multi-turn). Cognitive memory handles **long-term knowledge** (extracted facts, preferences, and procedures from all past conversations, retrieved by embedding similarity). They are complementary — session rotation improves conversation *feel*, cognitive memory improves conversation *depth*. Neither replaces the other.
+
+```
+Layer 1: Session rotation    → "what did we just talk about?" (last 20 msgs, native --resume)
+Layer 2: History bootstrap   → "what happened recently?" (last 100 msgs, text on rotation)
+Layer 3: Cognitive memory    → "what do I know about this user/topic?" (all time, embedding retrieval)
+```
+
 ## Solution: Rotating Sessions with History Bootstrap
 
 Use Claude's native `--resume` for multi-turn continuity within a **bounded session window**, then rotate to a fresh session and bootstrap it with recent history from our SQLite database.
@@ -97,9 +105,10 @@ claude_run(prompt, chat_id):
        # Resume existing session — no history injection needed
        args = [..., --resume $session_id, -p "$prompt", --output-format json]
   3. else:
-       # New session — inject history as bootstrap context
-       context = history_get_context()
-       full_prompt = context + "---\n\nNow respond:\n\n" + prompt
+       # New session — inject history + memories as bootstrap context
+       context = history_get_context()    # last 100 messages (hardcoded)
+       memories = memory_retrieve(prompt)  # if cognitive memory is enabled (PR #19)
+       full_prompt = context + memories + "---\n\nNow respond:\n\n" + prompt
        args = [..., -p "$full_prompt", --output-format json]
   4. Run claude with args, capture JSON output
   5. Parse JSON: extract result text, session_id, is_error from output
@@ -143,9 +152,10 @@ Key changes:
 ### What does NOT change
 
 - `lib/agent.sh` — Agents remain stateless one-shot invocations with `--no-session-persistence`. They're independent tasks, not conversational turns.
-- `lib/history.sh` — History add/get/trim remain unchanged. The SQLite message history is still the source of truth for durable context.
+- `lib/history.sh` — History add/get remain unchanged. Note: PR #19 removes `history_trim()` and `db_trim()` — messages are kept forever for the consolidation pipeline. Session rotation is compatible with this: `history_get_context()` already hardcodes a limit of 100 for the bootstrap window regardless of total message count.
 - `lib/server.py` — No changes needed. The subprocess interface is identical.
-- `lib/telegram.sh` — Webhook parsing, file handling, TTS/STT — all unchanged. Only the `claude_run` call site changes (adding chat_id argument).
+- `lib/telegram.sh` — Webhook parsing, file handling, TTS/STT — all unchanged. Only the `claude_run` call site changes (adding chat_id argument). Note: PR #19 adds a `memory_consolidate` call after the response — this is independent of session rotation and works regardless of whether `--resume` is used.
+- `lib/memory.sh` / `lib/memory.py` (PR #19) — Memory retrieval integrates naturally: `memory_retrieve()` is called during bootstrap (new session) to inject long-term knowledge alongside recent history. Within a resumed session, memories are not re-injected (they'd already be in Claude's context from the bootstrap or prior turns).
 
 ## File-by-file changes
 
@@ -161,7 +171,8 @@ Key changes:
 ### `lib/claude.sh`
 - Accept `chat_id` as second parameter
 - Look up active session via `db_get_active_session()`
-- Conditionally use `--resume` or fresh invocation with history injection
+- Conditionally use `--resume` or fresh invocation with history bootstrap
+- On new session: inject `history_get_context()` (last 100 messages) + `memory_retrieve()` (if cognitive memory is enabled) as bootstrap context
 - Add `--output-format json`, remove `--no-session-persistence`
 - Parse JSON response, extract `result` and `session_id`
 - Create/increment session records
@@ -197,9 +208,11 @@ Key changes:
 - **Backwards compatible**: Existing `messages` table is unchanged. First message after upgrade creates a new session automatically.
 - **Rollback**: Remove `sessions` table, revert `claude.sh` to use `--no-session-persistence`. History DB is unaffected.
 - **No data migration needed**: Sessions are ephemeral by design.
+- **Ordering with PR #19**: Either can land first. If PR #19 lands first, `db_trim()`/`history_trim()`/`MAX_HISTORY_LINES` will already be gone — session rotation simply uses `history_get_context()` (hardcoded to 100) and `memory_retrieve()` for bootstrap. If session rotation lands first, it references `history_get_context()` which still works with or without trimming.
 
 ## Future considerations
 
 - **Session compaction control**: If Claude CLI adds `/compact` support in `-p` mode, we could compact mid-session instead of rotating.
 - **Adaptive window size**: Could track token usage from JSON output and rotate based on token count rather than message count.
 - **Per-chat window config**: Different chats could have different window sizes via a config table.
+- **Memory-aware rotation**: With the cognitive memory system (PR #19), session rotation could trigger a consolidation pass on rotation boundaries — extracting knowledge from the expiring session window before it's lost. Currently consolidation runs post-response; running it on rotation would ensure nothing slips through the cracks.
