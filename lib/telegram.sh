@@ -512,7 +512,7 @@ Describe this image."
     if [ -n "$doc_file" ]; then
         local doc_name="${WEBHOOK_DOC_FILE_NAME:-document}"
         # Sanitize filename: strip chars that could break prompt framing or enable injection
-        doc_name=$(printf '%s' "$doc_name" | tr -cd 'a-zA-Z0-9._- ' | head -c 255)
+        doc_name=$(printf '%s' "$doc_name" | tr -cd 'a-zA-Z0-9._ -' | head -c 255)
         doc_name="${doc_name:-document}"
         if [ -n "$text" ]; then
             text="[The user sent a file \"${doc_name}\" at ${doc_file}]

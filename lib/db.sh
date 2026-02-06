@@ -32,7 +32,9 @@ db_add() {
     local escaped_content
     escaped_content=$(printf '%s' "$content" | sed "s/'/''/g")
 
-    if ! sqlite3 "$CLAUDIO_DB_FILE" "INSERT INTO messages (role, content) VALUES ('$role', '$escaped_content');"; then
+    # Pipe SQL via stdin to avoid ARG_MAX limit on large content
+    # (printf is a bash builtin, not subject to execve ARG_MAX)
+    if ! printf "INSERT INTO messages (role, content) VALUES ('%s', '%s');\n" "$role" "$escaped_content" | sqlite3 "$CLAUDIO_DB_FILE"; then
         echo "db_add: failed to insert message" >&2
         return 1
     fi
