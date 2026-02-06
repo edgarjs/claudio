@@ -12,7 +12,15 @@ AGENT_MAX_CONCURRENT="${AGENT_MAX_CONCURRENT:-5}"
 AGENT_DEFAULT_TIMEOUT="${AGENT_DEFAULT_TIMEOUT:-300}"
 AGENT_POLL_INTERVAL="${AGENT_POLL_INTERVAL:-5}"
 AGENT_CLEANUP_AGE="${AGENT_CLEANUP_AGE:-24}"
-AGENT_MAX_OUTPUT_BYTES="${AGENT_MAX_OUTPUT_BYTES:-524288}"  # 512KB max output (MEDIUM #10)
+AGENT_MAX_OUTPUT_BYTES="${AGENT_MAX_OUTPUT_BYTES:-524288}"  # 512KB max output
+AGENT_DEFAULT_MODEL="${AGENT_DEFAULT_MODEL:-haiku}"
+AGENT_MAX_GLOBAL_CONCURRENT="${AGENT_MAX_GLOBAL_CONCURRENT:-15}"
+AGENT_MAX_CONTEXT_BYTES="${AGENT_MAX_CONTEXT_BYTES:-262144}"  # 256KB max context injection
+
+# Model whitelist — only allow known Claude models
+_AGENT_VALID_MODELS="haiku sonnet opus"
+# Max timeout cap — 1 hour
+_AGENT_MAX_TIMEOUT=3600
 
 # Initialize the agents and agent_reports tables
 agent_init() {
@@ -92,7 +100,10 @@ _agent_sql() {
         local err
         err=$(cat "$err_file" 2>/dev/null)
         if [[ "$err" == *"locked"* ]] && [ "$i" -lt "$retries" ]; then
-            sleep "$delay"
+            # Add jitter: delay * (0.5 to 1.5) to avoid thundering herd
+            local jitter
+            jitter=$(awk "BEGIN{srand(); print $delay * (0.5 + rand())}")
+            sleep "$jitter"
             delay=$(awk "BEGIN{print $delay * 2}")
         else
             printf '%s\n' "$err" >&2
@@ -215,7 +226,7 @@ _agent_pid_alive() {
     fi
 
     local actual_start_time
-    actual_start_time=$(_agent_pid_start_time "$pid") || return 0  # can't verify, assume alive
+    actual_start_time=$(_agent_pid_start_time "$pid") || return 1  # can't verify start time, assume recycled (fail-closed)
     [ "$actual_start_time" = "$expected_start_time" ]
 }
 
@@ -234,6 +245,33 @@ _agent_kill() {
     if _agent_pid_alive "$pid" "$expected_start_time"; then
         kill -9 "-$pid" 2>/dev/null || true
     fi
+}
+
+# Signal handler for agent wrapper — kills child and writes partial results
+_agent_wrapper_cleanup() {
+    local agent_id="$1"
+    local child_pid="$2"
+    if [ -n "$child_pid" ]; then
+        kill "$child_pid" 2>/dev/null || true
+    fi
+    _agent_db_update "$agent_id" "failed" "" "Wrapper received signal" "" ""
+    exit 1
+}
+
+# Sanitize agent output to prevent prompt injection when injected into context
+# Strips XML-like tags that could manipulate the parent Claude instance
+_agent_sanitize_output() {
+    local output="$1"
+    # Replace tags that could frame instructions as system messages
+    printf '%s' "$output" | sed \
+        -e 's/<system-reminder>/[agent output continues]/g' \
+        -e 's/<\/system-reminder>/[agent output continues]/g' \
+        -e 's/<system>/[agent output continues]/g' \
+        -e 's/<\/system>/[agent output continues]/g' \
+        -e 's/<human>/[agent output continues]/g' \
+        -e 's/<\/human>/[agent output continues]/g' \
+        -e 's/<assistant>/[agent output continues]/g' \
+        -e 's/<\/assistant>/[agent output continues]/g'
 }
 
 # Agent wrapper — runs in a detached process (new session)
@@ -257,14 +295,16 @@ _agent_wrapper() {
     _agent_db_update "$agent_id" "running" "" "" "" "$$"
     _agent_sql "UPDATE agents SET pid_start_time=$my_start_time WHERE id='$agent_id';"
 
+    # Handle SIGTERM gracefully: kill child claude process, write partial results
+    local claude_pid=""
+    trap '_agent_wrapper_cleanup "$agent_id" "$claude_pid"' TERM INT
+
     # Use predictable file paths based on agent_id (no EXIT trap — files survive
     # wrapper crash so agent_recover can read results from a dead wrapper)
-    mkdir -p "$AGENT_OUTPUT_DIR"
-    chmod 700 "$AGENT_OUTPUT_DIR"
+    ( umask 077; mkdir -p "$AGENT_OUTPUT_DIR" )
     local out_file="${AGENT_OUTPUT_DIR}/${agent_id}.out"
     local err_file="${AGENT_OUTPUT_DIR}/${agent_id}.err"
-    touch "$out_file" "$err_file"
-    chmod 600 "$out_file" "$err_file"
+    ( umask 077; touch "$out_file" "$err_file" )
 
     # Build claude args
     local -a claude_args=(
@@ -302,11 +342,14 @@ _agent_wrapper() {
     local exit_code=0
     if [ -n "$timeout_cmd" ]; then
         "$timeout_cmd" "$timeout_secs" "$claude_cmd" "${claude_args[@]}" \
-            > "$out_file" 2> "$err_file" || exit_code=$?
+            > "$out_file" 2> "$err_file" &
     else
         "$claude_cmd" "${claude_args[@]}" \
-            > "$out_file" 2> "$err_file" || exit_code=$?
+            > "$out_file" 2> "$err_file" &
     fi
+    claude_pid=$!
+    wait "$claude_pid" || exit_code=$?
+    claude_pid=""
 
     # Determine final status
     local status="completed"
@@ -348,7 +391,7 @@ _agent_wrapper() {
 agent_spawn() {
     local parent_id="$1"
     local prompt="$2"
-    local model="${3:-haiku}"
+    local model="${3:-$AGENT_DEFAULT_MODEL}"
     local timeout_secs="${4:-$AGENT_DEFAULT_TIMEOUT}"
 
     if [ -z "$parent_id" ] || [ -z "$prompt" ]; then
@@ -356,15 +399,31 @@ agent_spawn() {
         return 1
     fi
 
-    # Validate model (alphanumeric only)
-    if ! [[ "$model" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        log_error "agent" "agent_spawn: invalid model '$model'"
+    # Validate parent_id (alphanumeric + underscore only)
+    if ! [[ "$parent_id" =~ ^[a-zA-Z0-9_]+$ ]]; then
+        log_error "agent" "agent_spawn: invalid parent_id '$parent_id'"
         return 1
     fi
-    # Validate timeout (numeric only)
+
+    # Validate model against whitelist
+    local valid=false
+    local m
+    for m in $_AGENT_VALID_MODELS; do
+        if [ "$model" = "$m" ]; then valid=true; break; fi
+    done
+    if [ "$valid" = "false" ]; then
+        log_error "agent" "agent_spawn: invalid model '$model' (allowed: $_AGENT_VALID_MODELS)"
+        return 1
+    fi
+
+    # Validate timeout (numeric, capped)
     if ! [[ "$timeout_secs" =~ ^[0-9]+$ ]]; then
         log_error "agent" "agent_spawn: invalid timeout '$timeout_secs'"
         return 1
+    fi
+    if [ "$timeout_secs" -gt "$_AGENT_MAX_TIMEOUT" ]; then
+        log_warn "agent" "agent_spawn: timeout $timeout_secs capped to $_AGENT_MAX_TIMEOUT"
+        timeout_secs="$_AGENT_MAX_TIMEOUT"
     fi
 
     # Resolve claude binary path
@@ -379,7 +438,7 @@ agent_spawn() {
     local agent_id
     agent_id=$(_agent_gen_id)
 
-    # Atomic check + insert in a single exclusive transaction (HIGH #4)
+    # Atomic check + insert in a single exclusive transaction
     local escaped_prompt escaped_parent
     escaped_prompt=$(_agent_sql_escape "$prompt")
     escaped_parent=$(_agent_sql_escape "$parent_id")
@@ -388,7 +447,8 @@ agent_spawn() {
         BEGIN EXCLUSIVE;
         INSERT INTO agents (id, parent_id, prompt, model, timeout_seconds)
             SELECT '$agent_id', '$escaped_parent', '$escaped_prompt', '$model', $timeout_secs
-            WHERE (SELECT COUNT(*) FROM agents WHERE parent_id='$escaped_parent' AND status IN ('pending', 'running')) < $AGENT_MAX_CONCURRENT;
+            WHERE (SELECT COUNT(*) FROM agents WHERE parent_id='$escaped_parent' AND status IN ('pending', 'running')) < $AGENT_MAX_CONCURRENT
+            AND (SELECT COUNT(*) FROM agents WHERE status IN ('pending', 'running')) < $AGENT_MAX_GLOBAL_CONCURRENT;
         SELECT changes();
         COMMIT;
     " 2>&1)
@@ -401,40 +461,60 @@ agent_spawn() {
     local agent_script
     agent_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent.sh"
 
-    # Write prompt to a temp file to avoid shell escaping issues (HIGH #2)
-    mkdir -p "$AGENT_OUTPUT_DIR"
-    chmod 700 "$AGENT_OUTPUT_DIR"
+    # Write prompt to a temp file to avoid shell escaping issues
+    # Use umask to create with restrictive permissions atomically (no TOCTOU)
+    (
+        umask 077
+        mkdir -p "$AGENT_OUTPUT_DIR"
+    )
     local prompt_file="${AGENT_OUTPUT_DIR}/${agent_id}.prompt"
-    printf '%s' "$prompt" > "$prompt_file"
-    chmod 600 "$prompt_file"
+    ( umask 077; printf '%s' "$prompt" > "$prompt_file" )
 
     # Spawn detached process in a new session
     # All values passed via env vars — no shell interpolation of user content
     # Uses setsid on Linux, perl POSIX::setsid on macOS (perl is pre-installed)
-    local spawn_cmd
-    if command -v setsid > /dev/null 2>&1; then
-        spawn_cmd="setsid"
-    else
-        spawn_cmd="perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' --"
-    fi
-
-    CLAUDIO_PATH="$CLAUDIO_PATH" \
-    CLAUDIO_DB_FILE="$CLAUDIO_DB_FILE" \
-    CLAUDIO_PROMPT_FILE="$CLAUDIO_PROMPT_FILE" \
-    CLAUDIO_LOG_FILE="$CLAUDIO_LOG_FILE" \
-    AGENT_OUTPUT_DIR="$AGENT_OUTPUT_DIR" \
-    _AGENT_ID="$agent_id" \
-    _AGENT_PROMPT_FILE="$prompt_file" \
-    _AGENT_MODEL="$model" \
-    _AGENT_TIMEOUT="$timeout_secs" \
-    _AGENT_CLAUDE_CMD="$claude_cmd" \
-    _AGENT_SCRIPT="$agent_script" \
-    nohup $spawn_cmd bash -c '
+    # Only pass safe env vars to agents (no secrets like TELEGRAM_BOT_TOKEN, ELEVENLABS_API_KEY)
+    local wrapper_script='
         source "$_AGENT_SCRIPT"
         prompt=$(cat "$_AGENT_PROMPT_FILE")
         rm -f "$_AGENT_PROMPT_FILE"
         _agent_wrapper "$_AGENT_ID" "$prompt" "$_AGENT_MODEL" "$_AGENT_TIMEOUT" "$_AGENT_CLAUDE_CMD"
-    ' > /dev/null 2>&1 &
+    '
+
+    if command -v setsid > /dev/null 2>&1; then
+        env -i \
+            HOME="$HOME" PATH="$PATH" TERM="${TERM:-}" \
+            CLAUDIO_PATH="$CLAUDIO_PATH" \
+            CLAUDIO_DB_FILE="$CLAUDIO_DB_FILE" \
+            CLAUDIO_PROMPT_FILE="$CLAUDIO_PROMPT_FILE" \
+            CLAUDIO_LOG_FILE="$CLAUDIO_LOG_FILE" \
+            AGENT_OUTPUT_DIR="$AGENT_OUTPUT_DIR" \
+            AGENT_MAX_OUTPUT_BYTES="$AGENT_MAX_OUTPUT_BYTES" \
+            _AGENT_ID="$agent_id" \
+            _AGENT_PROMPT_FILE="$prompt_file" \
+            _AGENT_MODEL="$model" \
+            _AGENT_TIMEOUT="$timeout_secs" \
+            _AGENT_CLAUDE_CMD="$claude_cmd" \
+            _AGENT_SCRIPT="$agent_script" \
+            nohup setsid bash -c "$wrapper_script" > /dev/null 2>&1 &
+    else
+        env -i \
+            HOME="$HOME" PATH="$PATH" TERM="${TERM:-}" \
+            CLAUDIO_PATH="$CLAUDIO_PATH" \
+            CLAUDIO_DB_FILE="$CLAUDIO_DB_FILE" \
+            CLAUDIO_PROMPT_FILE="$CLAUDIO_PROMPT_FILE" \
+            CLAUDIO_LOG_FILE="$CLAUDIO_LOG_FILE" \
+            AGENT_OUTPUT_DIR="$AGENT_OUTPUT_DIR" \
+            AGENT_MAX_OUTPUT_BYTES="$AGENT_MAX_OUTPUT_BYTES" \
+            _AGENT_ID="$agent_id" \
+            _AGENT_PROMPT_FILE="$prompt_file" \
+            _AGENT_MODEL="$model" \
+            _AGENT_TIMEOUT="$timeout_secs" \
+            _AGENT_CLAUDE_CMD="$claude_cmd" \
+            _AGENT_SCRIPT="$agent_script" \
+            nohup perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' -- \
+                bash -c "$wrapper_script" > /dev/null 2>&1 &
+    fi
 
     log "agent" "Spawned agent $agent_id (model=$model, timeout=${timeout_secs}s, parent=$parent_id)"
     printf '%s' "$agent_id"

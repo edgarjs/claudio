@@ -229,11 +229,14 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 
 **Agents**
 
-- `AGENT_MAX_CONCURRENT` — Max parallel agents per invocation. Default: `5`.
-- `AGENT_DEFAULT_TIMEOUT` — Per-agent timeout in seconds. Default: `300`.
+- `AGENT_MAX_CONCURRENT` — Max parallel agents per parent invocation. Default: `5`.
+- `AGENT_MAX_GLOBAL_CONCURRENT` — Max total agents system-wide across all parents. Prevents DoS via many parent IDs. Default: `15`.
+- `AGENT_DEFAULT_TIMEOUT` — Per-agent timeout in seconds (capped at 3600). Default: `300`.
+- `AGENT_DEFAULT_MODEL` — Default Claude model for agents. Must be `haiku`, `sonnet`, or `opus`. Default: `haiku`.
 - `AGENT_POLL_INTERVAL` — Seconds between poll cycles in `agent_wait`. Default: `5`.
 - `AGENT_CLEANUP_AGE` — Hours before old agent records are deleted. Default: `24`.
 - `AGENT_MAX_OUTPUT_BYTES` — Max bytes of agent output stored; larger outputs are truncated. Default: `524288` (512 KB).
+- `AGENT_MAX_CONTEXT_BYTES` — Max bytes of recovered agent context injected into prompts. Default: `262144` (256 KB).
 
 **Tunnel**
 
