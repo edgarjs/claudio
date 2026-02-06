@@ -162,6 +162,10 @@ You can send documents (PDF, text files, CSV, code files, etc.) to Claudio. Incl
 - Claude reads the file directly from disk — text-based formats (PDF, CSV, code, plain text) work best; binary files may produce limited results
 - Files are stored temporarily during processing, then deleted immediately after Claude responds
 
+### Parallel Agents
+
+Claudio can spawn independent `claude --p` subprocesses for parallel work (reviews, research, etc.). Agents run in their own sessions (`setsid`), so they survive if the main process dies. State is tracked in SQLite with automatic crash recovery and orphan detection.
+
 ### System Prompt
 
 Claudio appends a system prompt that defines its persona, core principles, and communication style (optimized for chat). The default is generated on first run at `$HOME/.claudio/SYSTEM_PROMPT.md`. You can customize it by editing that file — it's read at runtime so no need to restart.
@@ -202,6 +206,14 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `ELEVENLABS_VOICE_ID` — ElevenLabs voice ID to use for TTS. Default: `iP95p4xoKVk53GoZ742B` (Chris).
 - `ELEVENLABS_MODEL` — ElevenLabs TTS model. Default: `eleven_multilingual_v2`.
 - `ELEVENLABS_STT_MODEL` — ElevenLabs STT model. Default: `scribe_v1`.
+
+**Agents**
+
+- `AGENT_MAX_CONCURRENT` — Max parallel agents per invocation. Default: `5`.
+- `AGENT_DEFAULT_TIMEOUT` — Per-agent timeout in seconds. Default: `300`.
+- `AGENT_POLL_INTERVAL` — Seconds between poll cycles in `agent_wait`. Default: `5`.
+- `AGENT_CLEANUP_AGE` — Hours before old agent records are deleted. Default: `24`.
+- `AGENT_MAX_OUTPUT_BYTES` — Max bytes of agent output stored; larger outputs are truncated. Default: `524288` (512 KB).
 
 **Tunnel**
 
@@ -247,6 +259,7 @@ bats tests/db.bats
 - [x] Voice messages from bot (TTS)
 - [x] Voice messages from human (STT)
 - [x] File uploads
+- [x] Parallel agents (independent Claude processes with crash recovery)
 
 **Future**
 

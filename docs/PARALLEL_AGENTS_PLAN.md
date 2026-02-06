@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS agents (
     error TEXT,                       -- Agent's stderr (if failed)
     exit_code INTEGER,               -- Process exit code
     pid INTEGER,                      -- OS process ID (for monitoring)
+    pid_start_time INTEGER,           -- Process start time (epoch) for PID recycling detection
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     started_at TIMESTAMP,            -- When the agent actually started running
     completed_at TIMESTAMP,          -- When the agent finished (success or failure)
@@ -146,16 +147,17 @@ New bash module providing these functions:
 
 **`agent_init`** — Creates the agents table if not exists.
 
-**`agent_spawn <prompt> [model] [timeout]`** — Spawns a new agent:
+**`agent_spawn <parent_id> <prompt> [model] [timeout]`** — Spawns a new agent:
 1. Checks if max concurrent agents limit is reached; if so, returns error
 2. Resolves the `claude` binary path using the same logic as `lib/claude.sh` (checks
    `~/.local/bin/claude`, `/usr/local/bin/claude`, `/usr/bin/claude`). This ensures the
    wrapper works even in restricted environments (cron, systemd) where PATH is minimal.
-3. Generates a unique agent ID
-4. Inserts a row with `status=pending`
-5. Launches `_agent_wrapper` via `nohup setsid ... &` (new session, detached), passing the
-   resolved binary path as the 5th argument
-6. Returns the agent ID immediately
+3. Validates model (alphanumeric only) and timeout (numeric only)
+4. Generates a unique agent ID
+5. Atomically checks concurrent limit + inserts row with `status=pending` (BEGIN EXCLUSIVE)
+6. Launches `_agent_wrapper` via `nohup setsid ... &` (new session, detached), passing the
+   resolved binary path and prompt via env vars (no shell interpolation of user content)
+7. Returns the agent ID immediately
 
 **`agent_poll <parent_id>`** — Returns JSON array of agent statuses for the given parent.
 Used by the main process to check if agents are done.
@@ -172,9 +174,20 @@ Used by the main process to check if agents are done.
 
 **`agent_cleanup [max_age_hours]`** — Deletes old agent records (default: 24h).
 
+**`agent_cleanup_if_needed [max_age_hours]`** — Throttled variant of `agent_cleanup`,
+runs at most once per hour using a marker file timestamp. This is what the `_webhook`
+handler uses.
+
+**`agent_mark_reported <comma_separated_ids>`** — Manually marks agents as reported
+so they don't show up in future `agent_recover` calls. Note: `agent_recover` already
+handles this automatically via an atomic transaction.
+
 ### Agent Wrapper Script
 
-`_agent_wrapper` is the entry point that runs in the detached process:
+`_agent_wrapper` is the entry point that runs in the detached process. The code listing
+below is an abridged version — the actual implementation includes PID start time recording,
+output truncation, `--fallback-model` support, system prompt injection via
+`--append-system-prompt`, restrictive file permissions, and WAL lock retry logic:
 
 ```bash
 AGENT_OUTPUT_DIR="${CLAUDIO_DIR}/agent_outputs"
@@ -268,13 +281,13 @@ will include instructions like:
 
 You can run parallel tasks using these bash functions:
 
-- `source ~/claudio/lib/agent.sh && agent_spawn "prompt" [model] [timeout]`
+- `agent_spawn "$PARENT_ID" "prompt" [model] [timeout]`
   Returns an agent ID. Spawns an independent claude process.
 
-- `source ~/claudio/lib/agent.sh && agent_wait "$PARENT_ID" 5 "$CHAT_ID"`
+- `agent_wait "$PARENT_ID" 5 "$CHAT_ID"`
   Blocks until all agents for this parent are done. Sends typing indicators.
 
-- `source ~/claudio/lib/agent.sh && agent_get_results "$PARENT_ID"`
+- `agent_get_results "$PARENT_ID"`
   Returns JSON with all agent outputs.
 
 When asked to do parallel work (reviews, research, etc.), spawn agents and wait for them.
@@ -312,7 +325,9 @@ On startup of every `claudio _webhook` invocation:
 3. Check for completed/failed agents whose results haven't been reported
 4. Include unreported results in the context for the current invocation
 
-This is handled by `agent_recover()`:
+This is handled by `agent_recover()`. The code listing below is simplified — the actual
+implementation uses `BEGIN EXCLUSIVE` with a temp table to atomically find and mark
+unreported agents, preventing concurrent recovery races:
 
 ```bash
 agent_recover() {
@@ -466,6 +481,8 @@ New environment variables in `service.env`:
 - `AGENT_DEFAULT_TIMEOUT=300` — Default timeout in seconds
 - `AGENT_POLL_INTERVAL=5` — Seconds between poll cycles in `agent_wait`
 - `AGENT_CLEANUP_AGE=24` — Hours before old agent records are deleted
+- `AGENT_MAX_OUTPUT_BYTES=524288` — Max bytes of agent output stored; larger outputs are
+  truncated (512 KB default)
 
 ## Comparison with Claude Code's Task Tool
 
