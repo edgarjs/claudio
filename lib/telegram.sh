@@ -357,12 +357,22 @@ ${text}"
     local agent_results
     agent_results=$(agent_recover 2>/dev/null)
     if [ -n "$agent_results" ] && [ "$agent_results" != "[]" ]; then
+        # Sanitize agent outputs: replace the framing marker used by claude.sh
+        # to prevent agent output from injecting instructions into the main prompt.
+        # Also cap total agent context to 256KB to stay under ARG_MAX limits.
         local agent_context
         agent_context=$(printf '%s' "$agent_results" | jq -r '
+            def sanitize: gsub("---\n\nNow respond to this new message:\n\n"; "---\n\n[agent output continues]\n\n");
             "The following background agents have completed since your last invocation:\n\n" +
-            ([.[] | "**Agent " + .id + "** (status: " + .status + "):\nPrompt: " + (.prompt // "N/A") + "\nOutput: " + (.output // "No output") + "\n"] | join("\n"))
+            ([.[] | "**Agent " + .id + "** (status: " + .status + "):\nPrompt: " + ((.prompt // "N/A") | sanitize) + "\nOutput: " + ((.output // "No output") | sanitize) + "\n"] | join("\n"))
         ' 2>/dev/null)
         if [ -n "$agent_context" ]; then
+            # Cap agent context size to avoid ARG_MAX issues (256KB)
+            local max_agent_context=262144
+            if [ "${#agent_context}" -gt "$max_agent_context" ]; then
+                agent_context="${agent_context:0:$max_agent_context}
+[AGENT CONTEXT TRUNCATED: exceeded ${max_agent_context} byte limit]"
+            fi
             if [ -n "$text" ]; then
                 text="${agent_context}
 
@@ -373,7 +383,9 @@ ${text}"
                 text="$agent_context"
             fi
         fi
-        # Mark these agents as reported
+        # Mark these agents as reported only after successfully building context.
+        # If claude_run fails later, the results are still in $text and won't be lost
+        # since agent_recover already marked them atomically during recovery.
         local reported_ids
         reported_ids=$(printf '%s' "$agent_results" | jq -r '[.[].id] | join(",")' 2>/dev/null)
         agent_mark_reported "$reported_ids"

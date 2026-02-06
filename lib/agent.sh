@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Parallel agent management for Claudio
-# Spawns independent claude --p processes via nohup + setsid,
+# Spawns independent claude --p processes in detached sessions,
 # tracks state in SQLite, and handles crash recovery.
 
 # shellcheck source=lib/log.sh
@@ -19,7 +19,11 @@ agent_init() {
     # Set restrictive permissions on output dir and DB (HIGH #7)
     mkdir -p "$AGENT_OUTPUT_DIR"
     chmod 700 "$AGENT_OUTPUT_DIR"
-    [ -f "$CLAUDIO_DB_FILE" ] && chmod 600 "$CLAUDIO_DB_FILE"
+    # Ensure DB file is created with restrictive permissions before any data is written
+    if [ ! -f "$CLAUDIO_DB_FILE" ]; then
+        touch "$CLAUDIO_DB_FILE"
+    fi
+    chmod 600 "$CLAUDIO_DB_FILE"
 
     _agent_sql "PRAGMA journal_mode=WAL;" > /dev/null
     _agent_sql <<'SQL'
@@ -49,6 +53,17 @@ CREATE TABLE IF NOT EXISTS agent_reports (
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
 );
 SQL
+}
+
+# Cross-platform stat helpers (GNU vs BSD)
+# Get file size in bytes
+_agent_file_size() {
+    stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null || echo 0
+}
+
+# Get file modification time as epoch
+_agent_file_mtime() {
+    stat -c%Y "$1" 2>/dev/null || stat -f%m "$1" 2>/dev/null || echo 0
 }
 
 # Generate a unique agent ID
@@ -89,8 +104,7 @@ _agent_sql() {
     return 1
 }
 
-# Update agent status in the database
-# Uses temp files for large content to avoid shell escaping issues (HIGH #1)
+# Update agent status in the database. Uses manual SQL string escaping.
 _agent_db_update() {
     local agent_id="$1"
     local status="$2"
@@ -170,18 +184,18 @@ _agent_resolve_claude() {
 }
 
 # Get process start time (epoch) for PID recycling detection (HIGH #6)
+# Works on Linux (GNU date), macOS (BSD date), and WSL
 _agent_pid_start_time() {
     local pid="$1"
-    # stat format 22 is starttime in clock ticks; use /proc/stat for boot time
-    if [ -f "/proc/$pid/stat" ]; then
-        local start_ticks boot_time hz
-        start_ticks=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null) || return 1
-        boot_time=$(awk '/^btime/{print $2}' /proc/stat 2>/dev/null) || return 1
-        hz=$(getconf CLK_TCK 2>/dev/null) || hz=100
-        printf '%s' "$(( boot_time + start_ticks / hz ))"
-    else
-        return 1
-    fi
+    local lstart
+    lstart=$(ps -p "$pid" -o lstart= 2>/dev/null) || return 1
+    [ -z "$lstart" ] && return 1
+    # Trim leading/trailing whitespace
+    lstart=$(printf '%s' "$lstart" | xargs)
+    # Convert lstart to epoch: try GNU date first, then BSD date
+    # GNU: date -d "Thu Feb  5 14:30:00 2026" +%s
+    # BSD: date -j -f "%a %b %d %T %Y" "Thu Feb  5 14:30:00 2026" +%s
+    date -d "$lstart" +%s 2>/dev/null || date -j -f "%a %b %d %T %Y" "$lstart" +%s 2>/dev/null || return 1
 }
 
 # Check if a PID is alive AND matches the expected start time (HIGH #6)
@@ -220,7 +234,7 @@ _agent_kill() {
     fi
 }
 
-# Agent wrapper — runs in a detached process (nohup + setsid)
+# Agent wrapper — runs in a detached process (new session)
 # Arguments: agent_id prompt model timeout_secs claude_cmd
 _agent_wrapper() {
     local agent_id="$1"
@@ -275,9 +289,11 @@ _agent_wrapper() {
         fi
     fi
 
-    # Run claude with timeout
+    # Run claude with timeout (gtimeout on macOS via coreutils)
+    local timeout_cmd="timeout"
+    command -v timeout > /dev/null 2>&1 || timeout_cmd="gtimeout"
     local exit_code=0
-    timeout "$timeout_secs" "$claude_cmd" "${claude_args[@]}" \
+    "$timeout_cmd" "$timeout_secs" "$claude_cmd" "${claude_args[@]}" \
         > "$out_file" 2> "$err_file" || exit_code=$?
 
     # Determine final status
@@ -292,7 +308,7 @@ _agent_wrapper() {
     local output="" error=""
     if [ -f "$out_file" ]; then
         local file_size
-        file_size=$(stat -c%s "$out_file" 2>/dev/null) || file_size=0
+        file_size=$(_agent_file_size "$out_file")
         if [ "$file_size" -gt "$AGENT_MAX_OUTPUT_BYTES" ]; then
             output=$(head -c "$AGENT_MAX_OUTPUT_BYTES" "$out_file")
             output="${output}
@@ -380,8 +396,16 @@ agent_spawn() {
     printf '%s' "$prompt" > "$prompt_file"
     chmod 600 "$prompt_file"
 
-    # Spawn detached process via nohup + setsid
+    # Spawn detached process in a new session
     # All values passed via env vars — no shell interpolation of user content
+    # Uses setsid on Linux, perl POSIX::setsid on macOS (perl is pre-installed)
+    local spawn_cmd
+    if command -v setsid > /dev/null 2>&1; then
+        spawn_cmd="setsid"
+    else
+        spawn_cmd="perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' --"
+    fi
+
     CLAUDIO_PATH="$CLAUDIO_PATH" \
     CLAUDIO_DB_FILE="$CLAUDIO_DB_FILE" \
     CLAUDIO_PROMPT_FILE="$CLAUDIO_PROMPT_FILE" \
@@ -393,7 +417,7 @@ agent_spawn() {
     _AGENT_TIMEOUT="$timeout_secs" \
     _AGENT_CLAUDE_CMD="$claude_cmd" \
     _AGENT_SCRIPT="$agent_script" \
-    nohup setsid bash -c '
+    nohup $spawn_cmd bash -c '
         source "$_AGENT_SCRIPT"
         prompt=$(cat "$_AGENT_PROMPT_FILE")
         rm -f "$_AGENT_PROMPT_FILE"
@@ -470,7 +494,7 @@ _agent_detect_orphans() {
             local output="" error=""
             if [ -f "$out_file" ]; then
                 local file_size
-                file_size=$(stat -c%s "$out_file" 2>/dev/null) || file_size=0
+                file_size=$(_agent_file_size "$out_file")
                 if [ "$file_size" -gt "$AGENT_MAX_OUTPUT_BYTES" ]; then
                     output=$(head -c "$AGENT_MAX_OUTPUT_BYTES" "$out_file")
                     output="${output}
@@ -637,7 +661,7 @@ agent_cleanup_if_needed() {
     local marker_file="${AGENT_OUTPUT_DIR}/.last_cleanup"
     if [ -f "$marker_file" ]; then
         local last_cleanup
-        last_cleanup=$(stat -c%Y "$marker_file" 2>/dev/null) || last_cleanup=0
+        last_cleanup=$(_agent_file_mtime "$marker_file")
         local now
         now=$(date +%s)
         if [ $((now - last_cleanup)) -lt 3600 ]; then
