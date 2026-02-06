@@ -33,7 +33,7 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/config.sh` — Config loading and env file management
 - `lib/server.sh` — Starts the Python HTTP server and cloudflared tunnel
 - `lib/server.py` — Python HTTP server (stdlib `http.server`, port 8421)
-- `lib/telegram.sh` — Telegram Bot API integration (messages, webhooks, images, voice)
+- `lib/telegram.sh` — Telegram Bot API integration (messages, webhooks, images, documents, voice)
 - `lib/claude.sh` — Claude Code CLI wrapper with conversation context
 - `lib/history.sh` — Conversation history management, delegates to `lib/db.sh`
 - `lib/db.sh` — SQLite database layer for conversation storage

@@ -234,6 +234,18 @@ EOF
 
     [[ "$WEBHOOK_DOC_FILE_ID" == "doc_id" ]]
     [[ "$WEBHOOK_DOC_MIME" == "image/png" ]]
+    [[ "$WEBHOOK_DOC_FILE_NAME" == "screenshot.png" ]]
+}
+
+@test "telegram_parse_webhook extracts non-image document fields" {
+    body='{"message":{"message_id":42,"chat":{"id":123},"from":{"id":456},"document":{"file_id":"pdf_id","mime_type":"application/pdf","file_name":"report.pdf"},"caption":"check this"}}'
+
+    telegram_parse_webhook "$body"
+
+    [[ "$WEBHOOK_DOC_FILE_ID" == "pdf_id" ]]
+    [[ "$WEBHOOK_DOC_MIME" == "application/pdf" ]]
+    [[ "$WEBHOOK_DOC_FILE_NAME" == "report.pdf" ]]
+    [[ "$WEBHOOK_CAPTION" == "check this" ]]
 }
 
 @test "telegram_parse_webhook extracts caption without photo" {
@@ -428,4 +440,117 @@ MOCK
     local output_file="$BATS_TEST_TMPDIR/downloaded.webp"
     telegram_download_file "test_file_id" "$output_file"
     [[ -f "$output_file" ]]
+}
+
+# --- telegram_download_document tests ---
+
+@test "telegram_download_document resolves file_id and downloads document" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ "$*" == *"getFile"* ]]; then
+    if [[ " $* " == *" -w "* ]]; then
+        echo '{"ok":true,"result":{"file_path":"documents/file_456.pdf"}}'
+        echo "200"
+    else
+        echo '{"ok":true,"result":{"file_path":"documents/file_456.pdf"}}'
+    fi
+elif [[ "$*" == *"/file/bot"* ]]; then
+    output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
+    printf '%%PDF-1.4 fake pdf content' > "$output_file"
+else
+    echo '{"ok":true}'
+    echo "200"
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.pdf"
+    telegram_download_document "test_file_id" "$output_file"
+    [[ -f "$output_file" ]]
+}
+
+@test "telegram_download_document rejects path traversal" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ " $* " == *" -w "* ]]; then
+    echo '{"ok":true,"result":{"file_path":"../../../etc/passwd"}}'
+    echo "200"
+else
+    echo '{"ok":true,"result":{"file_path":"../../../etc/passwd"}}'
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.txt"
+    run telegram_download_document "test_file_id" "$output_file"
+    [[ "$status" -ne 0 ]]
+    [[ ! -f "$output_file" ]]
+}
+
+@test "telegram_download_document rejects empty file" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ "$*" == *"getFile"* ]]; then
+    if [[ " $* " == *" -w "* ]]; then
+        echo '{"ok":true,"result":{"file_path":"documents/empty.txt"}}'
+        echo "200"
+    else
+        echo '{"ok":true,"result":{"file_path":"documents/empty.txt"}}'
+    fi
+elif [[ "$*" == *"/file/bot"* ]]; then
+    output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
+    : > "$output_file"
+else
+    echo '{"ok":true}'
+    echo "200"
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.txt"
+    run telegram_download_document "test_file_id" "$output_file"
+    [[ "$status" -ne 0 ]]
+    [[ ! -f "$output_file" ]]
+}
+
+@test "telegram_download_document accepts any file type (no magic byte check)" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ "$*" == *"getFile"* ]]; then
+    if [[ " $* " == *" -w "* ]]; then
+        echo '{"ok":true,"result":{"file_path":"documents/data.csv"}}'
+        echo "200"
+    else
+        echo '{"ok":true,"result":{"file_path":"documents/data.csv"}}'
+    fi
+elif [[ "$*" == *"/file/bot"* ]]; then
+    output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
+    echo "name,age,city" > "$output_file"
+else
+    echo '{"ok":true}'
+    echo "200"
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.csv"
+    telegram_download_document "test_file_id" "$output_file"
+    [[ -f "$output_file" ]]
+}
+
+@test "telegram_download_document rejects file_path with special characters" {
+    cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
+#!/bin/bash
+if [[ " $* " == *" -w "* ]]; then
+    echo '{"ok":true,"result":{"file_path":"documents/file name.pdf"}}'
+    echo "200"
+else
+    echo '{"ok":true,"result":{"file_path":"documents/file name.pdf"}}'
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+
+    local output_file="$BATS_TEST_TMPDIR/downloaded.pdf"
+    run telegram_download_document "test_file_id" "$output_file"
+    [[ "$status" -ne 0 ]]
 }
