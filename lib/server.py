@@ -71,6 +71,17 @@ def _process_queue_loop(chat_id):
     """Inner loop for process_queue, separated for clean thread tracking."""
     while True:
         with queue_lock:
+            # Stop draining if shutdown was requested — only finish current message
+            if shutting_down:
+                if chat_id in chat_queues:
+                    remaining = len(chat_queues[chat_id])
+                    if remaining:
+                        sys.stderr.write(
+                            f"[queue] Shutdown: discarding {remaining} queued message(s) for chat {chat_id}\n"
+                        )
+                    del chat_queues[chat_id]
+                chat_active.pop(chat_id, None)
+                return
             if chat_id not in chat_queues or not chat_queues[chat_id]:
                 # Queue empty, clean up
                 if chat_id in chat_queues:
@@ -189,6 +200,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/telegram/webhook":
+            # Reject early during shutdown so Telegram retries later
+            if shutting_down:
+                self._respond(503, {"error": "shutting down"})
+                return
             # Verify webhook secret before reading body
             token = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
             if not hmac.compare_digest(token, WEBHOOK_SECRET):
@@ -320,7 +335,8 @@ def _graceful_shutdown(server, shutdown_event):
     global shutting_down
     shutdown_event.wait()
 
-    shutting_down = True
+    with queue_lock:
+        shutting_down = True
     sys.stderr.write("[shutdown] SIGTERM received, draining active handlers...\n")
 
     # Stop accepting new HTTP requests
@@ -332,7 +348,9 @@ def _graceful_shutdown(server, shutdown_event):
     if threads_to_wait:
         sys.stderr.write(f"[shutdown] Waiting for {len(threads_to_wait)} active handler(s)...\n")
         for t in threads_to_wait:
-            t.join()
+            t.join(timeout=WEBHOOK_TIMEOUT + 10)
+            if t.is_alive():
+                sys.stderr.write(f"[shutdown] WARNING: thread {t.name} still alive after timeout\n")
     sys.stderr.write("[shutdown] All handlers finished, exiting cleanly.\n")
 
 
