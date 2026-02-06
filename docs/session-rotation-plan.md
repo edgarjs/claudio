@@ -138,6 +138,8 @@ Key changes:
 
 **Session cleanup**: `db_cleanup_sessions()` deletes sessions where `updated_at` is older than 24h. Called from `agent_cleanup_if_needed` (which already runs periodically) to reuse existing cleanup infrastructure.
 
+**Session file cleanup**: Claude stores session files locally at `~/.claude/projects/<project-path>/<session-id>.jsonl` (with optional `<session-id>/` checkpoint directories). These are **local only** — not synced to Anthropic's servers — and persist on disk up to 30 days by default. When `db_cleanup_sessions()` deletes expired session records, it should also delete the corresponding session files and checkpoint directories from disk. This prevents unbounded disk growth from rotated sessions. On server migration, any orphaned session files are harmless — the next message simply starts a fresh session window, and the SQLite history (the real source of truth) is unaffected.
+
 ### What does NOT change
 
 - `lib/agent.sh` — Agents remain stateless one-shot invocations with `--no-session-persistence`. They're independent tasks, not conversational turns.
@@ -154,7 +156,7 @@ Key changes:
 ### `lib/db.sh`
 - Add `sessions` table creation to `db_init()`
 - Add `db_get_active_session()`, `db_create_session()`, `db_increment_session()`, `db_expire_session()`
-- Add `db_cleanup_sessions()` — deletes sessions with `updated_at` older than 24h
+- Add `db_cleanup_sessions()` — deletes sessions with `updated_at` older than 24h and removes corresponding session files from `~/.claude/projects/` (both `.jsonl` and checkpoint directories)
 
 ### `lib/claude.sh`
 - Accept `chat_id` as second parameter
@@ -183,7 +185,8 @@ Key changes:
 
 | Risk | Mitigation |
 |------|-----------|
-| `--resume` session files accumulate on disk | Clean up session files older than 24h (add to `agent_cleanup_if_needed` or separate cron) |
+| `--resume` session files accumulate on disk | `db_cleanup_sessions()` deletes both DB records and on-disk session files (`.jsonl` + checkpoint dirs) for sessions older than 24h. Runs via existing `agent_cleanup_if_needed` periodic hook |
+| Server migration loses active sessions | Non-issue: sessions are ephemeral. Next message starts a fresh window bootstrapped from SQLite history, which is the durable source of truth |
 | JSON parsing failure (jq unavailable, malformed output) | Expire current session to prevent stale state, log raw output for debugging, return raw stdout as best-effort response |
 | `--output-format json` changes `result` format across claude versions | Pin to extracting `.result` field; log warning if schema changes |
 | Session file corruption prevents resume | `is_error` check triggers fresh session fallback |
