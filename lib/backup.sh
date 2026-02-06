@@ -64,7 +64,16 @@ backup_run() {
         oldest_today=$(find "$hourly_dir" -maxdepth 1 -mindepth 1 -name "${today}_*" -type d | sort | head -1)
 
         if [[ -n "$oldest_today" ]]; then
-            cp -al "$oldest_today" "$daily_today"
+            # cp -al (hardlinks) is GNU-only; macOS needs rsync --link-dest fallback
+            if cp -al "$oldest_today" "$daily_today" 2>/dev/null; then
+                : # GNU cp hardlink succeeded
+            else
+                # Fallback: rsync with hardlinks (portable)
+                if ! rsync -a --link-dest="$oldest_today" "$oldest_today/" "$daily_today/"; then
+                    log_error "backup" "rsync failed promoting daily backup"
+                    return 1
+                fi
+            fi
             log "backup" "Daily backup promoted: $daily_today"
         fi
     fi
@@ -121,13 +130,17 @@ backup_status() {
     echo ""
 
     if [[ -d "$hourly_dir" ]]; then
-        local -a hourly_snapshots
-        mapfile -t hourly_snapshots < <(find "$hourly_dir" -maxdepth 1 -mindepth 1 -type d | sort)
+        local -a hourly_snapshots=()
+        local _entry
+        while IFS= read -r _entry; do
+            [[ -z "$_entry" ]] && continue
+            hourly_snapshots+=("$_entry")
+        done < <(find "$hourly_dir" -maxdepth 1 -mindepth 1 -type d | sort)
         local hourly_count=${#hourly_snapshots[@]}
         echo "Hourly backups: $hourly_count"
         if (( hourly_count > 0 )); then
             echo "  Oldest: $(basename "${hourly_snapshots[0]}")"
-            echo "  Newest: $(basename "${hourly_snapshots[-1]}")"
+            echo "  Newest: $(basename "${hourly_snapshots[$((hourly_count - 1))]}")"
         fi
     else
         echo "Hourly backups: 0"
@@ -136,13 +149,17 @@ backup_status() {
     echo ""
 
     if [[ -d "$daily_dir" ]]; then
-        local -a daily_snapshots
-        mapfile -t daily_snapshots < <(find "$daily_dir" -maxdepth 1 -mindepth 1 -type d | sort)
+        local -a daily_snapshots=()
+        local _entry
+        while IFS= read -r _entry; do
+            [[ -z "$_entry" ]] && continue
+            daily_snapshots+=("$_entry")
+        done < <(find "$daily_dir" -maxdepth 1 -mindepth 1 -type d | sort)
         local daily_count=${#daily_snapshots[@]}
         echo "Daily backups: $daily_count"
         if (( daily_count > 0 )); then
             echo "  Oldest: $(basename "${daily_snapshots[0]}")"
-            echo "  Newest: $(basename "${daily_snapshots[-1]}")"
+            echo "  Newest: $(basename "${daily_snapshots[$((daily_count - 1))]}")"
         fi
     else
         echo "Daily backups: 0"

@@ -92,7 +92,7 @@ _agent_sql() {
     err_file=$(mktemp) || { log_error "agent" "_agent_sql: mktemp failed"; return 1; }
     chmod 600 "$err_file"
     local i
-    for i in $(seq 1 "$retries"); do
+    for (( i = 1; i <= retries; i++ )); do
         if sqlite3 "$CLAUDIO_DB_FILE" "$@" 2>"$err_file"; then
             rm -f "$err_file"
             return 0
@@ -187,6 +187,8 @@ _agent_resolve_claude() {
 
     if [ -x "$home/.local/bin/claude" ]; then
         printf '%s' "$home/.local/bin/claude"
+    elif [ -x "/opt/homebrew/bin/claude" ]; then
+        printf '%s' "/opt/homebrew/bin/claude"
     elif [ -x "/usr/local/bin/claude" ]; then
         printf '%s' "/usr/local/bin/claude"
     elif [ -x "/usr/bin/claude" ]; then
@@ -795,7 +797,15 @@ agent_cleanup() {
 
     # Clean up stale output files
     if [ -d "$AGENT_OUTPUT_DIR" ]; then
-        find "$AGENT_OUTPUT_DIR" -name "agent_*" -mmin "+$((max_age_hours * 60))" -delete 2>/dev/null || true
+        local _max_age_secs=$((max_age_hours * 3600))
+        local _now; _now=$(date +%s)
+        find "$AGENT_OUTPUT_DIR" -name "agent_*" -type f 2>/dev/null | while IFS= read -r _f; do
+            local _mtime
+            _mtime=$(stat -c%Y "$_f" 2>/dev/null || stat -f%m "$_f" 2>/dev/null) || continue
+            if (( _now - _mtime > _max_age_secs )); then
+                rm -f "$_f" || log_warn "agent" "Failed to remove stale output file: $_f"
+            fi
+        done
     fi
 
     if [ "${deleted:-0}" -gt 0 ]; then

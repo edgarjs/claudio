@@ -59,6 +59,8 @@ claude_run() {
     fi
     if [ -x "$home/.local/bin/claude" ]; then
         claude_cmd="$home/.local/bin/claude"
+    elif [ -x "/opt/homebrew/bin/claude" ]; then
+        claude_cmd="/opt/homebrew/bin/claude"
     elif [ -x "/usr/local/bin/claude" ]; then
         claude_cmd="/usr/local/bin/claude"
     elif [ -x "/usr/bin/claude" ]; then
