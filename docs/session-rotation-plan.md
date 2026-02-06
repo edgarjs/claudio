@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,              -- Claude session_id (UUID)
     chat_id TEXT NOT NULL,            -- Telegram chat_id
     message_count INTEGER DEFAULT 0,  -- messages processed in this session
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_chat_id ON sessions(chat_id);
 ```
@@ -74,10 +75,11 @@ CREATE INDEX IF NOT EXISTS idx_sessions_chat_id ON sessions(chat_id);
 New functions:
 
 ```bash
-db_get_active_session(chat_id)       # Returns session_id if message_count < SESSION_WINDOW_SIZE
+db_get_active_session(chat_id)       # Returns the most recent session_id (by updated_at) if message_count < SESSION_WINDOW_SIZE
 db_create_session(chat_id, session_id)  # Creates new session record
-db_increment_session(session_id)     # Increments message_count
+db_increment_session(session_id)     # Increments message_count and updates updated_at
 db_expire_session(session_id)        # Deletes session record (forces rotation on next message)
+db_cleanup_sessions()                # Deletes sessions where updated_at is older than 24h
 ```
 
 ### Changes to `lib/claude.sh`
@@ -89,6 +91,8 @@ db_expire_session(session_id)        # Deletes session record (forces rotation o
 ```
 claude_run(prompt, chat_id):
   1. session_id = db_get_active_session(chat_id)
+     # Selects most recent session (ORDER BY updated_at DESC LIMIT 1)
+     # where message_count < SESSION_WINDOW_SIZE
   2. if session_id exists:
        # Resume existing session — no history injection needed
        args = [..., --resume $session_id, -p "$prompt", --output-format json]
@@ -98,12 +102,24 @@ claude_run(prompt, chat_id):
        full_prompt = context + "---\n\nNow respond:\n\n" + prompt
        args = [..., -p "$full_prompt", --output-format json]
   4. Run claude with args, capture JSON output
-  5. Extract result text and session_id from JSON
-  6. if new session:
-       db_create_session(chat_id, session_id)
-  7. db_increment_session(session_id)
-  8. Return result text
+  5. Parse JSON: extract result text, session_id, is_error from output
+  6. if is_error and was resuming:
+       # Resume failed — expire broken session, retry as fresh
+       db_expire_session(session_id)
+       log warning
+       # Re-run steps 3-5 as a new session (no --resume)
+  7. if JSON parsing fails (jq error, missing fields):
+       # Expire current session to prevent stale state
+       if session_id: db_expire_session(session_id)
+       log raw output for debugging
+       # Return raw stdout as response (best-effort)
+  8. if new session:
+       db_create_session(chat_id, extracted_session_id)
+  9. db_increment_session(extracted_session_id)
+  10. Return result text
 ```
+
+**Concurrency note:** Steps 1 and 9 are not wrapped in a transaction because `server.py` already guarantees serial-per-chat processing (one thread per `chat_id`, sequential dequeue). Two messages from the same chat will never run `claude_run` concurrently. If the concurrency model changes in the future, these operations should be made atomic (e.g., `UPDATE ... WHERE message_count < N RETURNING`).
 
 Key changes:
 - Remove `--no-session-persistence` (sessions must persist to disk for `--resume`)
@@ -120,7 +136,7 @@ Key changes:
 
 **Resume failure**: If `--resume` fails (session file deleted, corrupted, etc.), fall back to starting a fresh session with history injection. The `is_error` field in the JSON output signals this.
 
-**Session cleanup**: Add session expiry to `db_trim` — when messages are trimmed, also delete sessions that reference messages older than the trim window. Alternatively, sessions with no activity for 24h can be cleaned up by the existing agent cleanup cron logic.
+**Session cleanup**: `db_cleanup_sessions()` deletes sessions where `updated_at` is older than 24h. Called from `agent_cleanup_if_needed` (which already runs periodically) to reuse existing cleanup infrastructure.
 
 ### What does NOT change
 
@@ -138,7 +154,7 @@ Key changes:
 ### `lib/db.sh`
 - Add `sessions` table creation to `db_init()`
 - Add `db_get_active_session()`, `db_create_session()`, `db_increment_session()`, `db_expire_session()`
-- Add session cleanup to `db_trim()` or as separate `db_cleanup_sessions()`
+- Add `db_cleanup_sessions()` — deletes sessions with `updated_at` older than 24h
 
 ### `lib/claude.sh`
 - Accept `chat_id` as second parameter
@@ -168,7 +184,7 @@ Key changes:
 | Risk | Mitigation |
 |------|-----------|
 | `--resume` session files accumulate on disk | Clean up session files older than 24h (add to `agent_cleanup_if_needed` or separate cron) |
-| JSON parsing failure (jq unavailable, malformed output) | Fallback: if `jq` fails to extract `result`, use raw stdout as before |
+| JSON parsing failure (jq unavailable, malformed output) | Expire current session to prevent stale state, log raw output for debugging, return raw stdout as best-effort response |
 | `--output-format json` changes `result` format across claude versions | Pin to extracting `.result` field; log warning if schema changes |
 | Session file corruption prevents resume | `is_error` check triggers fresh session fallback |
 | Multi-chat support: sessions must be per-chat | `sessions` table keyed on `chat_id`; current single-chat setup works, scales to multi-chat |
