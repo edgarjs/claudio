@@ -164,7 +164,27 @@ You can send documents (PDF, text files, CSV, code files, etc.) to Claudio. Incl
 
 ### Parallel Agents
 
-Claudio can spawn independent `claude --p` subprocesses for parallel work (reviews, research, etc.). Agents run in their own sessions (`setsid`), so they survive if the main process dies. State is tracked in SQLite with automatic crash recovery and orphan detection.
+Claudio can spawn independent `claude --p` subprocesses for parallel work (reviews, research, etc.).
+
+**How it works:**
+
+- `agent_spawn` launches each agent via `nohup setsid`, creating an independent process session. The agent runs `claude --p` with the given prompt and writes its output to SQLite when done.
+- `agent_wait` polls the database every N seconds, sending Telegram typing indicators while agents work. It also enforces timeouts and detects dead processes.
+- `agent_get_results` returns a JSON array with all agent outputs for the parent invocation.
+- Each agent gets a unique ID, tracked in an `agents` table with status lifecycle: `pending` → `running` → `completed`/`failed`/`timeout`/`orphaned`.
+
+**Crash recovery:** If the main process dies while agents are running, the agents keep going (they're in their own session). On the next webhook, `agent_recover` detects orphaned agents (PIDs that no longer exist), recovers any output files they wrote before dying, and injects unreported results into the conversation context.
+
+**Usage from Claude's perspective:**
+
+```bash
+PARENT_ID="review_$(date +%s)"
+agent_spawn "$PARENT_ID" "Review for security issues: ..." "haiku" 300
+agent_spawn "$PARENT_ID" "Review for code quality: ..." "haiku" 300
+agent_spawn "$PARENT_ID" "Review documentation: ..." "haiku" 300
+agent_wait "$PARENT_ID" 5 "$TELEGRAM_CHAT_ID"
+agent_get_results "$PARENT_ID"
+```
 
 ### System Prompt
 
