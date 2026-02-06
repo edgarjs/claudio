@@ -20,6 +20,10 @@ WEBHOOK_RETRY_DELAY="${WEBHOOK_RETRY_DELAY:-60}"
 ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-}"
 ELEVENLABS_VOICE_ID="${ELEVENLABS_VOICE_ID:-iP95p4xoKVk53GoZ742B}"
 ELEVENLABS_STT_MODEL="${ELEVENLABS_STT_MODEL:-scribe_v1}"
+AGENT_MAX_CONCURRENT="${AGENT_MAX_CONCURRENT:-5}"
+AGENT_DEFAULT_TIMEOUT="${AGENT_DEFAULT_TIMEOUT:-300}"
+AGENT_POLL_INTERVAL="${AGENT_POLL_INTERVAL:-5}"
+AGENT_CLEANUP_AGE="${AGENT_CLEANUP_AGE:-24}"
 
 claudio_init() {
     mkdir -p "$CLAUDIO_PATH"
@@ -125,6 +129,10 @@ claudio_save_env() {
             printf 'ELEVENLABS_API_KEY="%s"\n' "$(_env_quote "$ELEVENLABS_API_KEY")"
             printf 'ELEVENLABS_VOICE_ID="%s"\n' "$(_env_quote "$ELEVENLABS_VOICE_ID")"
             printf 'ELEVENLABS_STT_MODEL="%s"\n' "$(_env_quote "$ELEVENLABS_STT_MODEL")"
+            printf 'AGENT_MAX_CONCURRENT="%s"\n' "$(_env_quote "$AGENT_MAX_CONCURRENT")"
+            printf 'AGENT_DEFAULT_TIMEOUT="%s"\n' "$(_env_quote "$AGENT_DEFAULT_TIMEOUT")"
+            printf 'AGENT_POLL_INTERVAL="%s"\n' "$(_env_quote "$AGENT_POLL_INTERVAL")"
+            printf 'AGENT_CLEANUP_AGE="%s"\n' "$(_env_quote "$AGENT_CLEANUP_AGE")"
         } > "$CLAUDIO_ENV_FILE"
     )
 }

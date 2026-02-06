@@ -20,6 +20,7 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 - `lib/health-check.sh` — Cron health-check script (runs every minute) that calls `/health` endpoint. Auto-restarts the service if unreachable (throttled to once per 3 minutes, max 3 attempts). Sends Telegram alert after exhausting retries. State: `.last_restart_attempt`, `.restart_fail_count` in `$HOME/.claudio/`.
 - `lib/tts.sh` — ElevenLabs text-to-speech integration for generating voice responses.
 - `lib/stt.sh` — ElevenLabs speech-to-text integration for transcribing incoming voice messages.
+- `lib/agent.sh` — Parallel agent management. Spawns independent `claude --p` processes via `nohup` + `setsid`, tracks state in SQLite (`agents` and `agent_reports` tables), handles crash recovery and orphan detection. Agents survive parent process death.
 - `lib/service.sh` — systemd (Linux) and launchd (macOS) service management. Also handles cloudflared installation and named tunnel setup during `claudio install`.
 - Runtime config/state lives in `$HOME/.claudio/` (not in the repo).
 

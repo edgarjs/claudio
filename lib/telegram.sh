@@ -353,6 +353,32 @@ telegram_handle_webhook() {
 ${text}"
     fi
 
+    # Recover unreported agent results and prepend to prompt
+    local agent_results
+    agent_results=$(agent_recover 2>/dev/null)
+    if [ -n "$agent_results" ] && [ "$agent_results" != "[]" ]; then
+        local agent_context
+        agent_context=$(printf '%s' "$agent_results" | jq -r '
+            "The following background agents have completed since your last invocation:\n\n" +
+            ([.[] | "**Agent " + .id + "** (status: " + .status + "):\nPrompt: " + (.prompt // "N/A") + "\nOutput: " + (.output // "No output") + "\n"] | join("\n"))
+        ' 2>/dev/null)
+        if [ -n "$agent_context" ]; then
+            if [ -n "$text" ]; then
+                text="${agent_context}
+
+---
+
+${text}"
+            else
+                text="$agent_context"
+            fi
+        fi
+        # Mark these agents as reported
+        local reported_ids
+        reported_ids=$(printf '%s' "$agent_results" | jq -r '[.[].id] | join(",")' 2>/dev/null)
+        agent_mark_reported "$reported_ids"
+    fi
+
     log "telegram" "Received message from chat_id=$WEBHOOK_CHAT_ID"
 
     # Download image if present (after command check to avoid unnecessary downloads)
