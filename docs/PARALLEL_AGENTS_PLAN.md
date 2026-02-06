@@ -42,9 +42,9 @@ graph TB
     end
 
     subgraph "Independent Agent Processes"
-        AG_SH -->|nohup + disown| A1[claude --p<br>agent 1]
-        AG_SH -->|nohup + disown| A2[claude --p<br>agent 2]
-        AG_SH -->|nohup + disown| A3[claude --p<br>agent 3]
+        AG_SH -->|nohup + setsid| A1[claude --p<br>agent 1]
+        AG_SH -->|nohup + setsid| A2[claude --p<br>agent 2]
+        AG_SH -->|nohup + setsid| A3[claude --p<br>agent 3]
     end
 
     subgraph "SQLite State"
@@ -147,10 +147,11 @@ New bash module providing these functions:
 **`agent_init`** — Creates the agents table if not exists.
 
 **`agent_spawn <prompt> [model] [timeout]`** — Spawns a new agent:
-1. Generates a unique agent ID
-2. Inserts a row with `status=pending`
-3. Launches `_agent_wrapper` via `nohup setsid ... &` (new session, detached)
-4. Returns the agent ID immediately
+1. Checks if max concurrent agents limit is reached; if so, returns error
+2. Generates a unique agent ID
+3. Inserts a row with `status=pending`
+4. Launches `_agent_wrapper` via `nohup setsid ... &` (new session, detached)
+5. Returns the agent ID immediately
 
 **`agent_poll <parent_id>`** — Returns JSON array of agent statuses for the given parent.
 Used by the main process to check if agents are done.
@@ -159,7 +160,8 @@ Used by the main process to check if agents are done.
 
 **`agent_wait <parent_id> [poll_interval] [typing_chat_id]`** — Blocking wait loop:
 1. Polls agent statuses every `poll_interval` seconds (default: 5)
-2. Sends typing indicator to `typing_chat_id` if provided
+2. Sends typing indicator to `typing_chat_id` if provided (throttled to 1 per 15 seconds
+   to avoid Telegram API 429 rate limits)
 3. Returns when all agents for `parent_id` are in a terminal state
 4. Handles timeouts: kills agents that exceed their `timeout_seconds`
 5. Handles orphans: if PID no longer exists but status is `running`, marks as `orphaned`
@@ -171,6 +173,8 @@ Used by the main process to check if agents are done.
 `_agent_wrapper` is the entry point that runs in the detached process:
 
 ```bash
+AGENT_OUTPUT_DIR="${CLAUDIO_DIR}/agent_outputs"
+
 _agent_wrapper() {
     local agent_id="$1"
     local prompt="$2"
@@ -180,10 +184,11 @@ _agent_wrapper() {
     # Update status to running + record PID
     _agent_db_update "$agent_id" "running" "" "" "" "$$"
 
-    # Temp files for stdout/stderr capture
-    local out_file=$(mktemp)
-    local err_file=$(mktemp)
-    trap 'rm -f "$out_file" "$err_file"' EXIT
+    # Use predictable file paths based on agent_id (no EXIT trap — files survive
+    # wrapper crash so agent_recover can read results from a dead wrapper)
+    mkdir -p "$AGENT_OUTPUT_DIR"
+    local out_file="${AGENT_OUTPUT_DIR}/${agent_id}.out"
+    local err_file="${AGENT_OUTPUT_DIR}/${agent_id}.err"
 
     # Run claude with timeout
     local exit_code=0
@@ -208,6 +213,9 @@ _agent_wrapper() {
     local output=$(cat "$out_file")
     local error=$(cat "$err_file")
     _agent_db_update "$agent_id" "$status" "$output" "$error" "$exit_code" ""
+
+    # Clean up output files only after DB write succeeds
+    rm -f "$out_file" "$err_file"
 }
 ```
 
@@ -247,8 +255,8 @@ Each agent runs in its own **session** (`setsid`), so:
 ## How Claude Code Uses This
 
 From Claude's perspective (inside the main `claude --p` invocation), the agents are
-accessed through bash tool calls. The system prompt or `CLAUDE.md` will include
-instructions like:
+accessed through bash tool calls. The system prompt (injected via `--append-system-prompt`)
+will include instructions like:
 
 ```
 ## Parallel Agents
@@ -311,17 +319,31 @@ agent_recover() {
     while IFS='|' read -r agent_id pid; do
         [ -z "$agent_id" ] && continue
         if ! kill -0 "$pid" 2>/dev/null; then
-            _agent_db_update "$agent_id" "orphaned" "" "Process disappeared" "" ""
-            log "agent" "Marked agent $agent_id as orphaned (PID $pid gone)"
+            # Check if the wrapper wrote output files before dying
+            local out_file="${AGENT_OUTPUT_DIR}/${agent_id}.out"
+            local err_file="${AGENT_OUTPUT_DIR}/${agent_id}.err"
+            local output="" error=""
+            [ -f "$out_file" ] && output=$(cat "$out_file") && rm -f "$out_file"
+            [ -f "$err_file" ] && error=$(cat "$err_file") && rm -f "$err_file"
+
+            if [ -n "$output" ]; then
+                # Wrapper died after claude finished but before DB update
+                _agent_db_update "$agent_id" "completed" "$output" "$error" "" ""
+                log "agent" "Recovered output for agent $agent_id from files"
+            else
+                _agent_db_update "$agent_id" "orphaned" "" "Process disappeared" "" ""
+                log "agent" "Marked agent $agent_id as orphaned (PID $pid gone)"
+            fi
         fi
     done <<< "$running"
 
     # Find completed agents that haven't been reported
+    # No time-based filter — agent_reports is the single source of truth
+    # for what has been reported. agent_cleanup handles old record deletion.
     local unreported
     unreported=$(sqlite3 "$CLAUDIO_DB_FILE" -json \
         "SELECT id, prompt, output, status FROM agents
          WHERE status IN ('completed', 'failed', 'orphaned', 'timeout')
-         AND completed_at > datetime('now', '-1 hour')
          AND id NOT IN (SELECT agent_id FROM agent_reports);")
 
     if [ -n "$unreported" ] && [ "$unreported" != "[]" ]; then
@@ -336,7 +358,7 @@ Additional table for tracking what's been reported:
 CREATE TABLE IF NOT EXISTS agent_reports (
     agent_id TEXT PRIMARY KEY,
     reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (agent_id) REFERENCES agents(id)
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
 );
 ```
 
@@ -346,9 +368,11 @@ CREATE TABLE IF NOT EXISTS agent_reports (
 wrapper uses `timeout(1)` to enforce this. If the agent exceeds it, the wrapper marks
 it as `timeout` in the DB.
 
-**Polling-side timeout check:** `agent_wait` also checks for stale agents — if an agent
-has been `running` for more than `2x timeout_seconds` and its PID is dead, it's marked
-as `orphaned`. This handles cases where the wrapper itself dies.
+**Polling-side orphan detection:** `agent_wait` checks for dead agents on every poll
+cycle — if an agent's status is `running` but its PID no longer exists, it's marked as
+`orphaned` immediately (regardless of elapsed time). This handles cases where the wrapper
+itself dies before writing final status to the DB. Separately, if an agent is still alive
+but has exceeded `2x timeout_seconds`, `agent_wait` sends SIGKILL as a last resort.
 
 **Cleanup cron:** `agent_cleanup` runs periodically (or at the start of each invocation)
 to delete agent records older than 24 hours.
@@ -422,8 +446,9 @@ gantt
   already sanitizes tool results. No different from current `Task` tool behavior.
 - **Resource exhaustion**: Cap max concurrent agents per parent (default 5). Enforced
   in `agent_spawn`.
-- **Temp file cleanup**: Wrapper's EXIT trap removes temp files. `agent_cleanup`
-  removes stale DB records.
+- **Output file cleanup**: Wrapper uses predictable paths in `$CLAUDIO_DIR/agent_outputs/`
+  (not mktemp) so crash recovery can read results from dead wrappers. Files are deleted
+  after DB write succeeds. `agent_cleanup` removes stale output files and DB records.
 - **Process leaks**: `agent_wait` kills timed-out agents. `agent_recover` marks dead
   ones. Worst case: a `claude --p` process that finishes but whose wrapper died — the
   process exits naturally, just the DB state is stale (handled by orphan detection).
@@ -439,14 +464,21 @@ New environment variables in `service.env`:
 
 ## Comparison with Claude Code's Task Tool
 
-| Aspect | Claude Code Task (run_in_background) | Claudio Agents |
-|--------|--------------------------------------|----------------|
-| Process lifetime | Dies with parent | Independent (setsid) |
-| State tracking | In-memory only | SQLite |
-| Crash recovery | None | Orphan detection + result recovery |
-| Progress visibility | None until done | Typing indicators + DB polling |
-| Max concurrency | Claude Code internal limit | Configurable (default 5) |
-| Model selection | Inherits from parent | Per-agent configurable |
+**Claude Code Task (`run_in_background`):**
+- Process lifetime: dies with parent
+- State tracking: in-memory only
+- Crash recovery: none
+- Progress visibility: none until done
+- Max concurrency: Claude Code internal limit
+- Model selection: inherits from parent
+
+**Claudio Agents:**
+- Process lifetime: independent (`setsid`)
+- State tracking: SQLite
+- Crash recovery: orphan detection + result recovery from output files
+- Progress visibility: typing indicators + DB polling
+- Max concurrency: configurable (default 5)
+- Model selection: per-agent configurable
 
 ## Open Questions
 
