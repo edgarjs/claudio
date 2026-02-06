@@ -92,7 +92,7 @@ case "${1:-}" in
     _webhook)
         history_init
         agent_init
-        agent_cleanup
+        agent_cleanup_if_needed
         body=$(cat)
         telegram_handle_webhook "$body"
         ;;

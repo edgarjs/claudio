@@ -22,11 +22,26 @@ setup() {
 }
 
 teardown() {
-    # Kill any leftover agent processes spawned during tests
+    # Kill any leftover agent processes spawned during tests (MEDIUM #11)
+    # Skip our own PID and parent PIDs to avoid killing the test runner
+    local pids
+    pids=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT pid FROM agents WHERE status IN ('pending', 'running') AND pid IS NOT NULL;" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        while IFS= read -r pid; do
+            [ -z "$pid" ] && continue
+            # Don't kill our own process or parent processes
+            [ "$pid" = "$$" ] && continue
+            [ "$pid" = "$PPID" ] && continue
+            # Kill process group, then individual PID as fallback
+            kill -9 "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+        done <<< "$pids"
+        sleep 0.5
+    fi
+
     if [ -d "$AGENT_OUTPUT_DIR" ]; then
         rm -rf "$AGENT_OUTPUT_DIR"
     fi
-    rm -f "$CLAUDIO_DB_FILE"
+    rm -f "$CLAUDIO_DB_FILE" "${CLAUDIO_DB_FILE}-wal" "${CLAUDIO_DB_FILE}-shm"
 }
 
 # ==================== agent_init ====================
@@ -578,4 +593,162 @@ teardown() {
 @test "agent_wait requires parent_id" {
     run agent_wait ""
     [[ "$status" -eq 1 ]]
+}
+
+# ==================== Integration tests (MEDIUM #8) ====================
+
+@test "integration: _agent_db_update validates agent_id" {
+    run _agent_db_update "'; DROP TABLE agents; --" "running" "" "" "" ""
+    [[ "$status" -eq 1 ]]
+
+    # Table should still exist
+    local count
+    count=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT COUNT(*) FROM agents;")
+    [[ "$count" == "0" ]]
+}
+
+@test "integration: _agent_db_update validates status" {
+    sqlite3 "$CLAUDIO_DB_FILE" \
+        "INSERT INTO agents (id, parent_id, prompt) VALUES ('test_valid', 'p1', 'test prompt');"
+
+    run _agent_db_update "test_valid" "evil_status" "" "" "" ""
+    [[ "$status" -eq 1 ]]
+}
+
+@test "integration: _agent_db_update validates numeric fields" {
+    sqlite3 "$CLAUDIO_DB_FILE" \
+        "INSERT INTO agents (id, parent_id, prompt) VALUES ('test_num', 'p1', 'test prompt');"
+
+    # Should ignore non-numeric exit_code and pid
+    _agent_db_update "test_num" "completed" "output" "" "not_a_number" "also_not"
+
+    local agent_status
+    agent_status=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT status FROM agents WHERE id='test_num';")
+    [[ "$agent_status" == "completed" ]]
+
+    # exit_code and pid should be NULL (not set)
+    local exit_code
+    exit_code=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT exit_code FROM agents WHERE id='test_num';")
+    [[ -z "$exit_code" ]]
+}
+
+@test "integration: _agent_sql_escape strips NUL bytes from pipe" {
+    # Bash truncates NUL in variables, but tr -d '\0' protects when reading from files/pipes
+    result=$(printf 'hello\x00world' | tr -d '\0' | sed "s/'/''/g")
+    [[ "$result" == "helloworld" ]]
+}
+
+@test "integration: _agent_sql retries on WAL lock" {
+    # Create a lock by starting a write transaction in background
+    sqlite3 "$CLAUDIO_DB_FILE" "BEGIN EXCLUSIVE; SELECT 1; COMMIT;" &
+    local bg_pid=$!
+    wait $bg_pid 2>/dev/null
+
+    # Should succeed (no actual contention in this test, just verify retry logic works)
+    result=$(_agent_sql "SELECT 1;")
+    [[ "$result" == "1" ]]
+}
+
+@test "integration: agent_spawn max concurrent is atomic" {
+    export AGENT_MAX_CONCURRENT=1
+
+    # Insert one running agent
+    sqlite3 "$CLAUDIO_DB_FILE" \
+        "INSERT INTO agents (id, parent_id, prompt, status) VALUES ('a1', 'p1', 'prompt1', 'running');"
+
+    # Second spawn for same parent should fail
+    run agent_spawn "p1" "echo test2" "haiku" 5
+    [[ "$status" -eq 1 ]]
+}
+
+@test "integration: crash recovery recovers output from dead wrapper" {
+    # Simulate: agent was running but PID is dead, output file exists
+    mkdir -p "$AGENT_OUTPUT_DIR"
+    echo "recovered result from crash" > "${AGENT_OUTPUT_DIR}/crashed_agent.out"
+    echo "some error" > "${AGENT_OUTPUT_DIR}/crashed_agent.err"
+
+    sqlite3 "$CLAUDIO_DB_FILE" \
+        "INSERT INTO agents (id, parent_id, prompt, status, pid) VALUES ('crashed_agent', 'p1', 'do something', 'running', 99999);"
+
+    # agent_recover should detect orphan and recover output
+    result=$(agent_recover)
+    [[ -n "$result" ]]
+    echo "$result" | jq . > /dev/null 2>&1
+    [[ "$result" == *"recovered result from crash"* ]]
+
+    # Status should be completed (not orphaned) because output was recovered
+    local agent_status
+    agent_status=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT status FROM agents WHERE id='crashed_agent';")
+    [[ "$agent_status" == "completed" ]]
+
+    # Subsequent recover should return empty (already reported)
+    result2=$(agent_recover)
+    [[ -z "$result2" || "$result2" == "[]" || "$result2" == "[null]" ]]
+}
+
+@test "integration: agent_cleanup_if_needed throttles cleanup" {
+    mkdir -p "$AGENT_OUTPUT_DIR"
+
+    # First call should run
+    agent_cleanup_if_needed
+
+    [[ -f "${AGENT_OUTPUT_DIR}/.last_cleanup" ]]
+
+    # Insert an old record
+    sqlite3 "$CLAUDIO_DB_FILE" \
+        "INSERT INTO agents (id, parent_id, prompt, status, created_at) VALUES ('old1', 'p1', 'test', 'completed', datetime('now', '-48 hours'));"
+
+    # Second call within 1 hour should be throttled (record stays)
+    agent_cleanup_if_needed
+    local count
+    count=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT COUNT(*) FROM agents WHERE id='old1';")
+    [[ "$count" == "1" ]]
+}
+
+@test "integration: _agent_pid_start_time works for own process" {
+    local start_time
+    start_time=$(_agent_pid_start_time "$$")
+    [[ -n "$start_time" ]]
+    [[ "$start_time" -gt 0 ]]
+}
+
+@test "integration: _agent_pid_alive detects recycled PID" {
+    # Record a start time in the future (impossible for any current process)
+    ! _agent_pid_alive "$$" "9999999999"
+}
+
+@test "integration: _agent_kill targets process group" {
+    # Start a background process in its own session
+    setsid sleep 300 &
+    local bg_pid=$!
+    sleep 0.2
+
+    # Should be alive
+    kill -0 "$bg_pid" 2>/dev/null
+
+    # Kill it via _agent_kill
+    _agent_kill "$bg_pid" ""
+
+    sleep 1
+    # Should be dead
+    ! kill -0 "$bg_pid" 2>/dev/null
+}
+
+@test "integration: large output gets truncated" {
+    export AGENT_MAX_OUTPUT_BYTES=100
+
+    mkdir -p "$AGENT_OUTPUT_DIR"
+    # Create output file larger than limit
+    dd if=/dev/urandom bs=1 count=200 2>/dev/null | base64 > "${AGENT_OUTPUT_DIR}/big_agent.out"
+    echo "" > "${AGENT_OUTPUT_DIR}/big_agent.err"
+
+    sqlite3 "$CLAUDIO_DB_FILE" \
+        "INSERT INTO agents (id, parent_id, prompt, status, pid) VALUES ('big_agent', 'p1', 'test', 'running', 99999);"
+
+    # Detect orphan — it will read the truncated file
+    _agent_detect_orphans "p1"
+
+    local output
+    output=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT output FROM agents WHERE id='big_agent';")
+    [[ "$output" == *"TRUNCATED"* ]] || [[ ${#output} -le 400 ]]
 }

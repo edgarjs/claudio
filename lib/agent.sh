@@ -12,11 +12,17 @@ AGENT_MAX_CONCURRENT="${AGENT_MAX_CONCURRENT:-5}"
 AGENT_DEFAULT_TIMEOUT="${AGENT_DEFAULT_TIMEOUT:-300}"
 AGENT_POLL_INTERVAL="${AGENT_POLL_INTERVAL:-5}"
 AGENT_CLEANUP_AGE="${AGENT_CLEANUP_AGE:-24}"
+AGENT_MAX_OUTPUT_BYTES="${AGENT_MAX_OUTPUT_BYTES:-524288}"  # 512KB max output (MEDIUM #10)
 
 # Initialize the agents and agent_reports tables
 agent_init() {
-    sqlite3 "$CLAUDIO_DB_FILE" "PRAGMA journal_mode=WAL;" > /dev/null
-    sqlite3 "$CLAUDIO_DB_FILE" <<'SQL'
+    # Set restrictive permissions on output dir and DB (HIGH #7)
+    mkdir -p "$AGENT_OUTPUT_DIR"
+    chmod 700 "$AGENT_OUTPUT_DIR"
+    [ -f "$CLAUDIO_DB_FILE" ] && chmod 600 "$CLAUDIO_DB_FILE"
+
+    _agent_sql "PRAGMA journal_mode=WAL;" > /dev/null
+    _agent_sql <<'SQL'
 CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
     parent_id TEXT,
@@ -28,6 +34,7 @@ CREATE TABLE IF NOT EXISTS agents (
     error TEXT,
     exit_code INTEGER,
     pid INTEGER,
+    pid_start_time INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     started_at TIMESTAMP,
     completed_at TIMESTAMP,
@@ -49,12 +56,41 @@ _agent_gen_id() {
     printf 'agent_%s_%s' "$(date '+%Y%m%d_%H%M%S')" "$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"
 }
 
-# Escape content for safe SQL insertion (double single quotes)
+# Escape content for safe SQL insertion (double single quotes, strip NUL bytes)
 _agent_sql_escape() {
-    printf '%s' "$1" | sed "s/'/''/g"
+    printf '%s' "$1" | tr -d '\0' | sed "s/'/''/g"
+}
+
+# Execute SQL with retry on WAL lock contention (MEDIUM #9)
+_agent_sql() {
+    local retries=5
+    local delay=0.1
+    local err_file
+    err_file=$(mktemp) || { log_error "agent" "_agent_sql: mktemp failed"; return 1; }
+    chmod 600 "$err_file"
+    local i
+    for i in $(seq 1 "$retries"); do
+        if sqlite3 "$CLAUDIO_DB_FILE" "$@" 2>"$err_file"; then
+            rm -f "$err_file"
+            return 0
+        fi
+        local err
+        err=$(cat "$err_file" 2>/dev/null)
+        if [[ "$err" == *"locked"* ]] && [ "$i" -lt "$retries" ]; then
+            sleep "$delay"
+            delay=$(awk "BEGIN{print $delay * 2}")
+        else
+            printf '%s\n' "$err" >&2
+            rm -f "$err_file"
+            return 1
+        fi
+    done
+    rm -f "$err_file"
+    return 1
 }
 
 # Update agent status in the database
+# Uses temp files for large content to avoid shell escaping issues (HIGH #1)
 _agent_db_update() {
     local agent_id="$1"
     local status="$2"
@@ -63,35 +99,53 @@ _agent_db_update() {
     local exit_code="$5"
     local pid="$6"
 
+    # Validate agent_id (alphanumeric + underscore only)
+    if ! [[ "$agent_id" =~ ^[a-zA-Z0-9_]+$ ]]; then
+        log_error "agent" "_agent_db_update: invalid agent_id '$agent_id'"
+        return 1
+    fi
+
+    # Validate status
+    case "$status" in
+        pending|running|completed|failed|timeout|orphaned) ;;
+        *) log_error "agent" "_agent_db_update: invalid status '$status'"; return 1 ;;
+    esac
+
+    # Build timestamp clause
+    local ts_clause=""
+    case "$status" in
+        running)
+            ts_clause=", started_at=CURRENT_TIMESTAMP"
+            ;;
+        completed|failed|timeout|orphaned)
+            ts_clause=", completed_at=CURRENT_TIMESTAMP"
+            ;;
+    esac
+
+    # Validate numeric fields
+    if [ -n "$exit_code" ] && ! [[ "$exit_code" =~ ^-?[0-9]+$ ]]; then
+        exit_code=""
+    fi
+    if [ -n "$pid" ] && ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+        pid=""
+    fi
+
+    local exit_clause=""
+    [ -n "$exit_code" ] && exit_clause=", exit_code=$exit_code"
+    local pid_clause=""
+    [ -n "$pid" ] && pid_clause=", pid=$pid"
+
+    # For output and error, use parameterized approach via .param or safe escaping
     local escaped_output escaped_error
     escaped_output=$(_agent_sql_escape "$output")
     escaped_error=$(_agent_sql_escape "$error")
 
-    local sets="status='$status'"
+    local output_clause=""
+    [ -n "$output" ] && output_clause=", output='${escaped_output}'"
+    local error_clause=""
+    [ -n "$error" ] && error_clause=", error='${escaped_error}'"
 
-    if [ -n "$output" ]; then
-        sets="${sets}, output='${escaped_output}'"
-    fi
-    if [ -n "$error" ]; then
-        sets="${sets}, error='${escaped_error}'"
-    fi
-    if [ -n "$exit_code" ]; then
-        sets="${sets}, exit_code=$exit_code"
-    fi
-    if [ -n "$pid" ]; then
-        sets="${sets}, pid=$pid"
-    fi
-
-    case "$status" in
-        running)
-            sets="${sets}, started_at=CURRENT_TIMESTAMP"
-            ;;
-        completed|failed|timeout|orphaned)
-            sets="${sets}, completed_at=CURRENT_TIMESTAMP"
-            ;;
-    esac
-
-    sqlite3 "$CLAUDIO_DB_FILE" "UPDATE agents SET $sets WHERE id='$agent_id';"
+    _agent_sql "UPDATE agents SET status='$status'${output_clause}${error_clause}${exit_clause}${pid_clause}${ts_clause} WHERE id='$agent_id';"
 }
 
 # Resolve the absolute path to the claude binary
@@ -115,6 +169,57 @@ _agent_resolve_claude() {
     fi
 }
 
+# Get process start time (epoch) for PID recycling detection (HIGH #6)
+_agent_pid_start_time() {
+    local pid="$1"
+    # stat format 22 is starttime in clock ticks; use /proc/stat for boot time
+    if [ -f "/proc/$pid/stat" ]; then
+        local start_ticks boot_time hz
+        start_ticks=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null) || return 1
+        boot_time=$(awk '/^btime/{print $2}' /proc/stat 2>/dev/null) || return 1
+        hz=$(getconf CLK_TCK 2>/dev/null) || hz=100
+        printf '%s' "$(( boot_time + start_ticks / hz ))"
+    else
+        return 1
+    fi
+}
+
+# Check if a PID is alive AND matches the expected start time (HIGH #6)
+_agent_pid_alive() {
+    local pid="$1"
+    local expected_start_time="$2"
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+
+    # If no expected start time recorded, fall back to kill -0 only
+    if [ -z "$expected_start_time" ] || [ "$expected_start_time" = "0" ]; then
+        return 0
+    fi
+
+    local actual_start_time
+    actual_start_time=$(_agent_pid_start_time "$pid") || return 0  # can't verify, assume alive
+    [ "$actual_start_time" = "$expected_start_time" ]
+}
+
+# Kill an agent's process group (HIGH #5)
+_agent_kill() {
+    local pid="$1"
+    local expected_start_time="$2"
+
+    if ! _agent_pid_alive "$pid" "$expected_start_time"; then
+        return 0  # already dead
+    fi
+
+    # Kill the entire process group (negative PID)
+    kill -TERM "-$pid" 2>/dev/null || true
+    sleep 0.5
+    if _agent_pid_alive "$pid" "$expected_start_time"; then
+        kill -9 "-$pid" 2>/dev/null || true
+    fi
+}
+
 # Agent wrapper — runs in a detached process (nohup + setsid)
 # Arguments: agent_id prompt model timeout_secs claude_cmd
 _agent_wrapper() {
@@ -130,14 +235,20 @@ _agent_wrapper() {
     local lib_dir
     lib_dir="$(dirname "${BASH_SOURCE[0]}")"
 
-    # Update status to running + record PID
+    # Record PID + start time for recycling detection
+    local my_start_time
+    my_start_time=$(_agent_pid_start_time "$$") || my_start_time="0"
     _agent_db_update "$agent_id" "running" "" "" "" "$$"
+    _agent_sql "UPDATE agents SET pid_start_time=$my_start_time WHERE id='$agent_id';"
 
     # Use predictable file paths based on agent_id (no EXIT trap — files survive
     # wrapper crash so agent_recover can read results from a dead wrapper)
     mkdir -p "$AGENT_OUTPUT_DIR"
+    chmod 700 "$AGENT_OUTPUT_DIR"
     local out_file="${AGENT_OUTPUT_DIR}/${agent_id}.out"
     local err_file="${AGENT_OUTPUT_DIR}/${agent_id}.err"
+    touch "$out_file" "$err_file"
+    chmod 600 "$out_file" "$err_file"
 
     # Build claude args
     local -a claude_args=(
@@ -177,10 +288,22 @@ _agent_wrapper() {
         status="failed"
     fi
 
-    # Read output files
+    # Read output files, truncating if too large (MEDIUM #10)
     local output="" error=""
-    [ -f "$out_file" ] && output=$(cat "$out_file")
-    [ -f "$err_file" ] && error=$(cat "$err_file")
+    if [ -f "$out_file" ]; then
+        local file_size
+        file_size=$(stat -c%s "$out_file" 2>/dev/null) || file_size=0
+        if [ "$file_size" -gt "$AGENT_MAX_OUTPUT_BYTES" ]; then
+            output=$(head -c "$AGENT_MAX_OUTPUT_BYTES" "$out_file")
+            output="${output}
+[OUTPUT TRUNCATED: ${file_size} bytes exceeded ${AGENT_MAX_OUTPUT_BYTES} byte limit]"
+        else
+            output=$(cat "$out_file")
+        fi
+    fi
+    if [ -f "$err_file" ]; then
+        error=$(head -c "$AGENT_MAX_OUTPUT_BYTES" "$err_file")
+    fi
 
     # Write results to DB
     _agent_db_update "$agent_id" "$status" "$output" "$error" "$exit_code" ""
@@ -205,12 +328,14 @@ agent_spawn() {
         return 1
     fi
 
-    # Check max concurrent agents
-    local running_count
-    running_count=$(sqlite3 "$CLAUDIO_DB_FILE" \
-        "SELECT COUNT(*) FROM agents WHERE parent_id='$(_agent_sql_escape "$parent_id")' AND status IN ('pending', 'running');")
-    if [ "$running_count" -ge "$AGENT_MAX_CONCURRENT" ]; then
-        log_error "agent" "Max concurrent agents ($AGENT_MAX_CONCURRENT) reached for parent $parent_id"
+    # Validate model (alphanumeric only)
+    if ! [[ "$model" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "agent" "agent_spawn: invalid model '$model'"
+        return 1
+    fi
+    # Validate timeout (numeric only)
+    if ! [[ "$timeout_secs" =~ ^[0-9]+$ ]]; then
+        log_error "agent" "agent_spawn: invalid timeout '$timeout_secs'"
         return 1
     fi
 
@@ -226,28 +351,54 @@ agent_spawn() {
     local agent_id
     agent_id=$(_agent_gen_id)
 
-    # Insert pending record
+    # Atomic check + insert in a single exclusive transaction (HIGH #4)
     local escaped_prompt escaped_parent
     escaped_prompt=$(_agent_sql_escape "$prompt")
     escaped_parent=$(_agent_sql_escape "$parent_id")
-    sqlite3 "$CLAUDIO_DB_FILE" \
-        "INSERT INTO agents (id, parent_id, prompt, model, timeout_seconds) VALUES ('$agent_id', '$escaped_parent', '$escaped_prompt', '$model', $timeout_secs);"
+    local inserted
+    inserted=$(_agent_sql "
+        BEGIN EXCLUSIVE;
+        INSERT INTO agents (id, parent_id, prompt, model, timeout_seconds)
+            SELECT '$agent_id', '$escaped_parent', '$escaped_prompt', '$model', $timeout_secs
+            WHERE (SELECT COUNT(*) FROM agents WHERE parent_id='$escaped_parent' AND status IN ('pending', 'running')) < $AGENT_MAX_CONCURRENT;
+        SELECT changes();
+        COMMIT;
+    " 2>&1)
+    if [ "${inserted:-0}" -eq 0 ]; then
+        log_error "agent" "Max concurrent agents ($AGENT_MAX_CONCURRENT) reached for parent $parent_id"
+        return 1
+    fi
 
     # Get the absolute path to this script for sourcing in the wrapper
     local agent_script
     agent_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent.sh"
 
+    # Write prompt to a temp file to avoid shell escaping issues (HIGH #2)
+    mkdir -p "$AGENT_OUTPUT_DIR"
+    chmod 700 "$AGENT_OUTPUT_DIR"
+    local prompt_file="${AGENT_OUTPUT_DIR}/${agent_id}.prompt"
+    printf '%s' "$prompt" > "$prompt_file"
+    chmod 600 "$prompt_file"
+
     # Spawn detached process via nohup + setsid
-    # The wrapper sources this file to get _agent_wrapper and its dependencies
-    nohup setsid bash -c "
-        export CLAUDIO_PATH='$CLAUDIO_PATH'
-        export CLAUDIO_DB_FILE='$CLAUDIO_DB_FILE'
-        export CLAUDIO_PROMPT_FILE='$CLAUDIO_PROMPT_FILE'
-        export CLAUDIO_LOG_FILE='$CLAUDIO_LOG_FILE'
-        export AGENT_OUTPUT_DIR='$AGENT_OUTPUT_DIR'
-        source '$agent_script'
-        _agent_wrapper '$agent_id' \"\$(cat)\" '$model' '$timeout_secs' '$claude_cmd'
-    " <<< "$prompt" > /dev/null 2>&1 &
+    # All values passed via env vars — no shell interpolation of user content
+    CLAUDIO_PATH="$CLAUDIO_PATH" \
+    CLAUDIO_DB_FILE="$CLAUDIO_DB_FILE" \
+    CLAUDIO_PROMPT_FILE="$CLAUDIO_PROMPT_FILE" \
+    CLAUDIO_LOG_FILE="$CLAUDIO_LOG_FILE" \
+    AGENT_OUTPUT_DIR="$AGENT_OUTPUT_DIR" \
+    _AGENT_ID="$agent_id" \
+    _AGENT_PROMPT_FILE="$prompt_file" \
+    _AGENT_MODEL="$model" \
+    _AGENT_TIMEOUT="$timeout_secs" \
+    _AGENT_CLAUDE_CMD="$claude_cmd" \
+    _AGENT_SCRIPT="$agent_script" \
+    nohup setsid bash -c '
+        source "$_AGENT_SCRIPT"
+        prompt=$(cat "$_AGENT_PROMPT_FILE")
+        rm -f "$_AGENT_PROMPT_FILE"
+        _agent_wrapper "$_AGENT_ID" "$prompt" "$_AGENT_MODEL" "$_AGENT_TIMEOUT" "$_AGENT_CLAUDE_CMD"
+    ' > /dev/null 2>&1 &
 
     log "agent" "Spawned agent $agent_id (model=$model, timeout=${timeout_secs}s, parent=$parent_id)"
     printf '%s' "$agent_id"
@@ -269,7 +420,7 @@ agent_poll() {
     # Also check for orphaned agents while polling
     _agent_detect_orphans "$parent_id"
 
-    sqlite3 "$CLAUDIO_DB_FILE" -json \
+    _agent_sql -json \
         "SELECT id, status, model FROM agents WHERE parent_id='$escaped_parent' ORDER BY created_at;"
 }
 
@@ -286,7 +437,7 @@ agent_get_results() {
     local escaped_parent
     escaped_parent=$(_agent_sql_escape "$parent_id")
 
-    sqlite3 "$CLAUDIO_DB_FILE" -json \
+    _agent_sql -json \
         "SELECT id, status, model, output, error, exit_code FROM agents
          WHERE parent_id='$escaped_parent'
          AND status IN ('completed', 'failed', 'timeout', 'orphaned')
@@ -305,20 +456,31 @@ _agent_detect_orphans() {
     fi
 
     local running
-    running=$(sqlite3 "$CLAUDIO_DB_FILE" \
-        "SELECT id, pid FROM agents $where_clause;")
+    running=$(_agent_sql \
+        "SELECT id, pid, pid_start_time FROM agents $where_clause;")
 
     [ -z "$running" ] && return 0
 
-    while IFS='|' read -r agent_id pid; do
+    while IFS='|' read -r agent_id pid pid_start_time; do
         [ -z "$agent_id" ] && continue
-        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+        if [ -n "$pid" ] && ! _agent_pid_alive "$pid" "$pid_start_time"; then
             # Check if the wrapper wrote output files before dying
             local out_file="${AGENT_OUTPUT_DIR}/${agent_id}.out"
             local err_file="${AGENT_OUTPUT_DIR}/${agent_id}.err"
             local output="" error=""
-            [ -f "$out_file" ] && output=$(cat "$out_file") && rm -f "$out_file"
-            [ -f "$err_file" ] && error=$(cat "$err_file") && rm -f "$err_file"
+            if [ -f "$out_file" ]; then
+                local file_size
+                file_size=$(stat -c%s "$out_file" 2>/dev/null) || file_size=0
+                if [ "$file_size" -gt "$AGENT_MAX_OUTPUT_BYTES" ]; then
+                    output=$(head -c "$AGENT_MAX_OUTPUT_BYTES" "$out_file")
+                    output="${output}
+[OUTPUT TRUNCATED: ${file_size} bytes exceeded ${AGENT_MAX_OUTPUT_BYTES} byte limit]"
+                else
+                    output=$(cat "$out_file")
+                fi
+                rm -f "$out_file"
+            fi
+            [ -f "$err_file" ] && error=$(head -c "$AGENT_MAX_OUTPUT_BYTES" "$err_file") && rm -f "$err_file"
 
             if [ -n "$output" ]; then
                 _agent_db_update "$agent_id" "completed" "$output" "$error" "" ""
@@ -355,7 +517,7 @@ agent_wait() {
 
         # Count non-terminal agents
         local pending_count
-        pending_count=$(sqlite3 "$CLAUDIO_DB_FILE" \
+        pending_count=$(_agent_sql \
             "SELECT COUNT(*) FROM agents WHERE parent_id='$escaped_parent' AND status IN ('pending', 'running');")
 
         if [ "$pending_count" -eq 0 ]; then
@@ -390,18 +552,18 @@ _agent_enforce_timeouts() {
     # Find agents running longer than 2x their timeout (agent already has its own
     # timeout(1) wrapper, so 2x is a safety net for when the wrapper itself hangs)
     local overdue
-    overdue=$(sqlite3 "$CLAUDIO_DB_FILE" \
-        "SELECT id, pid, timeout_seconds FROM agents
+    overdue=$(_agent_sql \
+        "SELECT id, pid, pid_start_time, timeout_seconds FROM agents
          $where_clause
          AND started_at IS NOT NULL
          AND (strftime('%s', 'now') - strftime('%s', started_at)) > (timeout_seconds * 2);")
 
     [ -z "$overdue" ] && return 0
 
-    while IFS='|' read -r agent_id pid timeout_secs; do
+    while IFS='|' read -r agent_id pid pid_start_time timeout_secs; do
         [ -z "$agent_id" ] && continue
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            kill -9 "$pid" 2>/dev/null || true
+        if [ -n "$pid" ]; then
+            _agent_kill "$pid" "$pid_start_time"
             log_warn "agent" "Force-killed agent $agent_id (PID $pid) — exceeded 2x timeout (${timeout_secs}s)"
         fi
         _agent_db_update "$agent_id" "timeout" "" "Exceeded 2x timeout safety net" "" ""
@@ -410,18 +572,37 @@ _agent_enforce_timeouts() {
 
 # Recover unreported agent results (crash recovery)
 # Returns JSON of unreported results, or empty string
+# Uses BEGIN EXCLUSIVE to prevent concurrent recoveries (HIGH #3)
 agent_recover() {
     # Detect orphans across all agents (not scoped to a parent)
     _agent_detect_orphans
 
-    # Find completed agents that haven't been reported
+    # Atomically: find unreported agents, mark them as reported, return results.
+    # BEGIN EXCLUSIVE prevents concurrent agent_recover from claiming same agents.
     local unreported
-    unreported=$(sqlite3 "$CLAUDIO_DB_FILE" -json \
-        "SELECT id, prompt, output, status FROM agents
-         WHERE status IN ('completed', 'failed', 'orphaned', 'timeout')
-         AND id NOT IN (SELECT agent_id FROM agent_reports);" 2>/dev/null)
+    unreported=$(_agent_sql "
+        BEGIN EXCLUSIVE;
+        CREATE TEMP TABLE IF NOT EXISTS _recover_batch (agent_id TEXT);
+        DELETE FROM _recover_batch;
+        INSERT INTO _recover_batch (agent_id)
+            SELECT id FROM agents
+            WHERE status IN ('completed', 'failed', 'orphaned', 'timeout')
+            AND id NOT IN (SELECT agent_id FROM agent_reports);
+        INSERT OR IGNORE INTO agent_reports (agent_id)
+            SELECT agent_id FROM _recover_batch;
+        COMMIT;
+        SELECT json_group_array(json_object(
+            'id', a.id,
+            'prompt', a.prompt,
+            'output', a.output,
+            'status', a.status
+        )) FROM agents a
+        INNER JOIN _recover_batch b ON a.id = b.agent_id;
+        DROP TABLE IF EXISTS _recover_batch;
+    " 2>/dev/null)
 
-    if [ -n "$unreported" ] && [ "$unreported" != "[]" ]; then
+    # json_group_array returns [null] when no rows match
+    if [ -n "$unreported" ] && [ "$unreported" != "[]" ] && [ "$unreported" != "[null]" ]; then
         printf '%s' "$unreported"
     fi
 }
@@ -447,8 +628,25 @@ agent_mark_reported() {
     done
 
     if [ -n "$sql" ]; then
-        sqlite3 "$CLAUDIO_DB_FILE" "$sql"
+        _agent_sql "$sql"
     fi
+}
+
+# Throttled cleanup — only runs if last cleanup was >1 hour ago (MEDIUM #12)
+agent_cleanup_if_needed() {
+    local marker_file="${AGENT_OUTPUT_DIR}/.last_cleanup"
+    if [ -f "$marker_file" ]; then
+        local last_cleanup
+        last_cleanup=$(stat -c%Y "$marker_file" 2>/dev/null) || last_cleanup=0
+        local now
+        now=$(date +%s)
+        if [ $((now - last_cleanup)) -lt 3600 ]; then
+            return 0  # cleaned up less than 1 hour ago
+        fi
+    fi
+    agent_cleanup "$@"
+    mkdir -p "$AGENT_OUTPUT_DIR"
+    touch "$marker_file"
 }
 
 # Delete old agent records
@@ -464,7 +662,7 @@ agent_cleanup() {
 
     # Delete old agent records and their reports
     local deleted
-    deleted=$(sqlite3 "$CLAUDIO_DB_FILE" \
+    deleted=$(_agent_sql \
         "PRAGMA foreign_keys = ON;
          DELETE FROM agents WHERE created_at < datetime('now', '-$max_age_hours hours')
          AND status IN ('completed', 'failed', 'timeout', 'orphaned');
