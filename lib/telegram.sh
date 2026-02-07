@@ -572,6 +572,11 @@ Read this file and summarize its contents."
     if [ -n "$response" ]; then
         history_add "assistant" "$response"
 
+        # Consolidate memories post-response (background — doesn't block further processing)
+        if type memory_consolidate &>/dev/null; then
+            (memory_consolidate || true) &
+        fi
+
         # Respond with voice when the user sent a voice message
         # (ELEVENLABS_API_KEY is guaranteed non-empty here — checked at voice download)
         if [ "$has_voice" = true ]; then

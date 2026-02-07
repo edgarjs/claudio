@@ -8,11 +8,21 @@ claude_run() {
     local context
     context=$(history_get_context)
 
+    # Retrieve relevant memories
+    local memories=""
+    if type memory_retrieve &>/dev/null; then
+        memories=$(memory_retrieve "$prompt") || true
+    fi
+
     local full_prompt=""
+    if [ -n "$memories" ]; then
+        full_prompt="$memories"$'\n\n---\n\n'
+    fi
     if [ -n "$context" ]; then
-        printf -v full_prompt '%s---\n\nNow respond to this new message:\n\n%s' "$context" "$prompt"
+        full_prompt+="$context"
+        full_prompt+=$'\n\n---\n\n'"Now respond to this new message:"$'\n\n'"$prompt"
     else
-        full_prompt="$prompt"
+        full_prompt+="$prompt"
     fi
 
     local -a claude_args=(
