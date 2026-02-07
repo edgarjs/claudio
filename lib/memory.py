@@ -107,6 +107,7 @@ def init_schema():
             );
             CREATE INDEX IF NOT EXISTS idx_accesses_memory ON memory_accesses(memory_id, memory_type);
             CREATE INDEX IF NOT EXISTS idx_accesses_time ON memory_accesses(accessed_at);
+            CREATE INDEX IF NOT EXISTS idx_accesses_memory_time ON memory_accesses(memory_id, memory_type, accessed_at);
 
             CREATE TABLE IF NOT EXISTS memory_meta (
                 key TEXT PRIMARY KEY,
@@ -166,31 +167,35 @@ def _check_model_change(conn: sqlite3.Connection):
 
 
 def _reembed_stale_memories():
-    """Re-embed memories that have NULL embeddings (e.g. after model change)."""
+    """Re-embed memories that have NULL embeddings (e.g. after model change).
+
+    Processes in batches of 100 to avoid loading all memories into memory at once.
+    """
     conn = get_db()
     try:
         total = 0
         for table in ("episodic_memories", "semantic_memories", "procedural_memories"):
-            rows = conn.execute(
-                f"SELECT id, content FROM {table} WHERE embedding IS NULL"
-            ).fetchall()
-            if not rows:
-                continue
+            while True:
+                rows = conn.execute(
+                    f"SELECT id, content FROM {table} WHERE embedding IS NULL LIMIT 100"
+                ).fetchall()
+                if not rows:
+                    break
 
-            contents = [row["content"] for row in rows]
-            embeddings = embed(contents)
-            if not embeddings:
-                break  # Model not available
+                contents = [row["content"] for row in rows]
+                embeddings = embed(contents)
+                if not embeddings:
+                    return  # Model not available, stop entirely
 
-            for row, vec in zip(rows, embeddings):
-                conn.execute(
-                    f"UPDATE {table} SET embedding=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (embedding_to_blob(vec), row["id"]),
-                )
-            total += len(rows)
+                for row, vec in zip(rows, embeddings):
+                    conn.execute(
+                        f"UPDATE {table} SET embedding=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (embedding_to_blob(vec), row["id"]),
+                    )
+                total += len(rows)
+                conn.commit()
 
         if total:
-            conn.commit()
             print(f"Re-embedded {total} memories with new model", file=sys.stderr)
     finally:
         conn.close()
@@ -278,6 +283,43 @@ def base_level_activation(conn: sqlite3.Connection, memory_id: str, memory_type:
         total += t ** (-DECAY_PARAM)
 
     return math.log(total) if total > 0 else -float("inf")
+
+
+def batch_base_level_activation(conn: sqlite3.Connection, memory_ids: list[str], memory_type: str) -> dict[str, float]:
+    """Compute ACT-R activation for multiple memories in a single query."""
+    if not memory_ids:
+        return {}
+
+    placeholders = ",".join("?" for _ in memory_ids)
+    rows = conn.execute(
+        f"SELECT memory_id, accessed_at FROM memory_accesses "
+        f"WHERE memory_id IN ({placeholders}) AND memory_type=? "
+        f"ORDER BY memory_id, accessed_at DESC",
+        (*memory_ids, memory_type),
+    ).fetchall()
+
+    # Group accesses by memory_id (limited to 100 per memory)
+    accesses: dict[str, list] = {mid: [] for mid in memory_ids}
+    for row in rows:
+        mid = row["memory_id"]
+        if mid in accesses and len(accesses[mid]) < 100:
+            accesses[mid].append(row["accessed_at"])
+
+    now = datetime.now(timezone.utc)
+    result = {}
+    for mid in memory_ids:
+        timestamps = accesses.get(mid, [])
+        if not timestamps:
+            result[mid] = -float("inf")
+            continue
+        total = 0.0
+        for ts in timestamps:
+            delta = (now - parse_timestamp(ts)).total_seconds()
+            t = max(delta, 1.0)
+            total += t ** (-DECAY_PARAM)
+        result[mid] = math.log(total) if total > 0 else -float("inf")
+
+    return result
 
 
 def normalize_activation(activation: float) -> float:
@@ -424,15 +466,18 @@ def retrieve(query: str, top_k: int = 5, memory_types: list[str] | None = None) 
             sim_scored.sort(key=lambda x: x[0], reverse=True)
             top_candidates = sim_scored[:PRE_FILTER_PER_TYPE]
 
-            # Phase 2: compute activation only for pre-filtered candidates
+            # Phase 2: compute activation for pre-filtered candidates (batched)
+            candidate_ids = [row["id"] for _, row in top_candidates]
+            activations = batch_base_level_activation(conn, candidate_ids, mtype)
+
             for sim, row in top_candidates:
-                # Apply reinforcement decay for semantic memories (compute once, reuse)
+                # Apply reinforcement decay for semantic memories
                 if mtype == "semantic":
                     decayed_conf = reinforcement_decay(conn, row["id"], row["confidence"], row["created_at"])
                     if decayed_conf < CONFIDENCE_FLOOR:
                         continue
 
-                activation = base_level_activation(conn, row["id"], mtype)
+                activation = activations.get(row["id"], -float("inf"))
                 norm_act = normalize_activation(activation)
 
                 score = W_SIM * sim + W_ACT * norm_act
@@ -613,7 +658,7 @@ def _get_existing_memories_context(conn: sqlite3.Connection, conversation: str) 
 
     query_emb = embeddings[0]
     rows = conn.execute(
-        "SELECT id, content, category FROM semantic_memories "
+        "SELECT id, content, category, embedding FROM semantic_memories "
         "WHERE embedding IS NOT NULL ORDER BY updated_at DESC LIMIT 100"
     ).fetchall()
 
@@ -667,13 +712,13 @@ Respond with valid JSON matching this schema. No other text:
   ]
 }"""
 
+    # Truncate conversation before XML wrapping to avoid splitting tags
+    if len(conversation) > 25000:
+        conversation = conversation[:25000] + "\n[TRUNCATED]"
+
     user_prompt = f"<conversation>\n{conversation}\n</conversation>"
     if existing_context:
         user_prompt = f"<existing-memories>\n{existing_context}\n</existing-memories>\n\n{user_prompt}"
-
-    # Truncate to avoid token limits
-    if len(user_prompt) > 30000:
-        user_prompt = user_prompt[:30000] + "\n[TRUNCATED]"
 
     try:
         # Find claude binary
@@ -812,6 +857,7 @@ def _store_extracted(conn: sqlite3.Connection, extracted: dict):
 def _check_dedup(conn: sqlite3.Connection, memory_type: str, content: str, vec: list[float] | None) -> str | dict:
     """Check if a new memory duplicates or contradicts an existing one.
     Returns 'new' (store), 'skip' (duplicate), or {'action': 'supersede', 'old_id': ...}.
+    LLM verification calls are capped at 3 per invocation to bound latency.
     """
     if vec is None:
         return "new"
@@ -822,6 +868,7 @@ def _check_dedup(conn: sqlite3.Connection, memory_type: str, content: str, vec: 
         f"WHERE embedding IS NOT NULL ORDER BY updated_at DESC LIMIT 200"
     ).fetchall()
 
+    llm_calls = 0
     for row in rows:
         mem_emb = blob_to_embedding(row["embedding"])
         sim = cosine_similarity(vec, mem_emb)
@@ -829,8 +876,9 @@ def _check_dedup(conn: sqlite3.Connection, memory_type: str, content: str, vec: 
         if sim > NEAR_DUPLICATE_THRESHOLD:
             return "skip"  # Near-duplicate, don't store
 
-        if sim > CONTRADICTION_CANDIDATE_THRESHOLD and memory_type == "semantic":
+        if sim > CONTRADICTION_CANDIDATE_THRESHOLD and memory_type == "semantic" and llm_calls < 3:
             # Use LLM to verify contradiction
+            llm_calls += 1
             relationship = _verify_relationship(row["content"], content)
             if relationship == "DUPLICATE":
                 return "skip"
@@ -1005,7 +1053,11 @@ def _merge_near_duplicates(conn: sqlite3.Connection, threshold: float):
 
 def migrate_markdown(filepath: str):
     """Migrate MEMORY.md content into semantic/procedural memories."""
-    content = Path(filepath).read_text()
+    p = Path(filepath).resolve()
+    if not p.is_file():
+        print(f"Error: file not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+    content = p.read_text()
     conn = get_db()
     try:
         # Parse sections and extract facts
@@ -1078,11 +1130,16 @@ def migrate_history():
 
         print(f"Found {len(conversations)} conversations to process")
 
+        skipped = 0
+        consolidated = 0
         for i, conv in enumerate(conversations):
             if not should_consolidate(conv):
+                skipped += 1
                 continue
 
-            print(f"Consolidating conversation {i + 1}/{len(conversations)} ({len(conv)} messages)...")
+            consolidated += 1
+            print(f"Consolidating conversation {i + 1}/{len(conversations)} ({len(conv)} messages)...",
+                  file=sys.stderr)
 
             conversation_text = "\n".join(
                 f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
@@ -1099,7 +1156,7 @@ def migrate_history():
             _update_last_consolidated(conn, rows[-1]["id"])
 
         conn.commit()
-        print("History migration complete")
+        print(f"History migration complete: {consolidated} consolidated, {skipped} skipped")
     finally:
         conn.close()
 
