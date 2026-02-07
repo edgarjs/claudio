@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.1] - 2026-02-07
+
+### Changed
+
+- Restore `MAX_HISTORY_LINES` as configurable variable with default 20, overridable via `service.env` (#34)
+
+### Fixed
+
+- Consolidation infinite retry loop: always advance `last_consolidated_id` even if extraction fails, preventing unbounded API credit burn (#33)
+- JSON arg overflow: pass large data via stdin instead of CLI arg to avoid exceeding `MAX_ARG_STRLEN` (#33)
+- SQLite inconsistency: add WAL mode + `busy_timeout` to usage persistence (#33)
+- Consolidation lock race: use PID file inside lock dir to detect dead holders (#33)
+- Track token usage in agents via `--output-format json` so agent costs appear in `token_usage` table (#33)
+- Remove dead code and redundant `CREATE TABLE` statements (#33)
+
 ## [1.2.0] - 2026-02-07
 
 ### Added
