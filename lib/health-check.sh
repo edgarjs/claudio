@@ -60,7 +60,7 @@ _send_alert() {
         return 1
     fi
     curl -s --connect-timeout 5 --max-time 10 \
-        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        --config <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN") \
         -d "chat_id=${TELEGRAM_CHAT_ID}" \
         --data-urlencode "text=${message}" \
         > /dev/null 2>&1 || true

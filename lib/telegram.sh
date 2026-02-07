@@ -226,8 +226,9 @@ _telegram_download_raw() {
     fi
 
     # Download the file (--max-redirs 0 prevents redirect-based attacks)
-    local download_url="https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file_path}"
-    if ! curl -sf --connect-timeout 10 --max-time 60 --max-redirs 0 -o "$output_path" "$download_url"; then
+    # Use --config to avoid exposing bot token in process list (ps aux)
+    if ! curl -sf --connect-timeout 10 --max-time 60 --max-redirs 0 -o "$output_path" \
+        --config <(printf 'url = "https://api.telegram.org/file/bot%s/%s"\n' "$TELEGRAM_BOT_TOKEN" "$file_path"); then
         log_error "telegram" "Failed to download ${label}: $file_path"
         return 1
     fi
