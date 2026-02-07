@@ -39,19 +39,21 @@ def _retry(func, db_path, *args):
 
 def cmd_init(db_path):
     conn = sqlite3.connect(db_path)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
-            content TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)"
         )
-    """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)"
-    )
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _do_add(db_path, role, content):
@@ -59,11 +61,13 @@ def _do_add(db_path, role, content):
         print(f"db_add: invalid role '{role}'", file=sys.stderr)
         sys.exit(1)
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        "INSERT INTO messages (role, content) VALUES (?, ?)", (role, content)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO messages (role, content) VALUES (?, ?)", (role, content)
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def cmd_add(db_path, role, content):
@@ -72,14 +76,16 @@ def cmd_add(db_path, role, content):
 
 def _do_get_context(db_path, limit):
     conn = sqlite3.connect(db_path)
-    rows = conn.execute(
-        "SELECT role, content FROM "
-        "(SELECT role, content, id FROM messages ORDER BY id DESC LIMIT ?) "
-        "ORDER BY id ASC",
-        (limit,),
-    ).fetchall()
-    conn.close()
-    return rows
+    try:
+        rows = conn.execute(
+            "SELECT role, content FROM "
+            "(SELECT role, content, id FROM messages ORDER BY id DESC LIMIT ?) "
+            "ORDER BY id ASC",
+            (limit,),
+        ).fetchall()
+        return rows
+    finally:
+        conn.close()
 
 
 def cmd_get_context(db_path, limit_str):
@@ -111,9 +117,11 @@ def cmd_get_context(db_path, limit_str):
 def cmd_clear(db_path):
     def _do(db_path):
         conn = sqlite3.connect(db_path)
-        conn.execute("DELETE FROM messages")
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute("DELETE FROM messages")
+            conn.commit()
+        finally:
+            conn.close()
 
     _retry(_do, db_path)
 
@@ -121,9 +129,11 @@ def cmd_clear(db_path):
 def cmd_count(db_path):
     def _do(db_path):
         conn = sqlite3.connect(db_path)
-        count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-        conn.close()
-        return count
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+            return count
+        finally:
+            conn.close()
 
     print(_retry(_do, db_path))
 
