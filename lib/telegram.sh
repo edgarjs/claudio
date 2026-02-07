@@ -626,10 +626,9 @@ Read this file and summarize its contents."
 
                 if tts_convert "$response" "$tts_file"; then
                     if ! telegram_send_voice "$WEBHOOK_CHAT_ID" "$tts_file" "$message_id"; then
-                        log_error "telegram" "Failed to send voice message, sending text only"
+                        log_error "telegram" "Failed to send voice message, falling back to text"
+                        telegram_send_message "$WEBHOOK_CHAT_ID" "$response" "$message_id"
                     fi
-                    # Also send text as follow-up for reference
-                    telegram_send_message "$WEBHOOK_CHAT_ID" "$response"
                 else
                     # TTS failed, fall back to text only
                     log_error "telegram" "TTS conversion failed, sending text only"
