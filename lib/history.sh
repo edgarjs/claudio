@@ -14,5 +14,5 @@ history_add() {
 }
 
 history_get_context() {
-    db_get_context 100
+    db_get_context "$MAX_HISTORY_LINES"
 }

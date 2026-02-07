@@ -30,6 +30,7 @@ AGENT_MAX_CONTEXT_BYTES="${AGENT_MAX_CONTEXT_BYTES:-262144}"
 MEMORY_ENABLED="${MEMORY_ENABLED:-1}"
 MEMORY_EMBEDDING_MODEL="${MEMORY_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
 MEMORY_CONSOLIDATION_MODEL="${MEMORY_CONSOLIDATION_MODEL:-haiku}"
+MAX_HISTORY_LINES="${MAX_HISTORY_LINES:-20}"
 
 # Safe env file loader: only accepts KEY=value or KEY="value" lines
 # where KEY matches [A-Z_][A-Z0-9_]*. Reverses _env_quote escaping
