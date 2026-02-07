@@ -3,6 +3,7 @@
 # Tests for claude.sh — process group isolation
 
 setup() {
+    export TMPDIR="$BATS_TEST_TMPDIR"
     export CLAUDIO_PATH="$BATS_TEST_TMPDIR"
     export CLAUDIO_DB_FILE="$BATS_TEST_TMPDIR/test.db"
     export CLAUDIO_PROMPT_FILE="$BATS_TEST_TMPDIR/SYSTEM_PROMPT.md"
@@ -61,6 +62,52 @@ setup() {
     local leftover
     leftover=$(find "$BATS_TEST_TMPDIR" -maxdepth 1 -name "tmp.*" -type f 2>/dev/null | wc -l)
     [ "$leftover" -eq 0 ]
+}
+
+# Helper: call claude_run with setsid hidden to force perl POSIX::setsid fallback.
+# Overrides the 'command' builtin so 'command -v setsid' returns false,
+# without removing directories from PATH (which would break rm, chmod, etc.).
+# Safe because 'run' executes in a subshell — the override doesn't leak.
+_claude_run_perl_fallback() {
+    command() {
+        if [ "$1" = "-v" ] && [ "$2" = "setsid" ]; then
+            return 1
+        fi
+        builtin command "$@"
+    }
+    claude_run "$@"
+}
+
+@test "perl fallback captures output when setsid is unavailable" {
+    command -v perl > /dev/null 2>&1 || skip "perl not available"
+
+    run _claude_run_perl_fallback "hello"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"response from claude"* ]]
+}
+
+@test "perl fallback survives child doing kill 0" {
+    command -v perl > /dev/null 2>&1 || skip "perl not available"
+
+    printf '#!/bin/sh\necho "partial output"\nkill 0\necho "after kill"\n' \
+        > "$BATS_TEST_TMPDIR/.local/bin/claude"
+    chmod +x "$BATS_TEST_TMPDIR/.local/bin/claude"
+
+    run _claude_run_perl_fallback "hello"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"partial output"* ]]
+}
+
+@test "perl fallback survives child doing kill -TERM 0" {
+    command -v perl > /dev/null 2>&1 || skip "perl not available"
+
+    printf '#!/bin/sh\necho "before signal"\nkill -TERM 0\n' \
+        > "$BATS_TEST_TMPDIR/.local/bin/claude"
+    chmod +x "$BATS_TEST_TMPDIR/.local/bin/claude"
+
+    run _claude_run_perl_fallback "hello"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"before signal"* ]]
 }
 
 @test "claude_run uses setsid on Linux" {
