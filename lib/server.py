@@ -213,7 +213,7 @@ class Handler(BaseHTTPRequestHandler):
             if length > MAX_BODY_SIZE:
                 self._respond(413, {"error": "payload too large"})
                 return
-            body = self.rfile.read(length).decode("utf-8") if length else ""
+            body = self.rfile.read(length).decode("utf-8", errors="replace") if length else ""
             self._respond(200, {"ok": True})
             enqueue_webhook(body)
         else:
@@ -230,7 +230,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def check_health():
     """Verify system health by checking Telegram webhook status."""
-    now = time.time()
+    now = time.monotonic()
     if _health_cache["result"] and 0 <= (now - _health_cache["time"]) < HEALTH_CACHE_TTL:
         return _health_cache["result"]
 
@@ -287,7 +287,7 @@ def check_health():
     # immediately so recovery is detected without waiting for TTL expiry
     if status == "healthy":
         _health_cache["result"] = result
-        _health_cache["time"] = time.time()
+        _health_cache["time"] = time.monotonic()
     else:
         _health_cache["result"] = None
     return result
@@ -381,6 +381,7 @@ def _start_cloudflared():
         stderr=log_fh,
         start_new_session=True,
     )
+    log_fh.close()  # Parent doesn't need the fd after Popen inherits it
     sys.stderr.write(f"[cloudflared] Named tunnel '{tunnel_name}' started (pid {proc.pid}).\n")
     return proc
 

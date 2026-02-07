@@ -24,10 +24,10 @@ teardown() {
 
 create_env_file() {
     cat > "$CLAUDIO_PATH/service.env" << EOF
-PORT=8421
-TELEGRAM_BOT_TOKEN=test-token-123
-WEBHOOK_URL=https://test.example.com
-WEBHOOK_SECRET=secret123
+PORT="8421"
+TELEGRAM_BOT_TOKEN="test-token-123"
+WEBHOOK_URL="https://test.example.com"
+WEBHOOK_SECRET="secret123"
 EOF
 }
 
@@ -113,7 +113,7 @@ EOF
 
 @test "health-check uses PORT from service.env" {
     cat > "$CLAUDIO_PATH/service.env" << 'EOF'
-PORT=9999
+PORT="9999"
 EOF
 
     # Mock curl that checks the port
@@ -136,7 +136,7 @@ EOF
 
 @test "health-check uses default PORT 8421 when not set" {
     cat > "$CLAUDIO_PATH/service.env" << 'EOF'
-TELEGRAM_BOT_TOKEN=test
+TELEGRAM_BOT_TOKEN="test"
 EOF
 
     # Mock curl that checks the port

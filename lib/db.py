@@ -8,8 +8,10 @@ Usage from bash:
     python3 lib/db.py clear <db_path>
     python3 lib/db.py count <db_path>
     python3 lib/db.py exec <db_path> <sql> [param1 param2 ...]
+    python3 lib/db.py query_json <db_path> <sql> [param1 param2 ...]
 """
 
+import json
 import sqlite3
 import sys
 import time
@@ -37,19 +39,21 @@ def _retry(func, db_path, *args):
 
 def cmd_init(db_path):
     conn = sqlite3.connect(db_path)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
-            content TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)"
         )
-    """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)"
-    )
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _do_add(db_path, role, content):
@@ -57,11 +61,13 @@ def _do_add(db_path, role, content):
         print(f"db_add: invalid role '{role}'", file=sys.stderr)
         sys.exit(1)
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        "INSERT INTO messages (role, content) VALUES (?, ?)", (role, content)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO messages (role, content) VALUES (?, ?)", (role, content)
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def cmd_add(db_path, role, content):
@@ -70,14 +76,16 @@ def cmd_add(db_path, role, content):
 
 def _do_get_context(db_path, limit):
     conn = sqlite3.connect(db_path)
-    rows = conn.execute(
-        "SELECT role, content FROM "
-        "(SELECT role, content, id FROM messages ORDER BY id DESC LIMIT ?) "
-        "ORDER BY id ASC",
-        (limit,),
-    ).fetchall()
-    conn.close()
-    return rows
+    try:
+        rows = conn.execute(
+            "SELECT role, content FROM "
+            "(SELECT role, content, id FROM messages ORDER BY id DESC LIMIT ?) "
+            "ORDER BY id ASC",
+            (limit,),
+        ).fetchall()
+        return rows
+    finally:
+        conn.close()
 
 
 def cmd_get_context(db_path, limit_str):
@@ -109,9 +117,11 @@ def cmd_get_context(db_path, limit_str):
 def cmd_clear(db_path):
     def _do(db_path):
         conn = sqlite3.connect(db_path)
-        conn.execute("DELETE FROM messages")
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute("DELETE FROM messages")
+            conn.commit()
+        finally:
+            conn.close()
 
     _retry(_do, db_path)
 
@@ -119,27 +129,49 @@ def cmd_clear(db_path):
 def cmd_count(db_path):
     def _do(db_path):
         conn = sqlite3.connect(db_path)
-        count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-        conn.close()
-        return count
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+            return count
+        finally:
+            conn.close()
 
     print(_retry(_do, db_path))
 
 
 def _do_exec(db_path, sql, params):
     conn = sqlite3.connect(db_path)
-    cursor = conn.execute(sql, params)
-    rows = cursor.fetchall()
-    conn.commit()
-    if rows:
-        for row in rows:
-            print("|".join(str(col) for col in row))
-    conn.close()
+    try:
+        cursor = conn.execute(sql, params)
+        rows = cursor.fetchall()
+        conn.commit()
+        if rows:
+            for row in rows:
+                print("|".join("" if col is None else str(col) for col in row))
+    finally:
+        conn.close()
 
 
 def cmd_exec(db_path, sql, params):
     """Execute arbitrary SQL with parameterized values."""
     _retry(_do_exec, db_path, sql, params)
+
+
+def _do_query_json(db_path, sql, params):
+    """Execute a SELECT and return results as JSON array of objects."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(sql, params).fetchall()
+        result = [dict(row) for row in rows]
+        return json.dumps(result)
+    finally:
+        conn.close()
+
+
+def cmd_query_json(db_path, sql, params):
+    """Execute a SELECT with parameterized values and output JSON."""
+    result = _retry(_do_query_json, db_path, sql, params)
+    print(result)
 
 
 def _do_agent_insert(db_path, agent_id, parent_id, prompt, model,
@@ -207,6 +239,11 @@ def main():
             print("Usage: exec <sql> [param1 param2 ...]", file=sys.stderr)
             sys.exit(1)
         cmd_exec(db_path, args[0], tuple(args[1:]))
+    elif command == "query_json":
+        if len(args) < 1:
+            print("Usage: query_json <sql> [param1 param2 ...]", file=sys.stderr)
+            sys.exit(1)
+        cmd_query_json(db_path, args[0], tuple(args[1:]))
     elif command == "agent_insert":
         cmd_agent_insert(db_path, args)
     else:

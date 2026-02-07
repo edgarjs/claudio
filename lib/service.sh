@@ -84,6 +84,7 @@ deps_install() {
             case "$arch" in
                 x86_64) arch="amd64" ;;
                 aarch64|arm64) arch="arm64" ;;
+                armv7l) arch="arm" ;;
             esac
             local url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}"
             echo "Downloading from ${url}..."

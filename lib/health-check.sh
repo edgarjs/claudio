@@ -17,16 +17,38 @@ FAIL_COUNT_FILE="$CLAUDIO_PATH/.restart_fail_count"
 MIN_RESTART_INTERVAL=180  # 3 minutes in seconds
 MAX_RESTART_ATTEMPTS=3
 
+# Safe env file loader: only accepts KEY=value or KEY="value" lines
+# where KEY matches [A-Z_][A-Z0-9_]*. Reverses _env_quote escaping
+# for double-quoted values. Defined here because health-check.sh is standalone.
+_safe_load_env() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        if [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=\"(.*)\"$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[2]}"
+            val="${val//\\n/$'\n'}"
+            val="${val//\\\`/\`}"
+            val="${val//\\\$/\$}"
+            val="${val//\\\"/\"}"
+            val="${val//\\\\/\\}"
+            export "$key=$val"
+        elif [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=([^[:space:]]*)$ ]]; then
+            export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+        else
+            continue
+        fi
+    done < "$env_file"
+}
+
 # Load environment for PORT, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 if [ ! -f "$CLAUDIO_ENV_FILE" ]; then
     log_error "health-check" "Environment file not found: $CLAUDIO_ENV_FILE"
     exit 1
 fi
 
-set -a
-# shellcheck source=/dev/null
-source "$CLAUDIO_ENV_FILE"
-set +a
+_safe_load_env "$CLAUDIO_ENV_FILE"
 
 PORT="${PORT:-8421}"
 
@@ -38,7 +60,7 @@ _send_alert() {
         return 1
     fi
     curl -s --connect-timeout 5 --max-time 10 \
-        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        --config <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN") \
         -d "chat_id=${TELEGRAM_CHAT_ID}" \
         --data-urlencode "text=${message}" \
         > /dev/null 2>&1 || true

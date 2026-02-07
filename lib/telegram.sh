@@ -7,21 +7,7 @@ TELEGRAM_API="https://api.telegram.org/bot"
 
 # Strip XML-like tags that could be used for prompt injection
 _sanitize_for_prompt() {
-    sed \
-        -e 's/<system-reminder>/[quoted text]/g' \
-        -e 's/<\/system-reminder>/[quoted text]/g' \
-        -e 's/<system>/[quoted text]/g' \
-        -e 's/<\/system>/[quoted text]/g' \
-        -e 's/<human>/[quoted text]/g' \
-        -e 's/<\/human>/[quoted text]/g' \
-        -e 's/<assistant>/[quoted text]/g' \
-        -e 's/<\/assistant>/[quoted text]/g' \
-        -e 's/<tool_use>/[quoted text]/g' \
-        -e 's/<\/tool_use>/[quoted text]/g' \
-        -e 's/<tool_result>/[quoted text]/g' \
-        -e 's/<\/tool_result>/[quoted text]/g' \
-        -e 's/<function_calls>/[quoted text]/g' \
-        -e 's/<\/function_calls>/[quoted text]/g'
+    sed -E 's/<\/?[a-zA-Z_][a-zA-Z0-9_-]*[^>]*>/[quoted text]/g'
 }
 
 telegram_api() {
@@ -226,8 +212,9 @@ _telegram_download_raw() {
     fi
 
     # Download the file (--max-redirs 0 prevents redirect-based attacks)
-    local download_url="https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file_path}"
-    if ! curl -sf --connect-timeout 10 --max-time 60 --max-redirs 0 -o "$output_path" "$download_url"; then
+    # Use --config to avoid exposing bot token in process list (ps aux)
+    if ! curl -sf --connect-timeout 10 --max-time 60 --max-redirs 0 -o "$output_path" \
+        --config <(printf 'url = "https://api.telegram.org/file/bot%s/%s"\n' "$TELEGRAM_BOT_TOKEN" "$file_path"); then
         log_error "telegram" "Failed to download ${label}: $file_path"
         return 1
     fi
@@ -589,9 +576,12 @@ Read this file and summarize its contents."
     # is killed (e.g., SIGKILL), which would prevent the RETURN trap from firing
     (
         parent_pid=$$
-        while kill -0 "$parent_pid" 2>/dev/null; do
+        max_iterations=60  # Cap at 15 minutes (60 * 15s)
+        i=0
+        while kill -0 "$parent_pid" 2>/dev/null && [ "$i" -lt "$max_iterations" ]; do
             telegram_send_typing "$WEBHOOK_CHAT_ID"
             sleep 15
+            i=$((i + 1))
         done
     ) &
     local typing_pid=$!

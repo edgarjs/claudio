@@ -62,10 +62,11 @@ cd claudio
 
 This will:
 
-- Install dependencies (`sqlite3`, `jq`, `cloudflared`) if not already present
+- Install dependencies (`sqlite3`, `jq`, `cloudflared`, `fastembed`) if not already present
 - Create a symlink at `~/.local/bin/claudio` so you can run `claudio` from anywhere
 - Set up a Cloudflare **named tunnel** (permanent URL, requires a free Cloudflare account)
 - Install a systemd/launchd service
+- Enable loginctl linger on Linux (so the service survives logout on headless systems)
 
 > **Note:** If `~/.local/bin` is not in your PATH, you'll need to add it. See the installation output for instructions.
 
@@ -83,7 +84,7 @@ The setup wizard will confirm when it receives the message and finish. Once done
 
 > For security, only the `chat_id` captured during setup is authorized to send messages.
 
-> A cron job runs every minute to verify the webhook is registered and re-registers it if needed. If the server is unreachable, the health check auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After 3 restart attempts without recovery, it sends a Telegram alert and stops retrying until the service recovers. State files: `$HOME/.claudio/.last_restart_attempt` (throttle), `$HOME/.claudio/.restart_fail_count` (attempt counter) — delete these to reset.
+> A cron job runs every minute to monitor the webhook endpoint. It verifies the webhook is registered and re-registers it if needed. If the server is unreachable, it auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After exhausting restart attempts without recovery, it sends a Telegram alert and stops retrying until the server responds with HTTP 200. To reset the restart counter, delete `$HOME/.claudio/.last_restart_attempt` and `$HOME/.claudio/.restart_fail_count`.
 
 ### Status
 
@@ -100,6 +101,8 @@ To update Claudio to the latest stable release:
 ```bash
 claudio update
 ```
+
+> On Linux, `claudio update` also enables loginctl linger for existing installs upgrading to this version.
 
 ### Logs
 
@@ -129,6 +132,8 @@ If you want to remove the `$HOME/.claudio` directory completely, run:
 ```bash
 claudio uninstall --purge
 ```
+
+> On Linux, uninstall disables loginctl linger if no other user services remain enabled.
 
 ---
 
@@ -168,7 +173,7 @@ Claudio can spawn independent `claude -p` subprocesses for parallel work (review
 
 **How it works:**
 
-- `agent_spawn` launches each agent in an independent process session (`setsid` on Linux, `POSIX::setsid` via perl on macOS). The agent runs `claude --p` with the given prompt and writes its output to SQLite when done.
+- `agent_spawn` launches each agent in an independent process session (`setsid` on Linux, `POSIX::setsid` via perl on macOS). The agent runs `claude -p` with the given prompt and writes its output to SQLite when done.
 - `agent_wait` polls the database every N seconds, sending Telegram typing indicators while agents work. It also enforces timeouts and detects dead processes.
 - `agent_get_results` returns a JSON array with all agent outputs for the parent invocation.
 - Each agent gets a unique ID, tracked in an `agents` table with status lifecycle: `pending` → `running` → `completed`/`failed`/`timeout`/`orphaned`.
