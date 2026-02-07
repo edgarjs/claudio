@@ -10,7 +10,6 @@ Usage from bash:
     python3 lib/db.py exec <db_path> <sql> [param1 param2 ...]
 """
 
-import json
 import sqlite3
 import sys
 import time

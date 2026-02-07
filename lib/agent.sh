@@ -167,18 +167,22 @@ _agent_db_update() {
     # Build SET clause: status and timestamps are validated above, safe to interpolate
     local set_clause="status='$status'${exit_clause}${pid_clause}${ts_clause}"
 
-    if [ -n "$output" ] && [ -n "$error" ]; then
+    # Dynamically build parameterized SQL for user-controlled fields
+    local -a params
+    local sql_params=""
+    if [ -n "$output" ]; then
+        sql_params+=", output=?"
+        params+=("$output")
+    fi
+    if [ -n "$error" ]; then
+        sql_params+=", error=?"
+        params+=("$error")
+    fi
+
+    if [ ${#params[@]} -gt 0 ]; then
         python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
-            "UPDATE agents SET ${set_clause}, output=?, error=? WHERE id='$agent_id'" \
-            "$output" "$error"
-    elif [ -n "$output" ]; then
-        python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
-            "UPDATE agents SET ${set_clause}, output=? WHERE id='$agent_id'" \
-            "$output"
-    elif [ -n "$error" ]; then
-        python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
-            "UPDATE agents SET ${set_clause}, error=? WHERE id='$agent_id'" \
-            "$error"
+            "UPDATE agents SET ${set_clause}${sql_params} WHERE id='$agent_id'" \
+            "${params[@]}"
     else
         _agent_sql "UPDATE agents SET ${set_clause} WHERE id='$agent_id';"
     fi

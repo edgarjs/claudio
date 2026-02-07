@@ -355,9 +355,26 @@ telegram_handle_webhook() {
     esac
 
     # If this is a reply, prepend the original message as context
+    # Sanitize reply text to prevent prompt injection via crafted messages
     if [ -n "$text" ] && [ -n "$WEBHOOK_REPLY_TO_TEXT" ]; then
         local reply_from="${WEBHOOK_REPLY_TO_FROM:-someone}"
-        text="[Replying to ${reply_from}: \"${WEBHOOK_REPLY_TO_TEXT}\"]
+        local sanitized_reply
+        sanitized_reply=$(printf '%s' "$WEBHOOK_REPLY_TO_TEXT" | sed \
+            -e 's/<system-reminder>/[quoted text]/g' \
+            -e 's/<\/system-reminder>/[quoted text]/g' \
+            -e 's/<system>/[quoted text]/g' \
+            -e 's/<\/system>/[quoted text]/g' \
+            -e 's/<human>/[quoted text]/g' \
+            -e 's/<\/human>/[quoted text]/g' \
+            -e 's/<assistant>/[quoted text]/g' \
+            -e 's/<\/assistant>/[quoted text]/g' \
+            -e 's/<tool_use>/[quoted text]/g' \
+            -e 's/<\/tool_use>/[quoted text]/g' \
+            -e 's/<tool_result>/[quoted text]/g' \
+            -e 's/<\/tool_result>/[quoted text]/g' \
+            -e 's/<function_calls>/[quoted text]/g' \
+            -e 's/<\/function_calls>/[quoted text]/g')
+        text="[Replying to ${reply_from}: \"${sanitized_reply}\"]
 
 ${text}"
     fi
