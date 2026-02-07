@@ -35,6 +35,8 @@ source "$LIB_DIR/tts.sh"
 source "$LIB_DIR/stt.sh"
 # shellcheck source=lib/agent.sh
 source "$LIB_DIR/agent.sh"
+# shellcheck source=lib/memory.sh
+source "$LIB_DIR/memory.sh"
 
 usage() {
     cat <<EOF
@@ -91,6 +93,7 @@ case "${1:-}" in
         ;;
     _webhook)
         history_init
+        memory_init
         agent_init
         agent_cleanup_if_needed
         body=$(cat)
@@ -101,6 +104,7 @@ case "${1:-}" in
         ;;
     start)
         history_init
+        memory_init --warmup
         server_start
         ;;
     install)

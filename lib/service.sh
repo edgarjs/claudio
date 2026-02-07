@@ -97,6 +97,22 @@ deps_install() {
         fi
     fi
 
+    # Install Python dependencies for memory system
+    if ! python3 -c "import fastembed" 2>/dev/null; then
+        echo "Installing fastembed (memory system)..."
+        local pip_args=(install --user fastembed)
+        # PEP 668 (Python 3.12+/Bookworm+) requires --break-system-packages for --user installs
+        if pip3 install --user --dry-run fastembed 2>&1 | grep -q "externally-managed-environment"; then
+            pip_args=(install --user --break-system-packages fastembed)
+        fi
+        if pip3 "${pip_args[@]}"; then
+            print_success "fastembed installed."
+        else
+            print_warning "Failed to install fastembed — memory system will be disabled."
+            print_warning "Install manually with: pip3 install --user --break-system-packages fastembed"
+        fi
+    fi
+
     print_success "All dependencies installed."
 }
 

@@ -72,21 +72,6 @@ db_get_context() {
     fi
 }
 
-db_trim() {
-    local max_rows="${1:-100}"
-
-    # Validate max_rows is a positive integer
-    if ! [[ "$max_rows" =~ ^[0-9]+$ ]] || [ "$max_rows" -eq 0 ]; then
-        echo "db_trim: invalid max_rows '$max_rows'" >&2
-        return 1
-    fi
-
-    if ! printf "DELETE FROM messages WHERE id NOT IN (SELECT id FROM messages ORDER BY id DESC LIMIT %d);\n" "$max_rows" | sqlite3 "$CLAUDIO_DB_FILE"; then
-        echo "db_trim: failed to trim messages" >&2
-        return 1
-    fi
-}
-
 db_clear() {
     if ! sqlite3 "$CLAUDIO_DB_FILE" "DELETE FROM messages;"; then
         echo "db_clear: failed to clear messages" >&2

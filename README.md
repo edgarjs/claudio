@@ -23,7 +23,7 @@ Claudio is an adapter for Claude Code CLI and Telegram. It makes a tunnel betwee
 
 Claudio starts a local HTTP server that listens on port 8421, and creates a tunnel using [cloudflared](https://github.com/cloudflare/cloudflared). When the user sends a message from Telegram, it's sent to `<cloudflare-tunnel-url>/telegram/webhook` and forwarded to the Claude Code CLI.
 
-The user message is passed as a one-shot prompt, along with some context to maintain continuity. The last 100 messages are kept by default (configurable via `MAX_HISTORY_LINES`).
+The user message is passed as a one-shot prompt, along with some context to maintain continuity. All messages are kept in the database, with the last 100 used as conversation context.
 
 After Claude Code finishes, it outputs the response in plain text to stdout for Claudio to capture it and forward it to Telegram API.
 
@@ -209,7 +209,6 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 **Claude**
 
 - `MODEL` — Claude model to use. Accepts `haiku`, `sonnet`, or `opus`. Default: `haiku`. Can also be changed at runtime via Telegram commands `/haiku`, `/sonnet`, `/opus`.
-- `MAX_HISTORY_LINES` — Maximum number of conversation messages to keep in the database. Older messages are trimmed automatically. Default: `100`.
 - `IS_SANDBOX` — Set to `1` to allow Claude Code to run in sandbox mode. Automatically enabled when running as root. Optional for non-root users.
 
 **Telegram**

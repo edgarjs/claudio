@@ -84,24 +84,6 @@ Line 3"
     [[ $(db_count) == "0" ]]
 }
 
-@test "db_trim keeps only the most recent messages" {
-    db_add "user" "Message 1"
-    db_add "assistant" "Message 2"
-    db_add "user" "Message 3"
-    db_add "assistant" "Message 4"
-    db_add "user" "Message 5"
-
-    db_trim 3
-
-    [[ $(db_count) == "3" ]]
-
-    # Should keep the most recent messages (3, 4, 5)
-    result=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT content FROM messages ORDER BY id;")
-    [[ "$result" != *"Message 1"* ]]
-    [[ "$result" != *"Message 2"* ]]
-    [[ "$result" == *"Message 3"* ]]
-}
-
 @test "db_get_context returns empty string when no messages" {
     result=$(db_get_context)
     [[ -z "$result" ]]
@@ -179,18 +161,6 @@ Line 3"
     # Verify content was stored literally
     result=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT content FROM messages;")
     [[ "$result" == "'; DROP TABLE messages; --" ]]
-}
-
-@test "db_trim rejects invalid max_rows" {
-    run db_trim "abc"
-    [[ "$status" -eq 1 ]]
-    [[ "$output" == *"invalid max_rows"* ]]
-
-    run db_trim "0"
-    [[ "$status" -eq 1 ]]
-
-    run db_trim "-1"
-    [[ "$status" -eq 1 ]]
 }
 
 @test "db_get_context rejects invalid limit" {
