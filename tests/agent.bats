@@ -97,23 +97,6 @@ teardown() {
     [[ "$id" =~ ^agent_[0-9]{8}_[0-9]{6}_[0-9a-f]+$ ]]
 }
 
-# ==================== _agent_sql_escape ====================
-
-@test "_agent_sql_escape escapes single quotes" {
-    result=$(_agent_sql_escape "it's a test")
-    [[ "$result" == "it''s a test" ]]
-}
-
-@test "_agent_sql_escape handles no quotes" {
-    result=$(_agent_sql_escape "hello world")
-    [[ "$result" == "hello world" ]]
-}
-
-@test "_agent_sql_escape handles multiple quotes" {
-    result=$(_agent_sql_escape "it's a 'test' of 'quotes'")
-    [[ "$result" == "it''s a ''test'' of ''quotes''" ]]
-}
-
 # ==================== _agent_db_update ====================
 
 @test "_agent_db_update changes status" {
@@ -644,20 +627,6 @@ teardown() {
     local exit_code
     exit_code=$(sqlite3 "$CLAUDIO_DB_FILE" "SELECT exit_code FROM agents WHERE id='test_num';")
     [[ -z "$exit_code" ]]
-}
-
-@test "integration: _agent_sql_escape handles special characters" {
-    # Test that the function correctly escapes single quotes
-    result=$(_agent_sql_escape "hello'world")
-    [[ "$result" == "hello''world" ]]
-
-    # Test empty string
-    result=$(_agent_sql_escape "")
-    [[ -z "$result" ]]
-
-    # Test string with multiple quotes
-    result=$(_agent_sql_escape "it's a 'test'")
-    [[ "$result" == "it''s a ''test''" ]]
 }
 
 @test "integration: _agent_sql retries on WAL lock" {

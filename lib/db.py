@@ -51,6 +51,19 @@ def cmd_init(db_path):
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)"
         )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model TEXT,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cache_read_tokens INTEGER DEFAULT 0,
+                cache_creation_tokens INTEGER DEFAULT 0,
+                cost_usd REAL DEFAULT 0,
+                duration_ms INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
     finally:
         conn.close()
@@ -174,6 +187,30 @@ def cmd_query_json(db_path, sql, params):
     print(result)
 
 
+def _do_exec_stdin(db_path, sql, params):
+    """Like _do_exec but params come pre-parsed (from stdin JSON)."""
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.execute(sql, params)
+        rows = cursor.fetchall()
+        conn.commit()
+        if rows:
+            for row in rows:
+                print("|".join("" if col is None else str(col) for col in row))
+    finally:
+        conn.close()
+
+
+def cmd_exec_stdin(db_path, sql):
+    """Execute SQL with parameters read from stdin as JSON array."""
+    raw = sys.stdin.read()
+    if raw.strip():
+        params = tuple(json.loads(raw))
+    else:
+        params = ()
+    _retry(_do_exec_stdin, db_path, sql, params)
+
+
 def _do_agent_insert(db_path, agent_id, parent_id, prompt, model,
                      timeout_secs, max_concurrent, max_global):
     """Atomic check + insert for agent spawn with concurrency limits."""
@@ -239,6 +276,11 @@ def main():
             print("Usage: exec <sql> [param1 param2 ...]", file=sys.stderr)
             sys.exit(1)
         cmd_exec(db_path, args[0], tuple(args[1:]))
+    elif command == "exec_stdin":
+        if len(args) < 1:
+            print("Usage: exec_stdin <sql> (params as JSON array on stdin)", file=sys.stderr)
+            sys.exit(1)
+        cmd_exec_stdin(db_path, args[0])
     elif command == "query_json":
         if len(args) < 1:
             print("Usage: query_json <sql> [param1 param2 ...]", file=sys.stderr)

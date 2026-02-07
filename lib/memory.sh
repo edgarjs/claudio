@@ -77,25 +77,31 @@ memory_consolidate() {
     # unlike flock which is not available on macOS).
     local lock_dir="${CLAUDIO_PATH}/consolidate.lock"
     if ! mkdir "$lock_dir" 2>/dev/null; then
-        # Recover stale locks (>30 min old) from crashed processes
-        local lock_mtime
-        lock_mtime=$(stat -c%Y "$lock_dir" 2>/dev/null || stat -f%m "$lock_dir" 2>/dev/null || echo 0)
-        local now
-        now=$(date +%s)
-        if [ $((now - lock_mtime)) -gt 1800 ]; then
-            log_warn "memory" "Removing stale consolidation lock (age: $((now - lock_mtime))s)"
-            rmdir "$lock_dir" 2>/dev/null || true
-            if ! mkdir "$lock_dir" 2>/dev/null; then
-                log "memory" "Consolidation already running, skipping"
-                return 0
-            fi
-        else
+        # Check if the lock holder is still alive via PID file
+        local lock_pid_file="${lock_dir}/pid"
+        local lock_pid=""
+        [ -f "$lock_pid_file" ] && lock_pid=$(cat "$lock_pid_file" 2>/dev/null)
+        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+            log "memory" "Consolidation already running (PID $lock_pid), skipping"
+            return 0
+        fi
+        # No PID file yet — lock holder is still starting up
+        if [ -z "$lock_pid" ]; then
+            log "memory" "Consolidation lock has no PID yet, skipping"
+            return 0
+        fi
+        # Lock holder is dead — reclaim the lock
+        log_warn "memory" "Removing stale consolidation lock (PID ${lock_pid} gone)"
+        rm -rf "$lock_dir" 2>/dev/null || true
+        if ! mkdir "$lock_dir" 2>/dev/null; then
             log "memory" "Consolidation already running, skipping"
             return 0
         fi
     fi
+    # Write our PID so other processes can check if we're alive
+    echo "$$" > "${lock_dir}/pid" 2>/dev/null
     # shellcheck disable=SC2064
-    trap "rmdir '$lock_dir' 2>/dev/null" RETURN
+    trap "rm -rf '$lock_dir' 2>/dev/null" RETURN
     python3 "$(_memory_py)" consolidate || {
         log_warn "memory" "Memory consolidation failed"
     }

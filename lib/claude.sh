@@ -31,6 +31,7 @@ claude_run() {
         --model "$MODEL"
         --no-chrome
         --no-session-persistence
+        --output-format json
         --permission-mode bypassPermissions
         -p -
     )
@@ -105,11 +106,73 @@ claude_run() {
     wait "$claude_pid" || true
     trap - TERM
 
-    response=$(cat "$out_file")
+    local raw_output
+    raw_output=$(cat "$out_file")
 
     if [ -s "$stderr_output" ]; then
         log "claude" "$(cat "$stderr_output")"
     fi
 
+    # Parse JSON output: extract response text and persist usage stats
+    if [ -n "$raw_output" ]; then
+        response=$(printf '%s' "$raw_output" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('result', ''), end='')
+except (json.JSONDecodeError, KeyError):
+    # Fallback: treat as plain text (e.g., if --output-format json wasn't honored)
+    sys.exit(1)
+" 2>/dev/null) || response="$raw_output"
+
+        # Persist token usage in background
+        _claude_persist_usage "$raw_output" &
+    fi
+
     printf '%s\n' "$response"
+}
+
+_claude_persist_usage() {
+    local raw_json="$1"
+    # Pass JSON via stdin to avoid exceeding MAX_ARG_STRLEN (128KB) on large responses
+    printf '%s' "$raw_json" | python3 -c "
+import sys, json, os
+
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, ValueError):
+    sys.exit(0)
+
+usage = data.get('usage', {})
+model_usage = data.get('modelUsage', {})
+model = next(iter(model_usage), None) if model_usage else None
+
+db_path = os.environ.get('CLAUDIO_DB_FILE', '')
+if not db_path:
+    sys.exit(0)
+
+import sqlite3
+conn = sqlite3.connect(db_path, timeout=10)
+conn.execute('PRAGMA journal_mode=WAL')
+conn.execute('PRAGMA busy_timeout=5000')
+try:
+    conn.execute(
+        '''INSERT INTO token_usage
+           (model, input_tokens, output_tokens, cache_read_tokens,
+            cache_creation_tokens, cost_usd, duration_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        (
+            model,
+            usage.get('input_tokens', 0),
+            usage.get('output_tokens', 0),
+            usage.get('cache_read_input_tokens', 0),
+            usage.get('cache_creation_input_tokens', 0),
+            data.get('total_cost_usd', 0),
+            data.get('duration_ms', 0),
+        )
+    )
+    conn.commit()
+finally:
+    conn.close()
+" 2>/dev/null || true
 }
