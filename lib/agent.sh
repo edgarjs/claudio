@@ -549,14 +549,14 @@ agent_poll() {
         return 1
     fi
 
-    local escaped_parent
-    escaped_parent=$(_agent_sql_escape "$parent_id")
-
     # Also check for orphaned agents while polling
     _agent_detect_orphans "$parent_id"
 
-    _agent_sql -json \
-        "SELECT id, status, model FROM agents WHERE parent_id='$escaped_parent' ORDER BY created_at;"
+    local db_py
+    db_py="$(dirname "${BASH_SOURCE[0]}")/db.py"
+    python3 "$db_py" query_json "$CLAUDIO_DB_FILE" \
+        "SELECT id, status, model FROM agents WHERE parent_id=? ORDER BY created_at" \
+        "$parent_id"
 }
 
 # Get results for all completed agents of a parent
@@ -569,30 +569,32 @@ agent_get_results() {
         return 1
     fi
 
-    local escaped_parent
-    escaped_parent=$(_agent_sql_escape "$parent_id")
-
-    _agent_sql -json \
+    local db_py
+    db_py="$(dirname "${BASH_SOURCE[0]}")/db.py"
+    python3 "$db_py" query_json "$CLAUDIO_DB_FILE" \
         "SELECT id, status, model, output, error, exit_code FROM agents
-         WHERE parent_id='$escaped_parent'
+         WHERE parent_id=?
          AND status IN ('completed', 'failed', 'timeout', 'orphaned')
-         ORDER BY created_at;"
+         ORDER BY created_at" \
+        "$parent_id"
 }
 
 # Detect and mark orphaned agents (running but PID dead)
 _agent_detect_orphans() {
     local parent_id="${1:-}"
 
-    local where_clause="WHERE status = 'running'"
-    if [ -n "$parent_id" ]; then
-        local escaped_parent
-        escaped_parent=$(_agent_sql_escape "$parent_id")
-        where_clause="${where_clause} AND parent_id='$escaped_parent'"
-    fi
+    local db_py
+    db_py="$(dirname "${BASH_SOURCE[0]}")/db.py"
 
     local running
-    running=$(_agent_sql \
-        "SELECT id, pid, pid_start_time FROM agents $where_clause;")
+    if [ -n "$parent_id" ]; then
+        running=$(python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
+            "SELECT id, pid, pid_start_time FROM agents WHERE status = 'running' AND parent_id=?" \
+            "$parent_id")
+    else
+        running=$(_agent_sql \
+            "SELECT id, pid, pid_start_time FROM agents WHERE status = 'running';")
+    fi
 
     [ -z "$running" ] && return 0
 
@@ -640,8 +642,8 @@ agent_wait() {
         return 1
     fi
 
-    local escaped_parent
-    escaped_parent=$(_agent_sql_escape "$parent_id")
+    local db_py
+    db_py="$(dirname "${BASH_SOURCE[0]}")/db.py"
     local last_typing=0
     local typing_interval=15
 
@@ -652,8 +654,9 @@ agent_wait() {
 
         # Count non-terminal agents
         local pending_count
-        pending_count=$(_agent_sql \
-            "SELECT COUNT(*) FROM agents WHERE parent_id='$escaped_parent' AND status IN ('pending', 'running');")
+        pending_count=$(python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
+            "SELECT COUNT(*) FROM agents WHERE parent_id=? AND status IN ('pending', 'running')" \
+            "$parent_id")
 
         if [ "$pending_count" -eq 0 ]; then
             break
@@ -677,21 +680,26 @@ agent_wait() {
 _agent_enforce_timeouts() {
     local parent_id="${1:-}"
 
-    local where_clause="WHERE status = 'running'"
-    if [ -n "$parent_id" ]; then
-        local escaped_parent
-        escaped_parent=$(_agent_sql_escape "$parent_id")
-        where_clause="${where_clause} AND parent_id='$escaped_parent'"
-    fi
+    local db_py
+    db_py="$(dirname "${BASH_SOURCE[0]}")/db.py"
 
     # Find agents running longer than 2x their timeout (agent already has its own
     # timeout(1) wrapper, so 2x is a safety net for when the wrapper itself hangs)
     local overdue
-    overdue=$(_agent_sql \
-        "SELECT id, pid, pid_start_time, timeout_seconds FROM agents
-         $where_clause
-         AND started_at IS NOT NULL
-         AND (strftime('%s', 'now') - strftime('%s', started_at)) > (timeout_seconds * 2);")
+    if [ -n "$parent_id" ]; then
+        overdue=$(python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
+            "SELECT id, pid, pid_start_time, timeout_seconds FROM agents
+             WHERE status = 'running' AND parent_id=?
+             AND started_at IS NOT NULL
+             AND (strftime('%s', 'now') - strftime('%s', started_at)) > (timeout_seconds * 2)" \
+            "$parent_id")
+    else
+        overdue=$(_agent_sql \
+            "SELECT id, pid, pid_start_time, timeout_seconds FROM agents
+             WHERE status = 'running'
+             AND started_at IS NOT NULL
+             AND (strftime('%s', 'now') - strftime('%s', started_at)) > (timeout_seconds * 2);")
+    fi
 
     [ -z "$overdue" ] && return 0
 
@@ -750,21 +758,18 @@ agent_mark_reported() {
         return 0
     fi
 
-    # Build INSERT statements for each ID
-    local sql=""
+    local db_py
+    db_py="$(dirname "${BASH_SOURCE[0]}")/db.py"
+
     local IFS=','
     for agent_id in $agent_ids; do
         # Trim whitespace
         agent_id=$(printf '%s' "$agent_id" | tr -d ' ')
         [ -z "$agent_id" ] && continue
-        local escaped_id
-        escaped_id=$(_agent_sql_escape "$agent_id")
-        sql="${sql}INSERT OR IGNORE INTO agent_reports (agent_id) VALUES ('$escaped_id');"
+        python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
+            "INSERT OR IGNORE INTO agent_reports (agent_id) VALUES (?)" \
+            "$agent_id"
     done
-
-    if [ -n "$sql" ]; then
-        _agent_sql "$sql"
-    fi
 }
 
 # Throttled cleanup — only runs if last cleanup was >1 hour ago (MEDIUM #12)
@@ -796,6 +801,7 @@ agent_cleanup() {
     fi
 
     # Delete old agent records and their reports
+    # max_age_hours is validated as numeric above, safe for interpolation
     local deleted
     deleted=$(_agent_sql \
         "PRAGMA foreign_keys = ON;

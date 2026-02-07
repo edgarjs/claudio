@@ -8,8 +8,10 @@ Usage from bash:
     python3 lib/db.py clear <db_path>
     python3 lib/db.py count <db_path>
     python3 lib/db.py exec <db_path> <sql> [param1 param2 ...]
+    python3 lib/db.py query_json <db_path> <sql> [param1 param2 ...]
 """
 
+import json
 import sqlite3
 import sys
 import time
@@ -128,18 +130,38 @@ def cmd_count(db_path):
 
 def _do_exec(db_path, sql, params):
     conn = sqlite3.connect(db_path)
-    cursor = conn.execute(sql, params)
-    rows = cursor.fetchall()
-    conn.commit()
-    if rows:
-        for row in rows:
-            print("|".join(str(col) for col in row))
-    conn.close()
+    try:
+        cursor = conn.execute(sql, params)
+        rows = cursor.fetchall()
+        conn.commit()
+        if rows:
+            for row in rows:
+                print("|".join("" if col is None else str(col) for col in row))
+    finally:
+        conn.close()
 
 
 def cmd_exec(db_path, sql, params):
     """Execute arbitrary SQL with parameterized values."""
     _retry(_do_exec, db_path, sql, params)
+
+
+def _do_query_json(db_path, sql, params):
+    """Execute a SELECT and return results as JSON array of objects."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(sql, params).fetchall()
+        result = [dict(row) for row in rows]
+        return json.dumps(result)
+    finally:
+        conn.close()
+
+
+def cmd_query_json(db_path, sql, params):
+    """Execute a SELECT with parameterized values and output JSON."""
+    result = _retry(_do_query_json, db_path, sql, params)
+    print(result)
 
 
 def _do_agent_insert(db_path, agent_id, parent_id, prompt, model,
@@ -207,6 +229,11 @@ def main():
             print("Usage: exec <sql> [param1 param2 ...]", file=sys.stderr)
             sys.exit(1)
         cmd_exec(db_path, args[0], tuple(args[1:]))
+    elif command == "query_json":
+        if len(args) < 1:
+            print("Usage: query_json <sql> [param1 param2 ...]", file=sys.stderr)
+            sys.exit(1)
+        cmd_query_json(db_path, args[0], tuple(args[1:]))
     elif command == "agent_insert":
         cmd_agent_insert(db_path, args)
     else:
