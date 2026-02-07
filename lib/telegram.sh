@@ -576,9 +576,12 @@ Read this file and summarize its contents."
     # is killed (e.g., SIGKILL), which would prevent the RETURN trap from firing
     (
         parent_pid=$$
-        while kill -0 "$parent_pid" 2>/dev/null; do
+        max_iterations=60  # Cap at 15 minutes (60 * 15s)
+        i=0
+        while kill -0 "$parent_pid" 2>/dev/null && [ "$i" -lt "$max_iterations" ]; do
             telegram_send_typing "$WEBHOOK_CHAT_ID"
             sleep 15
+            i=$((i + 1))
         done
     ) &
     local typing_pid=$!

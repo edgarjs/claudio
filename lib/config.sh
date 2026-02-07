@@ -73,7 +73,10 @@ claudio_init() {
 
     # Auto-generate WEBHOOK_SECRET if not set (required for security)
     if [ -z "$WEBHOOK_SECRET" ]; then
-        WEBHOOK_SECRET=$(openssl rand -hex 32)
+        WEBHOOK_SECRET=$(openssl rand -hex 32) || {
+            echo "Error: Failed to generate WEBHOOK_SECRET (openssl rand failed)" >&2
+            return 1
+        }
         claudio_save_env
     fi
 
