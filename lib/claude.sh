@@ -156,17 +156,6 @@ conn = sqlite3.connect(db_path, timeout=10)
 conn.execute('PRAGMA journal_mode=WAL')
 conn.execute('PRAGMA busy_timeout=5000')
 try:
-    conn.execute('''CREATE TABLE IF NOT EXISTS token_usage (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        model TEXT,
-        input_tokens INTEGER DEFAULT 0,
-        output_tokens INTEGER DEFAULT 0,
-        cache_read_tokens INTEGER DEFAULT 0,
-        cache_creation_tokens INTEGER DEFAULT 0,
-        cost_usd REAL DEFAULT 0,
-        duration_ms INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
     conn.execute(
         '''INSERT INTO token_usage
            (model, input_tokens, output_tokens, cache_read_tokens,

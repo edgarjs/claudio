@@ -85,8 +85,13 @@ memory_consolidate() {
             log "memory" "Consolidation already running (PID $lock_pid), skipping"
             return 0
         fi
+        # No PID file yet — lock holder is still starting up
+        if [ -z "$lock_pid" ]; then
+            log "memory" "Consolidation lock has no PID yet, skipping"
+            return 0
+        fi
         # Lock holder is dead — reclaim the lock
-        log_warn "memory" "Removing stale consolidation lock (PID ${lock_pid:-unknown} gone)"
+        log_warn "memory" "Removing stale consolidation lock (PID ${lock_pid} gone)"
         rm -rf "$lock_dir" 2>/dev/null || true
         if ! mkdir "$lock_dir" 2>/dev/null; then
             log "memory" "Consolidation already running, skipping"
