@@ -7,21 +7,7 @@ TELEGRAM_API="https://api.telegram.org/bot"
 
 # Strip XML-like tags that could be used for prompt injection
 _sanitize_for_prompt() {
-    sed \
-        -e 's/<system-reminder>/[quoted text]/g' \
-        -e 's/<\/system-reminder>/[quoted text]/g' \
-        -e 's/<system>/[quoted text]/g' \
-        -e 's/<\/system>/[quoted text]/g' \
-        -e 's/<human>/[quoted text]/g' \
-        -e 's/<\/human>/[quoted text]/g' \
-        -e 's/<assistant>/[quoted text]/g' \
-        -e 's/<\/assistant>/[quoted text]/g' \
-        -e 's/<tool_use>/[quoted text]/g' \
-        -e 's/<\/tool_use>/[quoted text]/g' \
-        -e 's/<tool_result>/[quoted text]/g' \
-        -e 's/<\/tool_result>/[quoted text]/g' \
-        -e 's/<function_calls>/[quoted text]/g' \
-        -e 's/<\/function_calls>/[quoted text]/g'
+    sed -E 's/<\/?[a-zA-Z_][a-zA-Z0-9_-]*[^>]*>/[quoted text]/g'
 }
 
 telegram_api() {

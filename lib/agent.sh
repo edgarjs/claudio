@@ -279,16 +279,7 @@ _agent_wrapper_cleanup() {
 # Strips XML-like tags that could manipulate the parent Claude instance
 _agent_sanitize_output() {
     local output="$1"
-    # Replace tags that could frame instructions as system messages
-    printf '%s' "$output" | sed \
-        -e 's/<system-reminder>/[agent output continues]/g' \
-        -e 's/<\/system-reminder>/[agent output continues]/g' \
-        -e 's/<system>/[agent output continues]/g' \
-        -e 's/<\/system>/[agent output continues]/g' \
-        -e 's/<human>/[agent output continues]/g' \
-        -e 's/<\/human>/[agent output continues]/g' \
-        -e 's/<assistant>/[agent output continues]/g' \
-        -e 's/<\/assistant>/[agent output continues]/g'
+    printf '%s' "$output" | sed -E 's/<\/?[a-zA-Z_][a-zA-Z0-9_-]*[^>]*>/[agent output continues]/g'
 }
 
 # Agent wrapper — runs in a detached process (new session)
