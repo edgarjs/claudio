@@ -300,6 +300,11 @@ EOF
     systemctl --user daemon-reload
     systemctl --user enable claudio
     systemctl --user start claudio
+
+    # Keep user services running after logout (required for headless operation)
+    if command -v loginctl >/dev/null 2>&1; then
+        loginctl enable-linger "$USER" 2>/dev/null || true
+    fi
 }
 
 service_uninstall() {
@@ -315,6 +320,15 @@ service_uninstall() {
         systemctl --user disable claudio 2>/dev/null || true
         rm -f "$SYSTEMD_UNIT"
         systemctl --user daemon-reload 2>/dev/null
+
+        # Disable linger if no other user services remain
+        if command -v loginctl >/dev/null 2>&1; then
+            local remaining
+            remaining=$(systemctl --user list-unit-files --state=enabled --no-legend 2>/dev/null | grep -cv "^$" || echo "0")
+            if (( remaining == 0 )); then
+                loginctl disable-linger "$USER" 2>/dev/null || true
+            fi
+        fi
     fi
 
     cron_uninstall
@@ -469,5 +483,10 @@ service_update() {
         print_warning "Restart blocked (running inside webhook handler). Ask the user to restart manually."
     else
         service_restart
+
+        # Ensure linger is enabled for existing installs upgrading to this version
+        if [[ "$(uname)" != "Darwin" ]] && command -v loginctl >/dev/null 2>&1; then
+            loginctl enable-linger "$USER" 2>/dev/null || true
+        fi
     fi
 }
