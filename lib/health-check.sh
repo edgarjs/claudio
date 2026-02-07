@@ -128,8 +128,8 @@ elif [ "$http_code" = "000" ]; then
             can_restart=true
         else
             # Distinguish between missing unit and inactive user manager
-            if [ -f "$HOME/.config/systemd/user/claudio.service" ]; then
-                log_error "health-check" "User systemd manager not running (linger may be disabled). Run: loginctl enable-linger $USER"
+            if [ -f "${SYSTEMD_UNIT:-$HOME/.config/systemd/user/claudio.service}" ]; then
+                log_error "health-check" "User systemd manager not running (linger may be disabled). Run: loginctl enable-linger ${USER:-$(id -un)}"
             else
                 log_error "health-check" "Service unit not found, cannot auto-restart"
             fi

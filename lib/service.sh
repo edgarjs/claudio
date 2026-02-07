@@ -301,9 +301,26 @@ EOF
     systemctl --user enable claudio
     systemctl --user start claudio
 
-    # Keep user services running after logout (required for headless operation)
+    _enable_linger
+}
+
+# Enable loginctl linger so user services survive logout (required for headless operation)
+_enable_linger() {
     if command -v loginctl >/dev/null 2>&1; then
         loginctl enable-linger "$USER" 2>/dev/null || true
+    fi
+}
+
+# Disable loginctl linger only if the list command succeeds and no user services remain
+_disable_linger() {
+    if command -v loginctl >/dev/null 2>&1; then
+        local remaining
+        if remaining=$(systemctl --user list-unit-files --state=enabled --no-legend 2>&1); then
+            remaining=$(echo "$remaining" | grep -cv "^$" || echo "0")
+            if (( remaining == 0 )); then
+                loginctl disable-linger "$USER" 2>/dev/null || true
+            fi
+        fi
     fi
 }
 
@@ -321,14 +338,7 @@ service_uninstall() {
         rm -f "$SYSTEMD_UNIT"
         systemctl --user daemon-reload 2>/dev/null
 
-        # Disable linger if no other user services remain
-        if command -v loginctl >/dev/null 2>&1; then
-            local remaining
-            remaining=$(systemctl --user list-unit-files --state=enabled --no-legend 2>/dev/null | grep -cv "^$" || echo "0")
-            if (( remaining == 0 )); then
-                loginctl disable-linger "$USER" 2>/dev/null || true
-            fi
-        fi
+        _disable_linger
     fi
 
     cron_uninstall
@@ -482,11 +492,11 @@ service_update() {
     if [[ "${CLAUDIO_WEBHOOK_ACTIVE:-}" == "1" ]]; then
         print_warning "Restart blocked (running inside webhook handler). Ask the user to restart manually."
     else
-        service_restart
-
         # Ensure linger is enabled for existing installs upgrading to this version
-        if [[ "$(uname)" != "Darwin" ]] && command -v loginctl >/dev/null 2>&1; then
-            loginctl enable-linger "$USER" 2>/dev/null || true
+        if [[ "$(uname)" != "Darwin" ]]; then
+            _enable_linger
         fi
+
+        service_restart
     fi
 }
