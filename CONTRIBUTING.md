@@ -47,6 +47,7 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/memory.py` — Python memory backend: embeddings, retrieval, consolidation
 - `lib/db.py` — Python SQLite helper with parameterized queries
 - `lib/service.sh` — systemd/launchd service management and cloudflared setup
+- `lib/safeguards/` — Wrapper scripts for `systemctl`/`launchctl` that block service restart/stop inside webhook handlers
 
 ## Running Tests
 
@@ -55,6 +56,9 @@ Claudio uses [BATS](https://github.com/bats-core/bats-core) for testing.
 ```bash
 # Install BATS (macOS)
 brew install bats-core
+
+# Install BATS (Linux/Debian/Ubuntu)
+sudo apt-get install bats
 
 # Run all tests
 bats tests/

@@ -12,7 +12,7 @@ while [[ -L "$SCRIPT_PATH" ]]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"
-VERSION=$(cat "$SCRIPT_DIR/VERSION")
+VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null) || VERSION="unknown"
 
 # Source library files
 # shellcheck source=lib/config.sh

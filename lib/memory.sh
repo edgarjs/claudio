@@ -77,8 +77,22 @@ memory_consolidate() {
     # unlike flock which is not available on macOS).
     local lock_dir="${CLAUDIO_PATH}/consolidate.lock"
     if ! mkdir "$lock_dir" 2>/dev/null; then
-        log "memory" "Consolidation already running, skipping"
-        return 0
+        # Recover stale locks (>30 min old) from crashed processes
+        local lock_mtime
+        lock_mtime=$(stat -c%Y "$lock_dir" 2>/dev/null || stat -f%m "$lock_dir" 2>/dev/null || echo 0)
+        local now
+        now=$(date +%s)
+        if [ $((now - lock_mtime)) -gt 1800 ]; then
+            log_warn "memory" "Removing stale consolidation lock (age: $((now - lock_mtime))s)"
+            rmdir "$lock_dir" 2>/dev/null || true
+            if ! mkdir "$lock_dir" 2>/dev/null; then
+                log "memory" "Consolidation already running, skipping"
+                return 0
+            fi
+        else
+            log "memory" "Consolidation already running, skipping"
+            return 0
+        fi
     fi
     # shellcheck disable=SC2064
     trap "rmdir '$lock_dir' 2>/dev/null" RETURN

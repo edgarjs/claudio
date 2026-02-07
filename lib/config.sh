@@ -31,15 +31,39 @@ MEMORY_ENABLED="${MEMORY_ENABLED:-1}"
 MEMORY_EMBEDDING_MODEL="${MEMORY_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
 MEMORY_CONSOLIDATION_MODEL="${MEMORY_CONSOLIDATION_MODEL:-haiku}"
 
+# Safe env file loader: only accepts KEY=value or KEY="value" lines
+# where KEY matches [A-Z_][A-Z0-9_]*. Reverses _env_quote escaping
+# for double-quoted values. Rejects anything that doesn't match.
+_safe_load_env() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip blank lines and comments
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        # Match KEY="value" (quoted) or KEY=value (unquoted, no spaces)
+        if [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=\"(.*)\"$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[2]}"
+            # Reverse _env_quote escaping
+            val="${val//\\n/$'\n'}"
+            val="${val//\\\`/\`}"
+            val="${val//\\\$/\$}"
+            val="${val//\\\"/\"}"
+            val="${val//\\\\/\\}"
+            export "$key=$val"
+        elif [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=([^[:space:]]*)$ ]]; then
+            export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+        else
+            # Reject malformed lines silently (defense in depth)
+            continue
+        fi
+    done < "$env_file"
+}
+
 claudio_init() {
     mkdir -p "$CLAUDIO_PATH"
 
-    if [ -f "$CLAUDIO_ENV_FILE" ]; then
-        set -a
-        # shellcheck source=/dev/null
-        source "$CLAUDIO_ENV_FILE"
-        set +a
-    fi
+    _safe_load_env "$CLAUDIO_ENV_FILE"
 
     # Claude Code requires IS_SANDBOX=1 when running as root
     if [ "$(id -u)" -eq 0 ] && [ "$IS_SANDBOX" != "1" ]; then
@@ -49,7 +73,10 @@ claudio_init() {
 
     # Auto-generate WEBHOOK_SECRET if not set (required for security)
     if [ -z "$WEBHOOK_SECRET" ]; then
-        WEBHOOK_SECRET=$(openssl rand -hex 32)
+        WEBHOOK_SECRET=$(openssl rand -hex 32) || {
+            echo "Error: Failed to generate WEBHOOK_SECRET (openssl rand failed)" >&2
+            return 1
+        }
         claudio_save_env
     fi
 

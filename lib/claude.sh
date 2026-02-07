@@ -32,7 +32,7 @@ claude_run() {
         --no-chrome
         --no-session-persistence
         --permission-mode bypassPermissions
-        -p "$full_prompt"
+        -p -
     )
 
     if [ -f "$CLAUDIO_PROMPT_FILE" ]; then
@@ -48,12 +48,14 @@ claude_run() {
         claude_args+=(--fallback-model haiku)
     fi
 
-    local response stderr_output out_file
+    local response stderr_output out_file prompt_file
     stderr_output=$(mktemp)
     out_file=$(mktemp)
-    chmod 600 "$out_file"
+    prompt_file=$(mktemp)
+    chmod 600 "$out_file" "$prompt_file"
+    printf '%s' "$full_prompt" > "$prompt_file"
     # Ensure temp files are cleaned up even on unexpected exit
-    trap 'rm -f "$stderr_output" "$out_file"' RETURN
+    trap 'rm -f "$stderr_output" "$out_file" "$prompt_file"' RETURN
 
     # Find claude command, trying multiple common locations
     # Note: Don't use 'command -v' as it's a bash builtin that doesn't work correctly
@@ -88,10 +90,10 @@ claude_run() {
     # recover partial output if claude is killed mid-response.
     # Cross-platform: setsid on Linux, perl POSIX::setsid on macOS.
     if command -v setsid > /dev/null 2>&1; then
-        setsid "$claude_cmd" "${claude_args[@]}" > "$out_file" 2>"$stderr_output" &
+        setsid "$claude_cmd" "${claude_args[@]}" < "$prompt_file" > "$out_file" 2>"$stderr_output" &
     else
         perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' -- \
-            "$claude_cmd" "${claude_args[@]}" > "$out_file" 2>"$stderr_output" &
+            "$claude_cmd" "${claude_args[@]}" < "$prompt_file" > "$out_file" 2>"$stderr_output" &
     fi
     local claude_pid=$!
 
