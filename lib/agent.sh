@@ -583,8 +583,8 @@ _agent_detect_orphans() {
             "SELECT id, pid, pid_start_time FROM agents WHERE status = 'running' AND parent_id=?" \
             "$parent_id")
     else
-        running=$(_agent_sql \
-            "SELECT id, pid, pid_start_time FROM agents WHERE status = 'running';")
+        running=$(python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
+            "SELECT id, pid, pid_start_time FROM agents WHERE status = 'running'")
     fi
 
     [ -z "$running" ] && return 0
@@ -685,11 +685,11 @@ _agent_enforce_timeouts() {
              AND (strftime('%s', 'now') - strftime('%s', started_at)) > (timeout_seconds * 2)" \
             "$parent_id")
     else
-        overdue=$(_agent_sql \
+        overdue=$(python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
             "SELECT id, pid, pid_start_time, timeout_seconds FROM agents
              WHERE status = 'running'
              AND started_at IS NOT NULL
-             AND (strftime('%s', 'now') - strftime('%s', started_at)) > (timeout_seconds * 2);")
+             AND (strftime('%s', 'now') - strftime('%s', started_at)) > (timeout_seconds * 2)")
     fi
 
     [ -z "$overdue" ] && return 0
