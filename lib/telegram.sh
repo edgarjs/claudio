@@ -5,6 +5,25 @@ source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
 
 TELEGRAM_API="https://api.telegram.org/bot"
 
+# Strip XML-like tags that could be used for prompt injection
+_sanitize_for_prompt() {
+    sed \
+        -e 's/<system-reminder>/[quoted text]/g' \
+        -e 's/<\/system-reminder>/[quoted text]/g' \
+        -e 's/<system>/[quoted text]/g' \
+        -e 's/<\/system>/[quoted text]/g' \
+        -e 's/<human>/[quoted text]/g' \
+        -e 's/<\/human>/[quoted text]/g' \
+        -e 's/<assistant>/[quoted text]/g' \
+        -e 's/<\/assistant>/[quoted text]/g' \
+        -e 's/<tool_use>/[quoted text]/g' \
+        -e 's/<\/tool_use>/[quoted text]/g' \
+        -e 's/<tool_result>/[quoted text]/g' \
+        -e 's/<\/tool_result>/[quoted text]/g' \
+        -e 's/<function_calls>/[quoted text]/g' \
+        -e 's/<\/function_calls>/[quoted text]/g'
+}
+
 telegram_api() {
     local method="$1"
     shift
@@ -14,7 +33,10 @@ telegram_api() {
     local response http_code body
 
     while [ $attempt -le $max_retries ]; do
-        response=$(curl -s -w "\n%{http_code}" "${TELEGRAM_API}${TELEGRAM_BOT_TOKEN}/${method}" "$@")
+        # Pass bot token via --config to avoid exposing it in process list (ps aux)
+        response=$(curl -s -w "\n%{http_code}" \
+            --config <(printf 'url = "%s%s/%s"\n' "$TELEGRAM_API" "$TELEGRAM_BOT_TOKEN" "$method") \
+            "$@")
         http_code=$(echo "$response" | tail -n1)
         body=$(echo "$response" | sed '$d')
 
@@ -117,7 +139,8 @@ telegram_send_voice() {
 telegram_send_typing() {
     local chat_id="$1"
     # Fire-and-forget: don't retry typing indicators to avoid rate limit cascades
-    curl -s "${TELEGRAM_API}${TELEGRAM_BOT_TOKEN}/sendChatAction" \
+    curl -s \
+        --config <(printf 'url = "%s%s/sendChatAction"\n' "$TELEGRAM_API" "$TELEGRAM_BOT_TOKEN") \
         -d "chat_id=${chat_id}" \
         -d "action=typing" > /dev/null 2>&1 || true
 }
@@ -148,11 +171,12 @@ telegram_parse_webhook() {
     ] | join("\u001f")')
 
     # shellcheck disable=SC2034  # WEBHOOK_FROM_ID, WEBHOOK_DOC_*, WEBHOOK_VOICE_* available for use
-    IFS=$'\x1f' read -r WEBHOOK_CHAT_ID WEBHOOK_MESSAGE_ID WEBHOOK_TEXT \
+    # -d '' uses NUL as record delimiter so newlines within fields are preserved
+    IFS=$'\x1f' read -r -d '' WEBHOOK_CHAT_ID WEBHOOK_MESSAGE_ID WEBHOOK_TEXT \
         WEBHOOK_FROM_ID WEBHOOK_REPLY_TO_TEXT WEBHOOK_REPLY_TO_FROM \
         WEBHOOK_PHOTO_FILE_ID WEBHOOK_CAPTION \
         WEBHOOK_DOC_FILE_ID WEBHOOK_DOC_MIME WEBHOOK_DOC_FILE_NAME \
-        WEBHOOK_VOICE_FILE_ID WEBHOOK_VOICE_DURATION <<< "$parsed"
+        WEBHOOK_VOICE_FILE_ID WEBHOOK_VOICE_DURATION <<< "$parsed" || true
 }
 
 telegram_get_image_info() {
@@ -284,8 +308,12 @@ telegram_handle_webhook() {
         return
     fi
 
-    # Security: only allow configured chat_id
-    if [ -n "$TELEGRAM_CHAT_ID" ] && [ "$WEBHOOK_CHAT_ID" != "$TELEGRAM_CHAT_ID" ]; then
+    # Security: only allow configured chat_id (never skip if unset)
+    if [ -z "$TELEGRAM_CHAT_ID" ]; then
+        log_error "telegram" "TELEGRAM_CHAT_ID not configured — rejecting all messages"
+        return
+    fi
+    if [ "$WEBHOOK_CHAT_ID" != "$TELEGRAM_CHAT_ID" ]; then
         log "telegram" "Rejected message from unauthorized chat_id: $WEBHOOK_CHAT_ID"
         return
     fi
@@ -346,9 +374,13 @@ telegram_handle_webhook() {
     esac
 
     # If this is a reply, prepend the original message as context
+    # Sanitize reply text to prevent prompt injection via crafted messages
     if [ -n "$text" ] && [ -n "$WEBHOOK_REPLY_TO_TEXT" ]; then
-        local reply_from="${WEBHOOK_REPLY_TO_FROM:-someone}"
-        text="[Replying to ${reply_from}: \"${WEBHOOK_REPLY_TO_TEXT}\"]
+        local reply_from
+        reply_from=$(printf '%s' "${WEBHOOK_REPLY_TO_FROM:-someone}" | _sanitize_for_prompt)
+        local sanitized_reply
+        sanitized_reply=$(printf '%s' "$WEBHOOK_REPLY_TO_TEXT" | _sanitize_for_prompt)
+        text="[Replying to ${reply_from}: \"${sanitized_reply}\"]
 
 ${text}"
     fi

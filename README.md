@@ -164,7 +164,7 @@ You can send documents (PDF, text files, CSV, code files, etc.) to Claudio. Incl
 
 ### Parallel Agents
 
-Claudio can spawn independent `claude --p` subprocesses for parallel work (reviews, research, etc.).
+Claudio can spawn independent `claude -p` subprocesses for parallel work (reviews, research, etc.).
 
 **How it works:**
 
@@ -184,6 +184,27 @@ agent_spawn "$PARENT_ID" "Review for code quality: ..." "haiku" 300
 agent_spawn "$PARENT_ID" "Review documentation: ..." "haiku" 300
 agent_wait "$PARENT_ID" 5 "$TELEGRAM_CHAT_ID"
 agent_get_results "$PARENT_ID"
+```
+
+### Backup
+
+Claudio can automatically back up its `$HOME/.claudio/` directory using rsync-based rotating backups.
+
+```bash
+# One-off backup
+claudio backup /path/to/destination
+
+# Install hourly cron job (default: 24 hourly, 7 daily snapshots)
+claudio backup cron install /path/to/destination
+
+# Custom retention
+claudio backup cron install /path/to/destination --hours 48 --days 14
+
+# Check backup status
+claudio backup status /path/to/destination
+
+# Remove cron job
+claudio backup cron uninstall
 ```
 
 ### System Prompt
@@ -237,6 +258,12 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `AGENT_MAX_OUTPUT_BYTES` — Max bytes of agent output stored; larger outputs are truncated. Default: `524288` (512 KB).
 - `AGENT_MAX_CONTEXT_BYTES` — Max bytes of recovered agent context injected into prompts. Default: `262144` (256 KB).
 
+**Memory**
+
+- `MEMORY_ENABLED` — Enable/disable the cognitive memory system. Default: `1`.
+- `MEMORY_EMBEDDING_MODEL` — Sentence-transformers model for memory embeddings. Default: `sentence-transformers/all-MiniLM-L6-v2`.
+- `MEMORY_CONSOLIDATION_MODEL` — Claude model used for memory consolidation. Default: `haiku`.
+
 **Tunnel**
 
 - `TUNNEL_NAME` — Name of the Cloudflare named tunnel. Set during `claudio install`.
@@ -282,6 +309,8 @@ bats tests/db.bats
 - [x] Voice messages from human (STT)
 - [x] File uploads
 - [x] Parallel agents (independent Claude processes with crash recovery)
+- [x] Cognitive memory system (ACT-R activation scoring, embedding-based retrieval)
+- [x] Automated backup system (hourly/daily rotating backups with rsync)
 
 **Future**
 

@@ -136,7 +136,7 @@ def enqueue_webhook(body):
         return  # Invalid webhook, skip
 
     # Validate chat_id against authorized chat (defense in depth, also checked in bash)
-    if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
+    if not TELEGRAM_CHAT_ID or chat_id != TELEGRAM_CHAT_ID:
         return
 
     with queue_lock:
@@ -350,12 +350,70 @@ def _graceful_shutdown(server, shutdown_event):
     sys.stderr.write("[shutdown] All handlers finished, exiting cleanly.\n")
 
 
+def _start_cloudflared():
+    """Start cloudflared tunnel as a subprocess managed by Python.
+
+    Returns the Popen object, or None if no tunnel is configured.
+    Logs are written to cloudflared.log with size rotation (10 MB max, 1 backup).
+    """
+    tunnel_name = os.environ.get("TUNNEL_NAME", "")
+    if not tunnel_name:
+        sys.stderr.write("[cloudflared] No tunnel configured, skipping.\n")
+        return None
+
+    log_path = os.path.join(CLAUDIO_PATH, "cloudflared.log")
+
+    # Rotate: keep max 10 MB, rename old log
+    try:
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 10 * 1024 * 1024:
+            backup = log_path + ".1"
+            if os.path.exists(backup):
+                os.remove(backup)
+            os.rename(log_path, backup)
+    except OSError:
+        pass
+
+    log_fh = open(log_path, "a")
+    proc = subprocess.Popen(
+        ["cloudflared", "tunnel", "run",
+         "--url", f"http://localhost:{PORT}", tunnel_name],
+        stdout=log_fh,
+        stderr=log_fh,
+        start_new_session=True,
+    )
+    sys.stderr.write(f"[cloudflared] Named tunnel '{tunnel_name}' started (pid {proc.pid}).\n")
+    return proc
+
+
+def _stop_cloudflared(proc):
+    """Gracefully stop the cloudflared process."""
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    except OSError:
+        pass
+    sys.stderr.write("[cloudflared] Tunnel stopped.\n")
+
+
 def main():
     # Require WEBHOOK_SECRET for security
     if not WEBHOOK_SECRET:
         sys.stderr.write("Error: WEBHOOK_SECRET environment variable is required.\n")
         sys.stderr.write("Generate one with: openssl rand -hex 32\n")
         sys.exit(1)
+
+    # Warn if TELEGRAM_CHAT_ID is not set (server will reject all messages)
+    if not TELEGRAM_CHAT_ID:
+        sys.stderr.write("Warning: TELEGRAM_CHAT_ID not set — all messages will be rejected.\n")
+        sys.stderr.write("Run 'claudio telegram setup' to configure it.\n")
+
+    # Start cloudflared tunnel (managed by Python for proper cleanup)
+    cloudflared_proc = _start_cloudflared()
 
     # Bind to localhost only - cloudflared handles external access
     server = ThreadedHTTPServer(("127.0.0.1", PORT), Handler)
@@ -382,6 +440,7 @@ def main():
     # Wait for graceful shutdown to finish draining handlers
     shutdown_thread.join()
     server.server_close()
+    _stop_cloudflared(cloudflared_proc)
 
 
 if __name__ == "__main__":
