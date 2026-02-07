@@ -474,5 +474,113 @@ class TestRetrieveWithoutModel(unittest.TestCase):
         self.assertIsInstance(results, list)
 
 
+class TestModelMismatchDetection(unittest.TestCase):
+    """Test embedding model change detection."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.db_file = os.path.join(self.tmpdir, "test.db")
+        os.environ["CLAUDIO_DB_FILE"] = self.db_file
+        memory.DB_FILE = self.db_file
+
+    def tearDown(self):
+        os.unlink(self.db_file) if os.path.exists(self.db_file) else None
+
+    def test_stores_model_name_on_first_init(self):
+        memory.init_schema()
+        conn = sqlite3.connect(self.db_file)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT value FROM memory_meta WHERE key='embedding_model'"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(row["value"], memory.EMBEDDING_MODEL)
+
+    def test_detects_model_change_and_clears_embeddings(self):
+        # First init with a fake model
+        memory.init_schema()
+        conn = sqlite3.connect(self.db_file)
+        conn.row_factory = sqlite3.Row
+        # Store a memory with an embedding
+        fake_blob = memory.embedding_to_blob([0.1, 0.2, 0.3])
+        conn.execute(
+            "INSERT INTO semantic_memories (id, content, embedding) VALUES ('m1', 'test', ?)",
+            (fake_blob,),
+        )
+        # Pretend a different model was used
+        conn.execute(
+            "INSERT OR REPLACE INTO memory_meta (key, value) VALUES ('embedding_model', 'old-model')"
+        )
+        conn.commit()
+        conn.close()
+
+        # Re-init should detect the mismatch and clear embeddings
+        memory.init_schema()
+
+        conn = sqlite3.connect(self.db_file)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT embedding FROM semantic_memories WHERE id='m1'"
+        ).fetchone()
+        conn.close()
+        self.assertIsNone(row["embedding"])
+
+    def test_no_clear_when_model_unchanged(self):
+        memory.init_schema()
+        conn = sqlite3.connect(self.db_file)
+        conn.row_factory = sqlite3.Row
+        fake_blob = memory.embedding_to_blob([0.1, 0.2, 0.3])
+        conn.execute(
+            "INSERT INTO semantic_memories (id, content, embedding) VALUES ('m1', 'test', ?)",
+            (fake_blob,),
+        )
+        conn.commit()
+        conn.close()
+
+        # Re-init with same model should NOT clear embeddings
+        memory.init_schema()
+
+        conn = sqlite3.connect(self.db_file)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT embedding FROM semantic_memories WHERE id='m1'"
+        ).fetchone()
+        conn.close()
+        self.assertIsNotNone(row["embedding"])
+
+
+class TestFTSEscaping(unittest.TestCase):
+    """Test FTS5 query escaping handles special characters."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.db_file = os.path.join(self.tmpdir, "test.db")
+        os.environ["CLAUDIO_DB_FILE"] = self.db_file
+        memory.DB_FILE = self.db_file
+        memory.init_schema()
+
+    def tearDown(self):
+        os.unlink(self.db_file) if os.path.exists(self.db_file) else None
+
+    def test_fts_handles_special_characters(self):
+        conn = memory.get_db()
+        memory.store_memory(conn, "semantic", "Python programming language", category="fact")
+        conn.commit()
+        conn.close()
+
+        # These would crash FTS5 without proper escaping
+        for query in ['Python AND NOT "evil"', "test*", "NEAR(a,b)", 'foo OR bar']:
+            conn = memory.get_db()
+            results = memory._fts_search(conn, query, ["semantic"], 5)
+            conn.close()
+            self.assertIsInstance(results, list)
+
+    def test_fts_empty_query(self):
+        conn = memory.get_db()
+        results = memory._fts_search(conn, "***", ["semantic"], 5)
+        conn.close()
+        self.assertEqual(results, [])
+
+
 if __name__ == "__main__":
     unittest.main()
