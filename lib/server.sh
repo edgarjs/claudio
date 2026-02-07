@@ -77,6 +77,7 @@ cloudflared_start() {
     local cf_log="$CLAUDIO_PATH/cloudflared.tmp"
 
     cloudflared tunnel run --url "http://localhost:${PORT}" "$TUNNEL_NAME" > "$cf_log" 2>&1 &
+    # shellcheck disable=SC2034  # CLOUDFLARED_PID used by tests in server.bats teardown
     CLOUDFLARED_PID=$!
     log "cloudflared" "Named tunnel '$TUNNEL_NAME' started."
 }
