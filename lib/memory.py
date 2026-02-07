@@ -619,9 +619,11 @@ def consolidate():
         if not messages:
             return
 
+        last_id = messages[-1]["id"]
+
         if not should_consolidate(messages):
             # Mark as consolidated anyway to avoid re-checking
-            _update_last_consolidated(conn, messages[-1]["id"])
+            _update_last_consolidated(conn, last_id)
             conn.commit()
             return
 
@@ -637,14 +639,18 @@ def consolidate():
         # Call LLM for extraction
         extracted = _llm_extract_memories(conversation, existing_context)
         if not extracted:
-            _update_last_consolidated(conn, messages[-1]["id"])
+            _update_last_consolidated(conn, last_id)
             conn.commit()
             return
 
-        # Store extracted memories
-        _store_extracted(conn, extracted)
+        # Store extracted memories — always advance the cursor even if storage
+        # fails, to prevent infinite retry loops burning API credits
+        try:
+            _store_extracted(conn, extracted)
+        except Exception as e:
+            print(f"WARNING: Failed to store extracted memories: {e}", file=sys.stderr)
 
-        _update_last_consolidated(conn, messages[-1]["id"])
+        _update_last_consolidated(conn, last_id)
         conn.commit()
     finally:
         conn.close()

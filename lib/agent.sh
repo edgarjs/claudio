@@ -79,11 +79,6 @@ _agent_gen_id() {
     printf 'agent_%s_%s' "$(date '+%Y%m%d_%H%M%S')" "$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"
 }
 
-# Escape content for safe SQL insertion (double single quotes, strip NUL bytes)
-_agent_sql_escape() {
-    printf '%s' "$1" | tr -d '\0' | sed "s/'/''/g"
-}
-
 # Execute SQL with retry on WAL lock contention (MEDIUM #9)
 _agent_sql() {
     local retries=5
@@ -180,9 +175,23 @@ _agent_db_update() {
     fi
 
     if [ ${#params[@]} -gt 0 ]; then
-        python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
-            "UPDATE agents SET ${set_clause}${sql_params} WHERE id='$agent_id'" \
-            "${params[@]}"
+        # Use exec_stdin to pass large output/error via stdin (avoids MAX_ARG_STRLEN)
+        # Write params to a temp file, then use Python to JSON-encode safely
+        local params_file
+        params_file=$(mktemp)
+        chmod 600 "$params_file"
+        local _p
+        for _p in "${params[@]}"; do
+            printf '%s\0' "$_p" >> "$params_file"
+        done
+        python3 -c "
+import sys, json
+raw = open(sys.argv[1], 'rb').read()
+parts = raw.split(b'\x00')[:-1]  # split on null, drop trailing empty
+print(json.dumps([p.decode('utf-8', errors='replace') for p in parts]))
+" "$params_file" | python3 "$db_py" exec_stdin "$CLAUDIO_DB_FILE" \
+            "UPDATE agents SET ${set_clause}${sql_params} WHERE id='$agent_id'"
+        rm -f "$params_file"
     else
         _agent_sql "UPDATE agents SET ${set_clause} WHERE id='$agent_id';"
     fi
@@ -264,6 +273,51 @@ _agent_kill() {
     fi
 }
 
+# Persist token usage from JSON output (mirrors _claude_persist_usage in claude.sh)
+_agent_persist_usage() {
+    local raw_json="$1"
+    printf '%s' "$raw_json" | python3 -c "
+import sys, json, os
+
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, ValueError):
+    sys.exit(0)
+
+usage = data.get('usage', {})
+model_usage = data.get('modelUsage', {})
+model = next(iter(model_usage), None) if model_usage else None
+
+db_path = os.environ.get('CLAUDIO_DB_FILE', '')
+if not db_path:
+    sys.exit(0)
+
+import sqlite3
+conn = sqlite3.connect(db_path, timeout=10)
+conn.execute('PRAGMA journal_mode=WAL')
+conn.execute('PRAGMA busy_timeout=5000')
+try:
+    conn.execute(
+        '''INSERT INTO token_usage
+           (model, input_tokens, output_tokens, cache_read_tokens,
+            cache_creation_tokens, cost_usd, duration_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        (
+            model,
+            usage.get('input_tokens', 0),
+            usage.get('output_tokens', 0),
+            usage.get('cache_read_input_tokens', 0),
+            usage.get('cache_creation_input_tokens', 0),
+            data.get('total_cost_usd', 0),
+            data.get('duration_ms', 0),
+        )
+    )
+    conn.commit()
+finally:
+    conn.close()
+" 2>/dev/null || true
+}
+
 # Signal handler for agent wrapper — kills child and writes partial results
 _agent_wrapper_cleanup() {
     local agent_id="$1"
@@ -312,15 +366,16 @@ _agent_wrapper() {
     local err_file="${AGENT_OUTPUT_DIR}/${agent_id}.err"
     ( umask 077; touch "$out_file" "$err_file" )
 
-    # Build claude args
+    # Build claude args — prompt via stdin (-p -) to avoid MAX_ARG_STRLEN (128KB) limit
     local -a claude_args=(
         --dangerously-skip-permissions
         --disable-slash-commands
         --model "$model"
         --no-chrome
         --no-session-persistence
+        --output-format json
         --permission-mode bypassPermissions
-        -p "$prompt"
+        -p -
     )
 
     # Add fallback model if different from primary
@@ -337,6 +392,10 @@ _agent_wrapper() {
         fi
     fi
 
+    # Write prompt to a temp file for stdin redirection (avoids MAX_ARG_STRLEN)
+    local prompt_file="${AGENT_OUTPUT_DIR}/${agent_id}.prompt_run"
+    ( umask 077; printf '%s' "$prompt" > "$prompt_file" )
+
     # Run claude with timeout (gtimeout on macOS via coreutils)
     # Falls back to running without timeout if neither is available
     local timeout_cmd=""
@@ -348,14 +407,15 @@ _agent_wrapper() {
     local exit_code=0
     if [ -n "$timeout_cmd" ]; then
         "$timeout_cmd" "$timeout_secs" "$claude_cmd" "${claude_args[@]}" \
-            > "$out_file" 2> "$err_file" &
+            < "$prompt_file" > "$out_file" 2> "$err_file" &
     else
         "$claude_cmd" "${claude_args[@]}" \
-            > "$out_file" 2> "$err_file" &
+            < "$prompt_file" > "$out_file" 2> "$err_file" &
     fi
     claude_pid=$!
     wait "$claude_pid" || exit_code=$?
     claude_pid=""
+    rm -f "$prompt_file"
 
     # Determine final status
     local status="completed"
@@ -366,20 +426,35 @@ _agent_wrapper() {
     fi
 
     # Read output files, truncating if too large (MEDIUM #10)
-    local output="" error=""
+    local raw_output="" output="" error=""
     if [ -f "$out_file" ]; then
         local file_size
         file_size=$(_agent_file_size "$out_file")
         if [ "$file_size" -gt "$AGENT_MAX_OUTPUT_BYTES" ]; then
-            output=$(head -c "$AGENT_MAX_OUTPUT_BYTES" "$out_file")
-            output="${output}
+            raw_output=$(head -c "$AGENT_MAX_OUTPUT_BYTES" "$out_file")
+            raw_output="${raw_output}
 [OUTPUT TRUNCATED: ${file_size} bytes exceeded ${AGENT_MAX_OUTPUT_BYTES} byte limit]"
         else
-            output=$(cat "$out_file")
+            raw_output=$(cat "$out_file")
         fi
     fi
     if [ -f "$err_file" ]; then
         error=$(head -c "$AGENT_MAX_OUTPUT_BYTES" "$err_file")
+    fi
+
+    # Parse JSON output: extract result text and persist token usage
+    if [ -n "$raw_output" ]; then
+        output=$(printf '%s' "$raw_output" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('result', ''), end='')
+except (json.JSONDecodeError, KeyError):
+    sys.exit(1)
+" 2>/dev/null) || output="$raw_output"
+
+        # Persist token usage in background (best-effort)
+        _agent_persist_usage "$raw_output" &
     fi
 
     # Write results to DB
