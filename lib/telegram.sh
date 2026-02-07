@@ -5,6 +5,25 @@ source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
 
 TELEGRAM_API="https://api.telegram.org/bot"
 
+# Strip XML-like tags that could be used for prompt injection
+_sanitize_for_prompt() {
+    sed \
+        -e 's/<system-reminder>/[quoted text]/g' \
+        -e 's/<\/system-reminder>/[quoted text]/g' \
+        -e 's/<system>/[quoted text]/g' \
+        -e 's/<\/system>/[quoted text]/g' \
+        -e 's/<human>/[quoted text]/g' \
+        -e 's/<\/human>/[quoted text]/g' \
+        -e 's/<assistant>/[quoted text]/g' \
+        -e 's/<\/assistant>/[quoted text]/g' \
+        -e 's/<tool_use>/[quoted text]/g' \
+        -e 's/<\/tool_use>/[quoted text]/g' \
+        -e 's/<tool_result>/[quoted text]/g' \
+        -e 's/<\/tool_result>/[quoted text]/g' \
+        -e 's/<function_calls>/[quoted text]/g' \
+        -e 's/<\/function_calls>/[quoted text]/g'
+}
+
 telegram_api() {
     local method="$1"
     shift
@@ -357,23 +376,10 @@ telegram_handle_webhook() {
     # If this is a reply, prepend the original message as context
     # Sanitize reply text to prevent prompt injection via crafted messages
     if [ -n "$text" ] && [ -n "$WEBHOOK_REPLY_TO_TEXT" ]; then
-        local reply_from="${WEBHOOK_REPLY_TO_FROM:-someone}"
+        local reply_from
+        reply_from=$(printf '%s' "${WEBHOOK_REPLY_TO_FROM:-someone}" | _sanitize_for_prompt)
         local sanitized_reply
-        sanitized_reply=$(printf '%s' "$WEBHOOK_REPLY_TO_TEXT" | sed \
-            -e 's/<system-reminder>/[quoted text]/g' \
-            -e 's/<\/system-reminder>/[quoted text]/g' \
-            -e 's/<system>/[quoted text]/g' \
-            -e 's/<\/system>/[quoted text]/g' \
-            -e 's/<human>/[quoted text]/g' \
-            -e 's/<\/human>/[quoted text]/g' \
-            -e 's/<assistant>/[quoted text]/g' \
-            -e 's/<\/assistant>/[quoted text]/g' \
-            -e 's/<tool_use>/[quoted text]/g' \
-            -e 's/<\/tool_use>/[quoted text]/g' \
-            -e 's/<tool_result>/[quoted text]/g' \
-            -e 's/<\/tool_result>/[quoted text]/g' \
-            -e 's/<function_calls>/[quoted text]/g' \
-            -e 's/<\/function_calls>/[quoted text]/g')
+        sanitized_reply=$(printf '%s' "$WEBHOOK_REPLY_TO_TEXT" | _sanitize_for_prompt)
         text="[Replying to ${reply_from}: \"${sanitized_reply}\"]
 
 ${text}"
