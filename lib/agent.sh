@@ -160,17 +160,28 @@ _agent_db_update() {
     local pid_clause=""
     [ -n "$pid" ] && pid_clause=", pid=$pid"
 
-    # For output and error, use parameterized approach via .param or safe escaping
-    local escaped_output escaped_error
-    escaped_output=$(_agent_sql_escape "$output")
-    escaped_error=$(_agent_sql_escape "$error")
+    # Use Python parameterized queries for output/error (user-controlled content)
+    local db_py
+    db_py="$(dirname "${BASH_SOURCE[0]}")/db.py"
 
-    local output_clause=""
-    [ -n "$output" ] && output_clause=", output='${escaped_output}'"
-    local error_clause=""
-    [ -n "$error" ] && error_clause=", error='${escaped_error}'"
+    # Build SET clause: status and timestamps are validated above, safe to interpolate
+    local set_clause="status='$status'${exit_clause}${pid_clause}${ts_clause}"
 
-    _agent_sql "UPDATE agents SET status='$status'${output_clause}${error_clause}${exit_clause}${pid_clause}${ts_clause} WHERE id='$agent_id';"
+    if [ -n "$output" ] && [ -n "$error" ]; then
+        python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
+            "UPDATE agents SET ${set_clause}, output=?, error=? WHERE id='$agent_id'" \
+            "$output" "$error"
+    elif [ -n "$output" ]; then
+        python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
+            "UPDATE agents SET ${set_clause}, output=? WHERE id='$agent_id'" \
+            "$output"
+    elif [ -n "$error" ]; then
+        python3 "$db_py" exec "$CLAUDIO_DB_FILE" \
+            "UPDATE agents SET ${set_clause}, error=? WHERE id='$agent_id'" \
+            "$error"
+    else
+        _agent_sql "UPDATE agents SET ${set_clause} WHERE id='$agent_id';"
+    fi
 }
 
 # Resolve the absolute path to the claude binary
@@ -438,20 +449,13 @@ agent_spawn() {
     local agent_id
     agent_id=$(_agent_gen_id)
 
-    # Atomic check + insert in a single exclusive transaction
-    local escaped_prompt escaped_parent
-    escaped_prompt=$(_agent_sql_escape "$prompt")
-    escaped_parent=$(_agent_sql_escape "$parent_id")
+    # Atomic check + insert via Python parameterized queries (no SQL injection)
+    local db_py
+    db_py="$(dirname "${BASH_SOURCE[0]}")/db.py"
     local inserted
-    inserted=$(_agent_sql "
-        BEGIN EXCLUSIVE;
-        INSERT INTO agents (id, parent_id, prompt, model, timeout_seconds)
-            SELECT '$agent_id', '$escaped_parent', '$escaped_prompt', '$model', $timeout_secs
-            WHERE (SELECT COUNT(*) FROM agents WHERE parent_id='$escaped_parent' AND status IN ('pending', 'running')) < $AGENT_MAX_CONCURRENT
-            AND (SELECT COUNT(*) FROM agents WHERE status IN ('pending', 'running')) < $AGENT_MAX_GLOBAL_CONCURRENT;
-        SELECT changes();
-        COMMIT;
-    " 2>&1)
+    inserted=$(python3 "$db_py" agent_insert "$CLAUDIO_DB_FILE" \
+        "$agent_id" "$parent_id" "$prompt" "$model" "$timeout_secs" \
+        "$AGENT_MAX_CONCURRENT" "$AGENT_MAX_GLOBAL_CONCURRENT" 2>&1)
     if [ "${inserted:-0}" -eq 0 ]; then
         log_error "agent" "Max concurrent agents ($AGENT_MAX_CONCURRENT) reached for parent $parent_id"
         return 1

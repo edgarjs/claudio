@@ -16,7 +16,8 @@ register_webhook() {
     while [ "$attempt" -lt "$max_retries" ]; do
         ((attempt++)) || true
         local result
-        local curl_args=("-s" "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" "-d" "url=${tunnel_url}/telegram/webhook" "-d" 'allowed_updates=["message"]')
+        # Pass bot token via --config to avoid exposing it in process list (ps aux)
+        local curl_args=("-s" "--config" <(printf 'url = "https://api.telegram.org/bot%s/setWebhook"\n' "$TELEGRAM_BOT_TOKEN") "-d" "url=${tunnel_url}/telegram/webhook" "-d" 'allowed_updates=["message"]')
         if [ -n "$WEBHOOK_SECRET" ]; then
             curl_args+=("-d" "secret_token=${WEBHOOK_SECRET}")
         fi
@@ -59,16 +60,15 @@ register_webhook() {
 server_start() {
     log "server" "Starting Claudio server on port ${PORT}..."
 
-    # Start cloudflared tunnel in background
-    cloudflared_start
-
     # Start HTTP server (exec replaces bash so SIGTERM reaches Python directly)
+    # Python manages cloudflared lifecycle directly for proper cleanup
     local server_py
     server_py="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/server.py"
     exec env PORT="$PORT" python3 "$server_py"
 }
 
 cloudflared_start() {
+    # Called only by tests — production uses Python-managed cloudflared in server.py
     if [ -z "$TUNNEL_NAME" ]; then
         log "server" "No tunnel configured. Skipping cloudflared."
         return
@@ -78,6 +78,5 @@ cloudflared_start() {
 
     cloudflared tunnel run --url "http://localhost:${PORT}" "$TUNNEL_NAME" > "$cf_log" 2>&1 &
     CLOUDFLARED_PID=$!
-    trap 'kill $CLOUDFLARED_PID 2>/dev/null' EXIT
     log "cloudflared" "Named tunnel '$TUNNEL_NAME' started."
 }

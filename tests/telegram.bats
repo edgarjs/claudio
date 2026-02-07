@@ -216,6 +216,15 @@ EOF
     [[ "$WEBHOOK_TEXT" == "hello" ]]
 }
 
+@test "telegram_parse_webhook preserves multi-line text" {
+    body=$(printf '{"message":{"message_id":42,"chat":{"id":123},"text":"line1\\nline2\\nline3","from":{"id":456}}}')
+
+    telegram_parse_webhook "$body"
+
+    [[ "$WEBHOOK_TEXT" == $'line1\nline2\nline3' ]]
+    [[ "$WEBHOOK_FROM_ID" == "456" ]]
+}
+
 @test "telegram_parse_webhook extracts photo file_id (highest resolution)" {
     body='{"message":{"message_id":42,"chat":{"id":123},"from":{"id":456},"photo":[{"file_id":"small_id","width":90,"height":90},{"file_id":"medium_id","width":320,"height":320},{"file_id":"large_id","width":800,"height":800}],"caption":"test caption"}}'
 
@@ -303,16 +312,22 @@ EOF
 @test "telegram_download_file resolves file_id and downloads binary" {
     cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
 #!/bin/bash
-if [[ "$*" == *"getFile"* ]]; then
-    # getFile API call (has -w flag from telegram_api)
+# Read URL from --config process substitution (token hidden from ps)
+cfg_url=""
+for i in $(seq 1 $#); do
+    if [[ "${!i}" == "--config" ]]; then
+        next=$((i+1)); cfg_url=$(cat "${!next}" 2>/dev/null | sed -n 's/^url = "\(.*\)"/\1/p')
+    fi
+done
+all_args="$* $cfg_url"
+if [[ "$all_args" == *"getFile"* ]]; then
     if [[ " $* " == *" -w "* ]]; then
         echo '{"ok":true,"result":{"file_path":"photos/file_123.jpg"}}'
         echo "200"
     else
         echo '{"ok":true,"result":{"file_path":"photos/file_123.jpg"}}'
     fi
-elif [[ "$*" == *"/file/bot"* ]]; then
-    # Direct file download — write valid JPEG magic bytes
+elif [[ "$all_args" == *"/file/bot"* ]]; then
     output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
     printf '\xff\xd8\xff\xe0fake_jpeg_data' > "$output_file"
 else
@@ -419,15 +434,21 @@ MOCK
 @test "telegram_download_file accepts valid WebP file" {
     cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
 #!/bin/bash
-if [[ "$*" == *"getFile"* ]]; then
+cfg_url=""
+for i in $(seq 1 $#); do
+    if [[ "${!i}" == "--config" ]]; then
+        next=$((i+1)); cfg_url=$(cat "${!next}" 2>/dev/null | sed -n 's/^url = "\(.*\)"/\1/p')
+    fi
+done
+all_args="$* $cfg_url"
+if [[ "$all_args" == *"getFile"* ]]; then
     if [[ " $* " == *" -w "* ]]; then
         echo '{"ok":true,"result":{"file_path":"photos/file_123.webp"}}'
         echo "200"
     else
         echo '{"ok":true,"result":{"file_path":"photos/file_123.webp"}}'
     fi
-elif [[ "$*" == *"/file/bot"* ]]; then
-    # Write valid WebP header: RIFF + 4 size bytes + WEBP
+elif [[ "$all_args" == *"/file/bot"* ]]; then
     output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
     printf 'RIFF\x00\x10\x00\x00WEBP_fake_data' > "$output_file"
 else
@@ -447,14 +468,21 @@ MOCK
 @test "telegram_download_document resolves file_id and downloads document" {
     cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
 #!/bin/bash
-if [[ "$*" == *"getFile"* ]]; then
+cfg_url=""
+for i in $(seq 1 $#); do
+    if [[ "${!i}" == "--config" ]]; then
+        next=$((i+1)); cfg_url=$(cat "${!next}" 2>/dev/null | sed -n 's/^url = "\(.*\)"/\1/p')
+    fi
+done
+all_args="$* $cfg_url"
+if [[ "$all_args" == *"getFile"* ]]; then
     if [[ " $* " == *" -w "* ]]; then
         echo '{"ok":true,"result":{"file_path":"documents/file_456.pdf"}}'
         echo "200"
     else
         echo '{"ok":true,"result":{"file_path":"documents/file_456.pdf"}}'
     fi
-elif [[ "$*" == *"/file/bot"* ]]; then
+elif [[ "$all_args" == *"/file/bot"* ]]; then
     output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
     printf '%%PDF-1.4 fake pdf content' > "$output_file"
 else
@@ -516,14 +544,21 @@ MOCK
 @test "telegram_download_document accepts any file type (no magic byte check)" {
     cat > "$BATS_TEST_TMPDIR/bin/curl" << 'MOCK'
 #!/bin/bash
-if [[ "$*" == *"getFile"* ]]; then
+cfg_url=""
+for i in $(seq 1 $#); do
+    if [[ "${!i}" == "--config" ]]; then
+        next=$((i+1)); cfg_url=$(cat "${!next}" 2>/dev/null | sed -n 's/^url = "\(.*\)"/\1/p')
+    fi
+done
+all_args="$* $cfg_url"
+if [[ "$all_args" == *"getFile"* ]]; then
     if [[ " $* " == *" -w "* ]]; then
         echo '{"ok":true,"result":{"file_path":"documents/data.csv"}}'
         echo "200"
     else
         echo '{"ok":true,"result":{"file_path":"documents/data.csv"}}'
     fi
-elif [[ "$*" == *"/file/bot"* ]]; then
+elif [[ "$all_args" == *"/file/bot"* ]]; then
     output_file=$(echo "$@" | grep -oE '\-o [^ ]+' | cut -d' ' -f2)
     echo "name,age,city" > "$output_file"
 else
