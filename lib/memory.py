@@ -203,6 +203,8 @@ def _get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
         try:
+            import onnxruntime
+            onnxruntime.set_default_logger_severity(3)  # ERROR only
             from fastembed import TextEmbedding
             _embedding_model = TextEmbedding(model_name=EMBEDDING_MODEL)
         except ImportError:
