@@ -38,10 +38,12 @@ claude_run() {
         claude_args+=(--fallback-model haiku)
     fi
 
-    local response stderr_output
+    local response stderr_output out_file
     stderr_output=$(mktemp)
-    # Ensure temp file is cleaned up even on unexpected exit
-    trap 'rm -f "$stderr_output"' RETURN
+    out_file=$(mktemp)
+    chmod 600 "$out_file"
+    # Ensure temp files are cleaned up even on unexpected exit
+    trap 'rm -f "$stderr_output" "$out_file"' RETURN
 
     # Find claude command, trying multiple common locations
     # Note: Don't use 'command -v' as it's a bash builtin that doesn't work correctly
@@ -70,7 +72,28 @@ claude_run() {
         return 1
     fi
 
-    response=$("$claude_cmd" "${claude_args[@]}" 2>"$stderr_output") || true
+    # Run claude in its own session/process group to prevent its child
+    # processes (bash tools) from killing the webhook handler via process
+    # group signals (e.g., kill 0). Output goes to a temp file so we can
+    # recover partial output if claude is killed mid-response.
+    # Cross-platform: setsid on Linux, perl POSIX::setsid on macOS.
+    if command -v setsid > /dev/null 2>&1; then
+        setsid "$claude_cmd" "${claude_args[@]}" > "$out_file" 2>"$stderr_output" &
+    else
+        perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV' -- \
+            "$claude_cmd" "${claude_args[@]}" > "$out_file" 2>"$stderr_output" &
+    fi
+    local claude_pid=$!
+
+    # Forward SIGTERM to claude's process group if we get killed
+    # (e.g., by Python's webhook timeout), then let execution continue
+    # so we can still read whatever output claude produced before dying
+    trap 'kill -TERM -- -"$claude_pid" 2>/dev/null; wait "$claude_pid" 2>/dev/null || true' TERM
+
+    wait "$claude_pid" || true
+    trap - TERM
+
+    response=$(cat "$out_file")
 
     if [ -s "$stderr_output" ]; then
         log "claude" "$(cat "$stderr_output")"
