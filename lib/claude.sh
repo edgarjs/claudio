@@ -16,11 +16,11 @@ claude_run() {
 
     local full_prompt=""
     if [ -n "$memories" ]; then
-        full_prompt="$memories"$'\n\n---\n\n'
+        full_prompt="<recalled-memories>"$'\n'"$memories"$'\n'"</recalled-memories>"$'\n\n'
     fi
     if [ -n "$context" ]; then
-        full_prompt+="$context"
-        full_prompt+=$'\n\n---\n\n'"Now respond to this new message:"$'\n\n'"$prompt"
+        full_prompt+="<conversation-history>"$'\n'"$context"$'\n'"</conversation-history>"
+        full_prompt+=$'\n\n'"Now respond to this new message:"$'\n\n'"$prompt"
     else
         full_prompt+="$prompt"
     fi
