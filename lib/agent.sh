@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Parallel agent management for Claudio
-# Spawns independent claude --p processes in detached sessions,
+# Spawns independent claude -p processes in detached sessions,
 # tracks state in SQLite, and handles crash recovery.
 
 # shellcheck source=lib/log.sh

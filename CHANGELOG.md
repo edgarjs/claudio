@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.2.0] - 2026-02-07
+
+### Added
+
+- Cognitive memory system with ACT-R activation scoring, embedding-based retrieval, and LLM consolidation (#19)
+- Automated backup management with rsync-based hourly/daily rotating backups
+- loginctl linger enabled on install/update for headless systemd operation (#30)
+
+### Changed
+
+- Isolate Claude CLI in its own process group to prevent exit 143 (#26)
+- Switch embedding model to sentence-transformers/all-MiniLM-L6-v2 and harden memory system (#27)
+- Skip text follow-up when voice response succeeds (#29)
+
+### Security
+
+- Parameterized SQL queries, bot token hiding, auth enforcement, cloudflared lifecycle management (#28)
+- Safe env file parsing — reject arbitrary code in service.env
+- Pass prompt via stdin to avoid process list exposure
+- Broader XML tag sanitization for prompt injection prevention
+- Parameterized SQL in agent management (agent_poll, agent_get_results, etc.)
+- Hide bot token from `ps` in all curl commands
+- Cap LLM deduplication calls, batch activation queries
+
+### Fixed
+
+- Memory system: missing embedding column in SELECT, stale lock recovery, batched re-embedding
+- Server: close leaked cloudflared log fd, safe UTF-8 decode, monotonic clock for health cache
+- Connection management in db.py (try/finally on all sqlite3.connect)
+- Typing indicator capped at 15 minutes, openssl error handling, armv7l architecture support
+
 ## [1.1.1] - 2026-02-05
 
 ### Added
