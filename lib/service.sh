@@ -81,8 +81,8 @@ deps_install() {
             local url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}"
             echo "Downloading from ${url}..."
             local tmp
-            tmp=$(mktemp)
-            if ! sudo curl -fSL "$url" -o "$tmp"; then
+            tmp=$(mktemp) || { print_error "Failed to create temporary file"; exit 1; }
+            if ! curl -fSL "$url" -o "$tmp"; then
                 rm -f "$tmp"
                 print_error "Failed to download cloudflared from ${url}"
                 exit 1

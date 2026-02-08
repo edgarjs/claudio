@@ -79,7 +79,7 @@ _get_fail_count() {
 
 _set_fail_count() {
     local tmp
-    tmp=$(mktemp "${FAIL_COUNT_FILE}.XXXXXX")
+    tmp=$(mktemp "${FAIL_COUNT_FILE}.XXXXXX") || return 1
     printf '%s' "$1" > "$tmp"
     mv -f "$tmp" "$FAIL_COUNT_FILE"
 }
@@ -87,7 +87,7 @@ _set_fail_count() {
 # Store epoch timestamp in stamp file (portable across GNU/BSD)
 _touch_stamp() {
     local tmp
-    tmp=$(mktemp "${RESTART_STAMP}.XXXXXX")
+    tmp=$(mktemp "${RESTART_STAMP}.XXXXXX") || return 1
     printf '%s' "$(date +%s)" > "$tmp"
     mv -f "$tmp" "$RESTART_STAMP"
 }
