@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2034  # Variables are used by other sourced scripts
 
-CLAUDIO_PATH="$HOME/.claudio"
+export CLAUDIO_PATH="$HOME/.claudio"
 CLAUDIO_ENV_FILE="$CLAUDIO_PATH/service.env"
 CLAUDIO_PROMPT_FILE="$CLAUDIO_PATH/SYSTEM_PROMPT.md"
 CLAUDIO_LOG_FILE="$CLAUDIO_PATH/claudio.log"

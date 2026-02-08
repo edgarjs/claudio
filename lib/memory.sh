@@ -6,7 +6,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
 # Memory system bash glue — invokes lib/memory.py
 # Degrades gracefully if fastembed is not installed
 
-MEMORY_ENABLED="${MEMORY_ENABLED:-1}"
+export MEMORY_ENABLED="${MEMORY_ENABLED:-1}"
 
 _memory_py() {
     local lib_dir
