@@ -13,9 +13,34 @@ setup() {
     unset WEBHOOK_SECRET
     unset PORT
 
-    # Create mock curl in path
+    # Create mock bin directory first in PATH
     export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
     mkdir -p "$BATS_TEST_TMPDIR/bin"
+
+    # Mock systemctl — real systemctl hangs in test environment (no user session)
+    cat > "$BATS_TEST_TMPDIR/bin/systemctl" << 'MOCK'
+#!/bin/bash
+if [[ "$*" == *"--property=MainPID"* ]]; then
+    echo "0"
+elif [[ "$*" == *"list-unit-files"* ]]; then
+    echo "claudio.service enabled"
+elif [[ "$*" == *"restart"* ]]; then
+    exit 0
+elif [[ "$*" == *"is-active"* ]]; then
+    exit 1
+fi
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/systemctl"
+
+    # Mock pgrep — avoid matching real processes in test environment
+    cat > "$BATS_TEST_TMPDIR/bin/pgrep" << 'MOCK'
+#!/bin/bash
+exit 1
+MOCK
+    chmod +x "$BATS_TEST_TMPDIR/bin/pgrep"
+
+    # Default: no backup dir to check (tests override BACKUP_DEST as needed)
+    export BACKUP_DEST="$BATS_TEST_TMPDIR/no-backups"
 }
 
 teardown() {
@@ -155,6 +180,145 @@ EOF
     run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
 
     [ "$status" -eq 0 ]
+}
+
+# --- Tests for expanded health checks ---
+
+@test "log rotation rotates files exceeding max size" {
+    create_env_file
+    create_mock_curl_healthy
+
+    # Set low threshold so rotation triggers
+    export LOG_MAX_SIZE=100
+
+    # Create a log file larger than 100 bytes
+    dd if=/dev/zero of="$CLAUDIO_PATH/test.log" bs=200 count=1 2>/dev/null
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    # Original should be gone, .1 should exist
+    [ ! -f "$CLAUDIO_PATH/test.log" ]
+    [ -f "$CLAUDIO_PATH/test.log.1" ]
+}
+
+@test "log rotation does not rotate small files" {
+    create_env_file
+    create_mock_curl_healthy
+
+    export LOG_MAX_SIZE=10485760
+
+    echo "small" > "$CLAUDIO_PATH/tiny.log"
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    [ -f "$CLAUDIO_PATH/tiny.log" ]
+    [ ! -f "$CLAUDIO_PATH/tiny.log.1" ]
+}
+
+@test "disk usage check passes when under threshold" {
+    create_env_file
+    create_mock_curl_healthy
+
+    # Mock df to return low usage
+    cat > "$BATS_TEST_TMPDIR/bin/df" << 'EOF'
+#!/bin/bash
+echo "Filesystem     1K-blocks    Used Available Use% Mounted on"
+echo "/dev/sda1       30000000 3000000  27000000  10% /"
+echo "/dev/sdb1      200000000  100000 199900000   1% /mnt/ssd"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/df"
+
+    export DISK_USAGE_THRESHOLD=90
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    # Should NOT have disk warning in log
+    ! grep -q "Disk usage high" "$CLAUDIO_PATH/claudio.log" 2>/dev/null
+}
+
+@test "disk usage check warns when over threshold" {
+    create_env_file
+    create_mock_curl_healthy
+
+    cat > "$BATS_TEST_TMPDIR/bin/df" << 'EOF'
+#!/bin/bash
+echo "Filesystem     1K-blocks    Used Available Use% Mounted on"
+echo "/dev/sda1       30000000 28000000   2000000  95% /"
+echo "/dev/sdb1      200000000  100000 199900000   1% /mnt/ssd"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/df"
+
+    export DISK_USAGE_THRESHOLD=90
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    grep -q "Disk usage high" "$CLAUDIO_PATH/claudio.log"
+}
+
+@test "backup freshness passes with recent backup" {
+    create_env_file
+    create_mock_curl_healthy
+
+    # Create a fake backup directory with a recent timestamp
+    local backup_root="$BATS_TEST_TMPDIR/claudio-backups/hourly"
+    mkdir -p "$backup_root"
+    local ts
+    ts=$(date '+%Y-%m-%d_%H%M')
+    mkdir -p "$backup_root/$ts"
+    ln -s "$backup_root/$ts" "$backup_root/latest"
+
+    export BACKUP_DEST="$BATS_TEST_TMPDIR"
+    export BACKUP_MAX_AGE=7200
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    ! grep -q "Backup stale" "$CLAUDIO_PATH/claudio.log" 2>/dev/null
+}
+
+@test "backup freshness warns with old backup" {
+    create_env_file
+    create_mock_curl_healthy
+
+    # Create a fake backup directory with an old timestamp
+    local backup_root="$BATS_TEST_TMPDIR/claudio-backups/hourly"
+    mkdir -p "$backup_root"
+    mkdir -p "$backup_root/2020-01-01_0000"
+    ln -s "$backup_root/2020-01-01_0000" "$backup_root/latest"
+
+    export BACKUP_DEST="$BATS_TEST_TMPDIR"
+    export BACKUP_MAX_AGE=7200
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    grep -q "Backup stale" "$CLAUDIO_PATH/claudio.log"
+}
+
+@test "backup freshness passes when no backup dir exists" {
+    create_env_file
+    create_mock_curl_healthy
+
+    export BACKUP_DEST="$BATS_TEST_TMPDIR/nonexistent"
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    ! grep -q "Backup stale" "$CLAUDIO_PATH/claudio.log" 2>/dev/null
+}
+
+@test "orphan check runs without errors when no processes found" {
+    create_env_file
+    create_mock_curl_healthy
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    ! grep -q "Orphan process" "$CLAUDIO_PATH/claudio.log" 2>/dev/null
 }
 
 @test "cron_install adds cron entry" {
