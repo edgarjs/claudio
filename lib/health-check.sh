@@ -311,7 +311,7 @@ if [ "$http_code" = "200" ]; then
 
     # Send combined alert if anything needs attention
     if [[ -n "$alerts" ]]; then
-        _send_alert "⚠️ Health check warnings: ${alerts}"
+        _send_alert "⚠️ Health check warnings: ${alerts}" || true
     fi
 elif [ "$http_code" = "503" ]; then
     log_error "health-check" "Health check returned unhealthy: $body"
@@ -390,7 +390,7 @@ elif [ "$http_code" = "000" ]; then
 
     if (( fail_count >= MAX_RESTART_ATTEMPTS )); then
         log_error "health-check" "Max restart attempts reached, sending alert"
-        _send_alert "⚠️ Claudio server is down after $MAX_RESTART_ATTEMPTS restart attempts. Please check the server manually."
+        _send_alert "⚠️ Claudio server is down after $MAX_RESTART_ATTEMPTS restart attempts. Please check the server manually." || true
     fi
     exit 1
 else
