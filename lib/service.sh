@@ -80,7 +80,19 @@ deps_install() {
             esac
             local url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}"
             echo "Downloading from ${url}..."
-            sudo curl -sL "$url" -o /usr/local/bin/cloudflared
+            local tmp
+            tmp=$(mktemp)
+            if ! sudo curl -fSL "$url" -o "$tmp"; then
+                rm -f "$tmp"
+                print_error "Failed to download cloudflared from ${url}"
+                exit 1
+            fi
+            if [ ! -s "$tmp" ]; then
+                rm -f "$tmp"
+                print_error "Downloaded cloudflared binary is empty"
+                exit 1
+            fi
+            sudo mv -f "$tmp" /usr/local/bin/cloudflared
             sudo chmod +x /usr/local/bin/cloudflared
         fi
 
@@ -390,7 +402,7 @@ service_status() {
         local health
         health=$(curl -s "http://localhost:${PORT:-8421}/health" 2>/dev/null || echo '{}')
         local webhook_status
-        webhook_status=$(echo "$health" | jq -r '.checks.telegram_webhook.status // "unknown"' 2>/dev/null)
+        webhook_status=$(echo "$health" | jq -r '.checks.telegram_webhook.status // "unknown"' 2>/dev/null) || webhook_status="unknown"
 
         if [ "$webhook_status" = "ok" ]; then
             echo "Webhook:  ✅ Registered"
@@ -401,6 +413,8 @@ service_status() {
             echo "Webhook:  ❌ Mismatch"
             echo "          Expected: $expected"
             echo "          Actual:   $actual"
+        elif [ "$webhook_status" = "unknown" ]; then
+            echo "Webhook:  ⚠️  Unknown (could not parse health response)"
         else
             echo "Webhook:  ❌ Not registered"
         fi
@@ -422,7 +436,9 @@ service_status() {
 
 cron_install() {
     local health_script="${CLAUDIO_LIB}/health-check.sh"
-    local cron_entry="* * * * * export PATH=/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin:\$PATH && . ${CLAUDIO_ENV_FILE} && ${health_script} >> ${CLAUDIO_PATH}/cron.log 2>&1 ${CRON_MARKER}"
+    local cron_entry
+    cron_entry="$(printf '* * * * * export PATH=/usr/local/bin:/usr/bin:/bin:%s/.local/bin:$PATH && . %q && %q >> %q/cron.log 2>&1 %s' \
+        "$HOME" "$CLAUDIO_ENV_FILE" "$health_script" "$CLAUDIO_PATH" "$CRON_MARKER")"
 
     # Remove existing entry if present, then add new one
     (crontab -l 2>/dev/null | grep -v "$CRON_MARKER"; echo "$cron_entry") | crontab -

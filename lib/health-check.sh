@@ -78,12 +78,18 @@ _get_fail_count() {
 }
 
 _set_fail_count() {
-    printf '%s' "$1" > "$FAIL_COUNT_FILE"
+    local tmp
+    tmp=$(mktemp "${FAIL_COUNT_FILE}.XXXXXX")
+    printf '%s' "$1" > "$tmp"
+    mv -f "$tmp" "$FAIL_COUNT_FILE"
 }
 
 # Store epoch timestamp in stamp file (portable across GNU/BSD)
 _touch_stamp() {
-    printf '%s' "$(date +%s)" > "$RESTART_STAMP"
+    local tmp
+    tmp=$(mktemp "${RESTART_STAMP}.XXXXXX")
+    printf '%s' "$(date +%s)" > "$tmp"
+    mv -f "$tmp" "$RESTART_STAMP"
 }
 
 _get_stamp_time() {

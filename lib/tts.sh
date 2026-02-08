@@ -37,6 +37,12 @@ tts_convert() {
         log "tts" "Text truncated to $TTS_MAX_CHARS characters"
     fi
 
+    # Validate model ID format (matches stt.sh voice/model validation)
+    if [[ ! "$ELEVENLABS_MODEL" =~ ^[a-zA-Z0-9_]+$ ]]; then
+        log_error "tts" "Invalid ELEVENLABS_MODEL format"
+        return 1
+    fi
+
     local json_payload
     json_payload=$(jq -n --arg text "$text" --arg model "$ELEVENLABS_MODEL" \
         '{text: $text, model_id: $model}')
