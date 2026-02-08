@@ -148,6 +148,76 @@ symlink_uninstall() {
     fi
 }
 
+# Install Claude Code PreToolUse hook for self-restart protection.
+# Adds the safeguard hook to ~/.claude/settings.json, merging with
+# any existing settings. The hook blocks destructive service commands
+# (systemctl restart/stop, launchctl stop/unload) when running inside
+# a Claudio webhook handler (CLAUDIO_WEBHOOK_ACTIVE=1).
+hooks_install() {
+    local claude_settings="$HOME/.claude/settings.json"
+    local hook_script
+    hook_script="$(cd "$CLAUDIO_LIB" && pwd)/safeguard-hook.sh"
+
+    if [ ! -f "$hook_script" ]; then
+        print_warning "Safeguard hook script not found: $hook_script"
+        return 1
+    fi
+
+    mkdir -p "$HOME/.claude"
+
+    # Build the hook entry
+    local hook_json
+    hook_json=$(jq -n --arg cmd "$hook_script" '{
+        hooks: {
+            PreToolUse: [{
+                matcher: "Bash",
+                hooks: [{
+                    type: "command",
+                    command: $cmd
+                }]
+            }]
+        }
+    }')
+
+    if [ -f "$claude_settings" ]; then
+        # Merge: replace hooks.PreToolUse while preserving everything else
+        local merged
+        merged=$(jq --argjson new "$hook_json" '
+            .hooks.PreToolUse = $new.hooks.PreToolUse
+        ' "$claude_settings")
+        printf '%s\n' "$merged" > "$claude_settings"
+    else
+        printf '%s\n' "$hook_json" > "$claude_settings"
+    fi
+
+    log "service" "Claude Code safeguard hook installed"
+}
+
+# Remove the Claudio safeguard hook from ~/.claude/settings.json.
+hooks_uninstall() {
+    local claude_settings="$HOME/.claude/settings.json"
+
+    if [ ! -f "$claude_settings" ]; then
+        return 0
+    fi
+
+    # Remove PreToolUse entries whose command points to our safeguard hook
+    local updated
+    updated=$(jq '
+        if .hooks.PreToolUse then
+            .hooks.PreToolUse |= map(
+                .hooks |= map(select(.command | test("safeguard-hook\\.sh$") | not))
+                | select(.hooks | length > 0)
+            )
+            | if .hooks.PreToolUse | length == 0 then del(.hooks.PreToolUse) else . end
+            | if .hooks | length == 0 then del(.hooks) else . end
+        else . end
+    ' "$claude_settings")
+    printf '%s\n' "$updated" > "$claude_settings"
+
+    log "service" "Claude Code safeguard hook removed"
+}
+
 service_install() {
     deps_install
     symlink_install
@@ -162,6 +232,7 @@ service_install() {
     fi
 
     cron_install
+    hooks_install
 
     echo ""
     print_success "Claudio service installed and started."
@@ -343,6 +414,7 @@ service_uninstall() {
     fi
 
     cron_uninstall
+    hooks_uninstall
     symlink_uninstall
     print_success "Claudio service removed."
 
@@ -490,6 +562,8 @@ service_update() {
     fi
 
     print_success "Claudio updated successfully."
+    # Ensure safeguard hook is installed/refreshed on update
+    hooks_install
     if [[ "${CLAUDIO_WEBHOOK_ACTIVE:-}" == "1" ]]; then
         print_warning "Restart blocked (running inside webhook handler). Ask the user to restart manually."
     else

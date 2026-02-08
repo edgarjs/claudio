@@ -26,7 +26,7 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 - `lib/memory.py` — Python backend for cognitive memory: embedding generation (fastembed), SQLite-backed storage, ACT-R activation scoring for retrieval, and memory consolidation via Claude.
 - `lib/db.py` — Python SQLite helper providing parameterized queries to eliminate SQL injection risk. Used by `db.sh` and `agent.sh`.
 - `lib/service.sh` — systemd (Linux) and launchd (macOS) service management. Also handles cloudflared installation and named tunnel setup during `claudio install`. Enables loginctl linger on install/update (so the user service survives logout) and disables it on uninstall if no other user services remain.
-- `lib/safeguards/` — Wrapper scripts for `systemctl` and `launchctl` that intercept service restart/stop commands when running inside a webhook handler (`CLAUDIO_WEBHOOK_ACTIVE=1`).
+- `lib/safeguard-hook.sh` — Claude Code `PreToolUse` hook that blocks destructive service commands (`systemctl restart/stop`, `launchctl stop/unload`) when running inside a webhook handler (`CLAUDIO_WEBHOOK_ACTIVE=1`). Registered in `~/.claude/settings.json` by `claudio install`.
 - Runtime config/state lives in `$HOME/.claudio/` (not in the repo).
 
 ## Development
