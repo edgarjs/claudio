@@ -777,12 +777,11 @@ Respond with valid JSON matching this schema. No other text:
         result = subprocess.run(
             [
                 claude_cmd,
-                "--dangerously-skip-permissions",
                 "--model", CONSOLIDATION_MODEL,
                 "--no-chrome",
                 "--no-session-persistence",
-                "--permission-mode", "bypassPermissions",
                 "--output-format", "text",
+                "--tools", "",
                 "-p", f"{system_prompt}\n\n---\n\n{user_prompt}",
             ],
             capture_output=True,
@@ -957,12 +956,11 @@ def _verify_relationship(existing: str, new: str) -> str:
         result = subprocess.run(
             [
                 claude_cmd,
-                "--dangerously-skip-permissions",
                 "--model", CONSOLIDATION_MODEL,
                 "--no-chrome",
                 "--no-session-persistence",
-                "--permission-mode", "bypassPermissions",
                 "--output-format", "text",
+                "--tools", "",
                 "-p", prompt,
             ],
             capture_output=True,

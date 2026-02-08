@@ -14,7 +14,6 @@ WEBHOOK_URL="${WEBHOOK_URL:-}"
 TUNNEL_NAME="${TUNNEL_NAME:-}"
 TUNNEL_HOSTNAME="${TUNNEL_HOSTNAME:-}"
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
-IS_SANDBOX="${IS_SANDBOX:-}"
 WEBHOOK_RETRY_DELAY="${WEBHOOK_RETRY_DELAY:-60}"
 ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-}"
 ELEVENLABS_VOICE_ID="${ELEVENLABS_VOICE_ID:-iP95p4xoKVk53GoZ742B}"
@@ -57,12 +56,6 @@ claudio_init() {
     mkdir -p "$CLAUDIO_PATH"
 
     _safe_load_env "$CLAUDIO_ENV_FILE"
-
-    # Claude Code requires IS_SANDBOX=1 when running as root
-    if [ "$(id -u)" -eq 0 ] && [ "$IS_SANDBOX" != "1" ]; then
-        IS_SANDBOX=1
-        export IS_SANDBOX
-    fi
 
     # Auto-generate WEBHOOK_SECRET if not set (required for security)
     if [ -z "$WEBHOOK_SECRET" ]; then
@@ -150,7 +143,6 @@ claudio_save_env() {
             printf 'TUNNEL_HOSTNAME="%s"\n' "$(_env_quote "$TUNNEL_HOSTNAME")"
             printf 'WEBHOOK_SECRET="%s"\n' "$(_env_quote "$WEBHOOK_SECRET")"
             printf 'WEBHOOK_RETRY_DELAY="%s"\n' "$(_env_quote "$WEBHOOK_RETRY_DELAY")"
-            printf 'IS_SANDBOX="%s"\n' "$(_env_quote "$IS_SANDBOX")"
             printf 'ELEVENLABS_API_KEY="%s"\n' "$(_env_quote "$ELEVENLABS_API_KEY")"
             printf 'ELEVENLABS_VOICE_ID="%s"\n' "$(_env_quote "$ELEVENLABS_VOICE_ID")"
             printf 'ELEVENLABS_STT_MODEL="%s"\n' "$(_env_quote "$ELEVENLABS_STT_MODEL")"

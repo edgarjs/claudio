@@ -97,7 +97,7 @@ This ensures tests pass before any commit is allowed.
 
 ## Security
 
-Claudio runs Claude Code with `--dangerously-skip-permissions` and `--permission-mode bypassPermissions` by design — there's no human at the terminal to approve prompts. When contributing:
+Claudio runs Claude Code with all tools auto-approved (`--tools` + `--allowedTools`) by design — there's no human at the terminal to approve prompts. When contributing:
 
 - Be mindful of security implications in any change
 - Do not introduce vulnerabilities that could expose user systems

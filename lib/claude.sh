@@ -26,13 +26,13 @@ claude_run() {
     fi
 
     local -a claude_args=(
-        --dangerously-skip-permissions
         --disable-slash-commands
         --model "$MODEL"
         --no-chrome
         --no-session-persistence
         --output-format json
-        --permission-mode bypassPermissions
+        --tools "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch,Task,TaskOutput,TaskStop,TodoWrite"
+        --allowedTools "Read" "Write" "Edit" "Bash" "Glob" "Grep" "WebFetch" "WebSearch" "Task" "TaskOutput" "TaskStop" "TodoWrite"
         -p -
     )
 
