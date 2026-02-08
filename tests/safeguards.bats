@@ -3,17 +3,28 @@
 # Tests for self-restart protection (defense in depth):
 # 1. service_restart() function guard
 # 2. claudio restart command guard
-# 3. PATH wrapper safeguards for systemctl/launchctl
+# 3. Claude Code PreToolUse safeguard hook (lib/safeguard-hook.sh)
+# 4. hooks_install/hooks_uninstall in service.sh
 
 setup() {
-    SAFEGUARDS_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../lib/safeguards" && pwd)"
     PROJECT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    HOOK_SCRIPT="$PROJECT_DIR/lib/safeguard-hook.sh"
     export CLAUDIO_WEBHOOK_ACTIVE="1"
-    export PATH="$SAFEGUARDS_DIR:$PATH"
 }
 
 teardown() {
     unset CLAUDIO_WEBHOOK_ACTIVE
+}
+
+# Helper: feed a fake PreToolUse JSON event to the hook script via jq
+# (properly escapes quotes, backslashes, and special characters in commands)
+_run_hook() {
+    local command="$1"
+    local input_file="$BATS_TEST_TMPDIR/hook_input.json"
+    jq -n --arg cmd "$command" \
+        '{hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:$cmd}}' \
+        > "$input_file"
+    run "$HOOK_SCRIPT" < "$input_file"
 }
 
 # ── Layer 1: service_restart function guard ────────────────────────
@@ -58,172 +69,196 @@ teardown() {
     [[ "$output" != *"BLOCKED"* ]]
 }
 
-# ── Layer 3: systemctl PATH wrapper ───────────────────────────────
+# ── Layer 3: PreToolUse safeguard hook ─────────────────────────────
 
-@test "systemctl wrapper: blocks 'restart claudio' inside webhook" {
-    run "$SAFEGUARDS_DIR/systemctl" --user restart claudio
-    [ "$status" -eq 1 ]
+# systemctl blocking
+
+@test "hook: blocks 'systemctl restart claudio' inside webhook" {
+    _run_hook "systemctl --user restart claudio"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
     [[ "$output" == *"BLOCKED"* ]]
 }
 
-@test "systemctl wrapper: blocks 'stop claudio' inside webhook" {
-    run "$SAFEGUARDS_DIR/systemctl" --user stop claudio
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"BLOCKED"* ]]
+@test "hook: blocks 'systemctl stop claudio' inside webhook" {
+    _run_hook "systemctl --user stop claudio"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
 }
 
-@test "systemctl wrapper: blocks 'kill claudio' inside webhook" {
-    run "$SAFEGUARDS_DIR/systemctl" --user kill claudio
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"BLOCKED"* ]]
+@test "hook: blocks 'systemctl kill claudio' inside webhook" {
+    _run_hook "systemctl --user kill claudio"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
 }
 
-@test "systemctl wrapper: blocks 'reload-or-restart claudio' inside webhook" {
-    run "$SAFEGUARDS_DIR/systemctl" --user reload-or-restart claudio
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"BLOCKED"* ]]
+@test "hook: blocks 'systemctl reload-or-restart claudio' inside webhook" {
+    _run_hook "systemctl --user reload-or-restart claudio"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
 }
 
-@test "systemctl wrapper: blocks 'try-restart claudio' inside webhook" {
-    run "$SAFEGUARDS_DIR/systemctl" --user try-restart claudio
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"BLOCKED"* ]]
+@test "hook: blocks 'systemctl try-restart claudio' inside webhook" {
+    _run_hook "systemctl --user try-restart claudio"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
 }
 
-@test "systemctl wrapper: blocks 'restart claudio.service' inside webhook" {
-    run "$SAFEGUARDS_DIR/systemctl" --user restart claudio.service
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"BLOCKED"* ]]
+@test "hook: blocks 'systemctl restart claudio.service' inside webhook" {
+    _run_hook "systemctl --user restart claudio.service"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
 }
 
-@test "systemctl wrapper: blocks when service name appears before action" {
-    run "$SAFEGUARDS_DIR/systemctl" --user claudio restart
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"BLOCKED"* ]]
+@test "hook: blocks systemctl via absolute path" {
+    _run_hook "/usr/bin/systemctl --user restart claudio"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
 }
 
-@test "launchctl wrapper: blocks when service name appears before action" {
-    run "$SAFEGUARDS_DIR/launchctl" com.claudio.server stop
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"BLOCKED"* ]]
+# systemctl allowing
+
+@test "hook: allows 'systemctl status claudio' inside webhook" {
+    _run_hook "systemctl --user status claudio"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"deny"* ]]
 }
 
-@test "systemctl wrapper: allows 'status claudio' inside webhook" {
-    # Mock real systemctl so passthrough doesn't hit the real one
-    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
-    mkdir -p "$mock_dir"
-    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/systemctl"
-    chmod +x "$mock_dir/systemctl"
-    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
-    run "$SAFEGUARDS_DIR/systemctl" --user status claudio
-    [[ "$output" != *"BLOCKED"* ]]
+@test "hook: allows 'systemctl daemon-reload' inside webhook" {
+    _run_hook "systemctl --user daemon-reload"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"deny"* ]]
 }
 
-@test "systemctl wrapper: allows 'daemon-reload' inside webhook" {
-    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
-    mkdir -p "$mock_dir"
-    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/systemctl"
-    chmod +x "$mock_dir/systemctl"
-    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
-    run "$SAFEGUARDS_DIR/systemctl" --user daemon-reload
-    [[ "$output" != *"BLOCKED"* ]]
+@test "hook: allows 'systemctl restart other-service' inside webhook" {
+    _run_hook "systemctl --user restart other-service"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"deny"* ]]
 }
 
-@test "systemctl wrapper: allows 'restart other-service' inside webhook" {
-    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
-    mkdir -p "$mock_dir"
-    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/systemctl"
-    chmod +x "$mock_dir/systemctl"
-    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
-    run "$SAFEGUARDS_DIR/systemctl" --user restart other-service
-    [[ "$output" != *"BLOCKED"* ]]
+# launchctl blocking
+
+@test "hook: blocks 'launchctl stop com.claudio.server' inside webhook" {
+    _run_hook "launchctl stop com.claudio.server"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
 }
 
-@test "systemctl wrapper: passes through when CLAUDIO_WEBHOOK_ACTIVE unset" {
+@test "hook: blocks 'launchctl bootout' with claudio inside webhook" {
+    _run_hook "launchctl bootout gui/501/com.claudio.server"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
+}
+
+@test "hook: blocks 'launchctl unload' with claudio plist inside webhook" {
+    _run_hook "launchctl unload ~/Library/LaunchAgents/com.claudio.server.plist"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
+}
+
+@test "hook: blocks 'launchctl kickstart -k' with claudio inside webhook" {
+    _run_hook "launchctl kickstart -k system/com.claudio.server"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deny"* ]]
+}
+
+# launchctl allowing
+
+@test "hook: allows 'launchctl list' inside webhook" {
+    _run_hook "launchctl list"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"deny"* ]]
+}
+
+# CLAUDIO_WEBHOOK_ACTIVE guard
+
+@test "hook: passes through all commands when CLAUDIO_WEBHOOK_ACTIVE unset" {
     unset CLAUDIO_WEBHOOK_ACTIVE
-    # Create a fake real systemctl so the wrapper passes through to it (not the real one)
-    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
-    mkdir -p "$mock_dir"
-    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/systemctl"
-    chmod +x "$mock_dir/systemctl"
-    # Put mock AFTER safeguards so wrapper finds mock as "real" systemctl
-    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
-    run "$SAFEGUARDS_DIR/systemctl" --user restart claudio
-    [[ "$output" != *"BLOCKED"* ]]
-    [[ "$output" == *"passthrough"* ]]
+    _run_hook "systemctl --user restart claudio"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"deny"* ]]
 }
 
-# ── Layer 3: launchctl PATH wrapper ──────────────────────────────
+# ── Layer 3: hooks_install / hooks_uninstall ───────────────────────
 
-@test "launchctl wrapper: blocks 'stop com.claudio.server' inside webhook" {
-    run "$SAFEGUARDS_DIR/launchctl" stop com.claudio.server
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"BLOCKED"* ]]
+@test "hooks_install: writes PreToolUse hook to settings" {
+    local tmp_home="$BATS_TEST_TMPDIR/home"
+    mkdir -p "$tmp_home/.claude"
+    echo '{"statusLine": {"type": "command"}}' > "$tmp_home/.claude/settings.json"
+    run env HOME="$tmp_home" bash -c "source '$PROJECT_DIR/lib/service.sh' && hooks_install"
+    [ "$status" -eq 0 ]
+    # Verify hook was added
+    run jq -r '.hooks.PreToolUse[0].hooks[0].command' "$tmp_home/.claude/settings.json"
+    [[ "$output" == *"safeguard-hook.sh"* ]]
+    # Verify existing settings preserved
+    run jq -r '.statusLine.type' "$tmp_home/.claude/settings.json"
+    [ "$output" = "command" ]
 }
 
-@test "launchctl wrapper: blocks 'bootout' with claudio inside webhook" {
-    run "$SAFEGUARDS_DIR/launchctl" bootout gui/501/com.claudio.server
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"BLOCKED"* ]]
+@test "hooks_install: preserves other PreToolUse hooks" {
+    local tmp_home="$BATS_TEST_TMPDIR/home_preserve"
+    mkdir -p "$tmp_home/.claude"
+    cat > "$tmp_home/.claude/settings.json" <<'EOF'
+{
+    "hooks": {
+        "PreToolUse": [
+            {
+                "matcher": "Python",
+                "hooks": [{"type": "command", "command": "/usr/bin/my-python-hook"}]
+            }
+        ]
+    }
+}
+EOF
+    run env HOME="$tmp_home" bash -c "source '$PROJECT_DIR/lib/service.sh' && hooks_install"
+    [ "$status" -eq 0 ]
+    # Verify our hook was added
+    run jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' "$tmp_home/.claude/settings.json"
+    [[ "$output" == *"safeguard-hook.sh"* ]]
+    # Verify existing Python hook was preserved
+    run jq -r '.hooks.PreToolUse[] | select(.matcher == "Python") | .hooks[0].command' "$tmp_home/.claude/settings.json"
+    [ "$output" = "/usr/bin/my-python-hook" ]
 }
 
-@test "launchctl wrapper: blocks 'unload' with claudio plist inside webhook" {
-    run "$SAFEGUARDS_DIR/launchctl" unload ~/Library/LaunchAgents/com.claudio.server.plist
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"BLOCKED"* ]]
+@test "hooks_install: creates settings.json if missing" {
+    local tmp_home="$BATS_TEST_TMPDIR/home_new"
+    mkdir -p "$tmp_home"
+    run env HOME="$tmp_home" bash -c "source '$PROJECT_DIR/lib/service.sh' && hooks_install"
+    [ "$status" -eq 0 ]
+    [ -f "$tmp_home/.claude/settings.json" ]
+    run jq -r '.hooks.PreToolUse[0].matcher' "$tmp_home/.claude/settings.json"
+    [ "$output" = "Bash" ]
 }
 
-@test "launchctl wrapper: allows 'list' inside webhook" {
-    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
-    mkdir -p "$mock_dir"
-    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/launchctl"
-    chmod +x "$mock_dir/launchctl"
-    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
-    run "$SAFEGUARDS_DIR/launchctl" list
-    [[ "$output" != *"BLOCKED"* ]]
+@test "hooks_uninstall: removes safeguard hook from settings" {
+    local tmp_home="$BATS_TEST_TMPDIR/home_rm"
+    mkdir -p "$tmp_home/.claude"
+    cat > "$tmp_home/.claude/settings.json" <<'EOF'
+{"statusLine":{"type":"command"},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/path/to/safeguard-hook.sh"}]}]}}
+EOF
+    run env HOME="$tmp_home" bash -c "source '$PROJECT_DIR/lib/service.sh' && hooks_uninstall"
+    [ "$status" -eq 0 ]
+    # Hook should be gone
+    run jq '.hooks' "$tmp_home/.claude/settings.json"
+    [ "$output" = "null" ]
+    # Other settings preserved
+    run jq -r '.statusLine.type' "$tmp_home/.claude/settings.json"
+    [ "$output" = "command" ]
 }
 
-@test "launchctl wrapper: passes through when CLAUDIO_WEBHOOK_ACTIVE unset" {
-    unset CLAUDIO_WEBHOOK_ACTIVE
-    # Create a fake real launchctl so the wrapper passes through to it
-    local mock_dir="$BATS_TEST_TMPDIR/mock_bin"
-    mkdir -p "$mock_dir"
-    printf '#!/bin/bash\necho "passthrough: $*"\n' > "$mock_dir/launchctl"
-    chmod +x "$mock_dir/launchctl"
-    export PATH="$SAFEGUARDS_DIR:$mock_dir:${PATH#*$SAFEGUARDS_DIR:}"
-    run "$SAFEGUARDS_DIR/launchctl" stop com.claudio.server
-    [[ "$output" != *"BLOCKED"* ]]
-    [[ "$output" == *"passthrough"* ]]
+@test "hooks_uninstall: no-op when no settings file exists" {
+    local tmp_home="$BATS_TEST_TMPDIR/home_noop"
+    mkdir -p "$tmp_home"
+    run env HOME="$tmp_home" bash -c "source '$PROJECT_DIR/lib/service.sh' && hooks_uninstall"
+    [ "$status" -eq 0 ]
 }
 
-# ── Agent safeguards propagation ──────────────────────────────────
+# ── Agent CLAUDIO_WEBHOOK_ACTIVE propagation ──────────────────────
 
 @test "agent_spawn code includes CLAUDIO_WEBHOOK_ACTIVE env var" {
     # Verify agent.sh passes CLAUDIO_WEBHOOK_ACTIVE in the env -i calls
     run grep -c 'CLAUDIO_WEBHOOK_ACTIVE=' "$PROJECT_DIR/lib/agent.sh"
     [ "$output" -ge 2 ]  # Should appear in both setsid and perl branches
-}
-
-@test "agent_spawn code prepends safeguards dir to PATH" {
-    # Verify agent.sh builds agent_path with safeguards dir
-    run grep 'safeguards_dir' "$PROJECT_DIR/lib/agent.sh"
-    [ "$status" -eq 0 ]
-    run grep 'agent_path=' "$PROJECT_DIR/lib/agent.sh"
-    [ "$status" -eq 0 ]
-}
-
-# ── PATH resolution ──────────────────────────────────────────────
-
-@test "systemctl wrapper shadows real systemctl in PATH" {
-    local wrapper
-    wrapper=$(command -v systemctl)
-    [ "$wrapper" = "$SAFEGUARDS_DIR/systemctl" ]
-}
-
-@test "launchctl wrapper shadows real launchctl in PATH" {
-    local wrapper
-    wrapper=$(command -v launchctl)
-    [ "$wrapper" = "$SAFEGUARDS_DIR/launchctl" ]
 }
 
 # ── Systemd unit file template ──────────────────────────────────
