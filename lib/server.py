@@ -16,7 +16,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
 MAX_BODY_SIZE = 1024 * 1024  # 1 MB
-MAX_QUEUE_SIZE = 100  # Max queued messages per chat
+MAX_QUEUE_SIZE = 5  # Max queued messages per chat
 WEBHOOK_TIMEOUT = 600  # 10 minutes max per Claude invocation
 HEALTH_CACHE_TTL = 30  # seconds between health check API calls
 QUEUE_WARNING_RATIO = 0.8  # Warn when queue reaches this fraction of max
