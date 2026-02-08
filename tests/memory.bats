@@ -13,15 +13,15 @@ setup() {
 }
 
 teardown() {
-    # Stop daemon if running (kill process group since we used setsid)
+    # Stop daemon if running — kill the process group (setsid gives it its own)
     if [ -n "${_daemon_pid:-}" ] && kill -0 "$_daemon_pid" 2>/dev/null; then
-        kill "$_daemon_pid" 2>/dev/null || true
+        kill -- -"$_daemon_pid" 2>/dev/null || kill "$_daemon_pid" 2>/dev/null || true
         # Wait briefly for clean shutdown
         for _ in 1 2 3 4 5; do
             kill -0 "$_daemon_pid" 2>/dev/null || break
             sleep 0.2
         done
-        kill -9 "$_daemon_pid" 2>/dev/null || true
+        kill -9 -- -"$_daemon_pid" 2>/dev/null || kill -9 "$_daemon_pid" 2>/dev/null || true
     fi
     _daemon_pid=""
     rm -f "$CLAUDIO_DB_FILE" "$CLAUDIO_LOG_FILE" "$CLAUDIO_PATH/memory.sock"

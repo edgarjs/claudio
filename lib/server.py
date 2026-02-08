@@ -555,7 +555,8 @@ def main():
 
     # Start memory daemon (pre-loads ONNX model to eliminate cold-start)
     global _memory_proc
-    _memory_proc = _start_memory_daemon()
+    if os.environ.get("MEMORY_ENABLED", "1") == "1":
+        _memory_proc = _start_memory_daemon()
 
     # Start cloudflared tunnel (managed by Python for proper cleanup)
     cloudflared_proc = _start_cloudflared()
