@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.2] - 2026-02-08
+
+### Fixed
+
+- Health-check false alarm about linger in cron: set `XDG_RUNTIME_DIR` on Linux when missing (#45)
+
 ## [1.2.1] - 2026-02-08
 
 ### Added
