@@ -251,7 +251,7 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `DISK_USAGE_THRESHOLD` — Disk usage percentage to trigger alerts. Default: `90`.
 - `LOG_MAX_SIZE` — Maximum log file size in bytes before rotation. Default: `10485760` (10 MB).
 - `BACKUP_MAX_AGE` — Maximum backup age in seconds before alerting. Default: `7200` (2 hours).
-- `BACKUP_DEST` — Backup destination path for freshness checks. Default: `/mnt/ssd`.
+- `BACKUP_DEST` — Backup destination path for freshness checks. Default: `/mnt/ssd` (customize to your backup location).
 
 **Tunnel**
 
