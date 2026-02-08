@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.2.1] - 2026-02-08
+
+### Added
+
+- Persistent memory daemon to eliminate per-webhook ONNX cold-start latency (#40)
+- Enrich no-caption image/document history with response summary (#42)
+- `MAX_HISTORY_LINES` configurable variable restored (#34)
+
+### Changed
+
+- Replace `--dangerously-skip-permissions` with explicit tool allowlisting
+- Replace PATH wrapper safeguards with Claude Code PreToolUse hook
+- Remove custom subagents in favor of Claude Code's built-in Task tool (#38)
+- Remove safeguard hook and `CLAUDIO_WEBHOOK_ACTIVE` env var
+- Reduce `MAX_QUEUE_SIZE` from 100 to 5 (#43)
+
+### Security
+
+- Health check: validate response body, not just HTTP status (#44)
+- TTS: verify ElevenLabs API response before writing audio file (#44)
+- Service: harden launchd plist permissions and cloudflared install (#44)
+- Server: atomic PID file writes with `os.replace` (#44)
+
+### Fixed
+
+- Memory retry loop, token tracking, and SQLite consistency (#33)
+
 ## [1.2.0] - 2026-02-07
 
 ### Added
