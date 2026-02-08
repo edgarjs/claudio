@@ -6,7 +6,6 @@ setup() {
     export TMPDIR="$BATS_TEST_TMPDIR"
     export CLAUDIO_PATH="$BATS_TEST_TMPDIR"
     export CLAUDIO_DB_FILE="$BATS_TEST_TMPDIR/test.db"
-    export CLAUDIO_PROMPT_FILE="$BATS_TEST_TMPDIR/SYSTEM_PROMPT.md"
     export CLAUDIO_LOG_FILE="$BATS_TEST_TMPDIR/claudio.log"
     export MODEL="sonnet"
 

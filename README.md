@@ -202,7 +202,7 @@ claudio backup cron uninstall
 
 ### System Prompt
 
-Claudio appends a system prompt that defines its persona, core principles, and communication style (optimized for chat). The default is generated on first run at `$HOME/.claudio/SYSTEM_PROMPT.md`. You can customize it by editing that file — it's read at runtime so no need to restart.
+To customize Claude's behavior, use `~/.claude/CLAUDE.md` (Claude Code's built-in configuration file). Instructions there are loaded automatically by Claude Code on every invocation and persist across updates.
 
 ### Configuration
 
