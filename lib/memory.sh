@@ -19,6 +19,11 @@ memory_init() {
         return 0
     fi
 
+    # If daemon is running, skip init (schema already initialized, model loaded)
+    if [ -S "${CLAUDIO_PATH}/memory.sock" ]; then
+        return 0
+    fi
+
     # Verify fastembed is importable
     if ! python3 -c "import fastembed" 2>/dev/null; then
         log_warn "memory" "fastembed not installed — memory system disabled"
