@@ -253,14 +253,6 @@ EOF
     [ "$status" -eq 0 ]
 }
 
-# ── Agent CLAUDIO_WEBHOOK_ACTIVE propagation ──────────────────────
-
-@test "agent_spawn code includes CLAUDIO_WEBHOOK_ACTIVE env var" {
-    # Verify agent.sh passes CLAUDIO_WEBHOOK_ACTIVE in the env -i calls
-    run grep -c 'CLAUDIO_WEBHOOK_ACTIVE=' "$PROJECT_DIR/lib/agent.sh"
-    [ "$output" -ge 2 ]  # Should appear in both setsid and perl branches
-}
-
 # ── Systemd unit file template ──────────────────────────────────
 
 @test "systemd template includes StartLimitIntervalSec" {
@@ -278,7 +270,3 @@ EOF
     [ "$output" = "1" ]
 }
 
-@test "systemd template does not include ExecStartPre (agents must survive restarts)" {
-    run grep -c "ExecStartPre=" "$PROJECT_DIR/lib/service.sh"
-    [ "$output" = "0" ]
-}

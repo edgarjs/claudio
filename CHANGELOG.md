@@ -20,7 +20,7 @@
 - Safe env file parsing — reject arbitrary code in service.env
 - Pass prompt via stdin to avoid process list exposure
 - Broader XML tag sanitization for prompt injection prevention
-- Parameterized SQL in agent management (agent_poll, agent_get_results, etc.)
+- Parameterized SQL in agent management (removed in favor of Claude Code's built-in Task tool)
 - Hide bot token from `ps` in all curl commands
 - Cap LLM deduplication calls, batch activation queries
 
