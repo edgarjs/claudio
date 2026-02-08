@@ -46,7 +46,6 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/memory.py` — Python memory backend: embeddings, retrieval, consolidation
 - `lib/db.py` — Python SQLite helper with parameterized queries
 - `lib/service.sh` — systemd/launchd service management and cloudflared setup
-- `lib/safeguard-hook.sh` — Claude Code `PreToolUse` hook that blocks destructive service commands inside webhook handlers
 
 ## Running Tests
 

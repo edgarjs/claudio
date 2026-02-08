@@ -89,11 +89,6 @@ def _process_queue_loop(chat_id):
                 if local_bin not in env.get("PATH", "").split(os.pathsep):
                     env["PATH"] = f"{local_bin}{os.pathsep}{env.get('PATH', '')}"
 
-                # Mark this process as running inside a webhook handler so the
-                # Claude Code PreToolUse safeguard hook can block destructive
-                # service commands (systemctl restart, launchctl stop, etc.)
-                env["CLAUDIO_WEBHOOK_ACTIVE"] = "1"
-
                 proc = subprocess.Popen(
                     [CLAUDIO_BIN, "_webhook"],
                     stdin=subprocess.PIPE,

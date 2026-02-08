@@ -50,3 +50,20 @@ EOF
 
     kill $pid 2>/dev/null || true
 }
+
+# ── Systemd unit file template ──────────────────────────────────
+
+@test "systemd template includes StartLimitIntervalSec" {
+    run grep -c "StartLimitIntervalSec=" "$BATS_TEST_DIRNAME/../lib/service.sh"
+    [ "$output" = "1" ]
+}
+
+@test "systemd template includes StartLimitBurst" {
+    run grep -c "StartLimitBurst=" "$BATS_TEST_DIRNAME/../lib/service.sh"
+    [ "$output" = "1" ]
+}
+
+@test "systemd template includes KillMode=mixed" {
+    run grep -c "KillMode=mixed" "$BATS_TEST_DIRNAME/../lib/service.sh"
+    [ "$output" = "1" ]
+}
