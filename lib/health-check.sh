@@ -52,6 +52,11 @@ _safe_load_env "$CLAUDIO_ENV_FILE"
 
 PORT="${PORT:-8421}"
 
+# Ensure XDG_RUNTIME_DIR is set on Linux (cron doesn't provide it, needed for systemctl --user)
+if [[ "$(uname)" != "Darwin" ]]; then
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+fi
+
 # Send a Telegram alert message (standalone, no dependency on telegram.sh)
 _send_alert() {
     local message="$1"
