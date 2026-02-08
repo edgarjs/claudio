@@ -13,7 +13,7 @@ _sanitize_for_prompt() {
 # Collapse text to a single line, trimmed and truncated to 200 chars
 _summarize() {
     local summary
-    summary=$(printf '%s' "$1" | tr '\n' ' ' | sed -E 's/^[[:space:]]*//;s/[[:space:]]+/ /g')
+    summary=$(printf '%s' "$1" | _sanitize_for_prompt | tr '\n' ' ' | sed -E 's/^[[:space:]]*//;s/[[:space:]]+/ /g')
     [ ${#summary} -gt 200 ] && summary="${summary:0:200}..."
     printf '%s' "$summary"
 }
@@ -559,10 +559,12 @@ Read this file and summarize its contents."
     # prompt, so it doesn't need to be in history for this request, and (2) we need Claude's
     # response to generate the summary.
     if [ -n "$response" ]; then
-        if [ -n "$image_file" ] && [ -z "${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}" ]; then
-            history_text="[Sent an image: $(_summarize "$response")]"
-        elif [ -n "$doc_file" ] && [ -z "${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}" ]; then
-            history_text="[Sent a file \"${doc_name}\": $(_summarize "$response")]"
+        if [ -z "${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}" ]; then
+            if [ -n "$image_file" ]; then
+                history_text="[Sent an image: $(_summarize "$response")]"
+            elif [ -n "$doc_file" ]; then
+                history_text="[Sent a file \"${doc_name}\": $(_summarize "$response")]"
+            fi
         fi
     fi
 
