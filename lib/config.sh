@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2034  # Variables are used by other sourced scripts
 
-CLAUDIO_PATH="$HOME/.claudio"
+export CLAUDIO_PATH="$HOME/.claudio"
 CLAUDIO_ENV_FILE="$CLAUDIO_PATH/service.env"
 CLAUDIO_PROMPT_FILE="$CLAUDIO_PATH/SYSTEM_PROMPT.md"
 CLAUDIO_LOG_FILE="$CLAUDIO_PATH/claudio.log"
@@ -19,7 +19,7 @@ ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-}"
 ELEVENLABS_VOICE_ID="${ELEVENLABS_VOICE_ID:-iP95p4xoKVk53GoZ742B}"
 ELEVENLABS_MODEL="${ELEVENLABS_MODEL:-eleven_multilingual_v2}"
 ELEVENLABS_STT_MODEL="${ELEVENLABS_STT_MODEL:-scribe_v1}"
-MEMORY_ENABLED="${MEMORY_ENABLED:-1}"
+export MEMORY_ENABLED="${MEMORY_ENABLED:-1}"
 MEMORY_EMBEDDING_MODEL="${MEMORY_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
 MEMORY_CONSOLIDATION_MODEL="${MEMORY_CONSOLIDATION_MODEL:-haiku}"
 MAX_HISTORY_LINES="${MAX_HISTORY_LINES:-20}"
@@ -55,6 +55,7 @@ _safe_load_env() {
 
 claudio_init() {
     mkdir -p "$CLAUDIO_PATH"
+    chmod 700 "$CLAUDIO_PATH"
 
     _safe_load_env "$CLAUDIO_ENV_FILE"
 

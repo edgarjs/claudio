@@ -1,6 +1,6 @@
 #!/bin/bash
 
-CLAUDIO_DB_FILE="${CLAUDIO_DB_FILE:-$CLAUDIO_PATH/history.db}"
+export CLAUDIO_DB_FILE="${CLAUDIO_DB_FILE:-$CLAUDIO_PATH/history.db}"
 
 _db_py() {
     python3 "$(dirname "${BASH_SOURCE[0]}")/db.py" "$@"

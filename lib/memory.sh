@@ -6,8 +6,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
 # Memory system bash glue — invokes lib/memory.py
 # Degrades gracefully if fastembed is not installed
 
-MEMORY_ENABLED="${MEMORY_ENABLED:-1}"
-
 _memory_py() {
     local lib_dir
     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,7 +27,6 @@ memory_init() {
         log_warn "memory" "fastembed not installed — memory system disabled"
         log_warn "memory" "Install with: pip3 install --user fastembed"
         MEMORY_ENABLED=0
-        export MEMORY_ENABLED
         return 0
     fi
 
@@ -43,7 +40,6 @@ memory_init() {
     ( set -o pipefail; python3 "$(_memory_py)" "${init_args[@]}" 2>&1 | while IFS= read -r line; do log "memory" "$line"; done ) || {
         log_warn "memory" "Failed to initialize memory schema"
         MEMORY_ENABLED=0
-        export MEMORY_ENABLED
     }
 }
 

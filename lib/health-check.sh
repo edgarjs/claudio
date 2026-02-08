@@ -245,8 +245,8 @@ _check_backup_freshness() {
     fi
     [[ -z "$latest" ]] && return 1  # backup dir exists but empty
 
-    # Resolve symlink
-    [[ -L "$latest" ]] && latest=$(readlink -f "$latest")
+    # Resolve symlink (readlink -f is GNU-only, not available on macOS)
+    [[ -L "$latest" ]] && latest=$(cd "$(dirname "$latest")" && cd "$(dirname "$(readlink "$latest")")" && pwd)/$(basename "$(readlink "$latest")")
 
     local dir_name
     dir_name=$(basename "$latest")
