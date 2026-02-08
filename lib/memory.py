@@ -83,8 +83,8 @@ def _try_daemon(request: dict) -> dict | None:
             buf += chunk
         if buf:
             return json.loads(buf.strip())
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"WARNING: Could not communicate with memory daemon: {e}", file=sys.stderr)
     finally:
         sock.close()
     return None
@@ -1292,9 +1292,6 @@ def serve():
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
-
-    # Signal readiness to parent process
-    print("MEMORY_DAEMON_READY", flush=True)
 
     # Run server in a thread so signal handler can trigger shutdown
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)

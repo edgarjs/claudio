@@ -431,7 +431,7 @@ def _start_memory_daemon():
     try:
         proc = subprocess.Popen(
             [sys.executable, memory_py, "serve"],
-            stdout=subprocess.PIPE,
+            stdout=log_fh,
             stderr=log_fh,
             start_new_session=True,
         )
@@ -440,7 +440,7 @@ def _start_memory_daemon():
         sys.stderr.write(f"[memory-daemon] Failed to start: {e}\n")
         return None
 
-    # Wait for readiness signal (MEMORY_DAEMON_READY on stdout)
+    # Wait for the daemon to be ready by checking for the socket file.
     deadline = time.monotonic() + 30
     ready = False
     while time.monotonic() < deadline:
@@ -451,15 +451,10 @@ def _start_memory_daemon():
             break
         time.sleep(0.2)
 
-    # Close stdout pipe — daemon should only log to stderr
-    try:
-        proc.stdout.close()
-    except Exception:
-        pass
+    log_fh.close()
 
     if ready:
         sys.stderr.write(f"[memory-daemon] Started (pid {proc.pid}).\n")
-        log_fh.close()
         return proc
     else:
         sys.stderr.write("[memory-daemon] Failed to start within 30s, continuing without it.\n")
@@ -468,7 +463,6 @@ def _start_memory_daemon():
             proc.wait(timeout=5)
         except Exception:
             pass
-        log_fh.close()
         return None
 
 

@@ -236,31 +236,19 @@ assert resp.get('ok') == True, f'Expected ok=True, got {resp}'
 }
 
 @test "memory_init skips when daemon socket exists" {
-    # Create a fake socket file to simulate daemon running
+    # Create a fake socket and keep it alive for the test
     python3 -c "
-import socket, os
+import socket, os, time
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 path = '$CLAUDIO_PATH/memory.sock'
+if os.path.exists(path): os.unlink(path)
 s.bind(path)
 s.listen(1)
-# Write the fd so we can close it later
-open('$BATS_TEST_TMPDIR/sock_fd', 'w').write(str(s.fileno()))
-# Keep socket alive by not closing
-import time; time.sleep(0.1)
+time.sleep(5)
 s.close()
 " &
     local sock_pid=$!
     sleep 0.2
-
-    # Create the socket file manually (the above process may have exited)
-    # Just need a socket file to exist for the test
-    if [ ! -S "$CLAUDIO_PATH/memory.sock" ]; then
-        python3 -c "
-import socket
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind('$CLAUDIO_PATH/memory.sock')
-" 2>/dev/null || true
-    fi
 
     # memory_init should return immediately without calling python3
     MEMORY_ENABLED=1
