@@ -187,16 +187,6 @@ def cmd_query_json(db_path, sql, params):
     print(result)
 
 
-def cmd_exec_stdin(db_path, sql):
-    """Execute SQL with parameters read from stdin as JSON array."""
-    raw = sys.stdin.read()
-    if raw.strip():
-        params = tuple(json.loads(raw))
-    else:
-        params = ()
-    _retry(_do_exec, db_path, sql, params)
-
-
 def main():
     if len(sys.argv) < 3:
         print(f"Usage: {sys.argv[0]} <command> <db_path> [args...]", file=sys.stderr)
@@ -225,11 +215,6 @@ def main():
             print("Usage: exec <sql> [param1 param2 ...]", file=sys.stderr)
             sys.exit(1)
         cmd_exec(db_path, args[0], tuple(args[1:]))
-    elif command == "exec_stdin":
-        if len(args) < 1:
-            print("Usage: exec_stdin <sql> (params as JSON array on stdin)", file=sys.stderr)
-            sys.exit(1)
-        cmd_exec_stdin(db_path, args[0])
     elif command == "query_json":
         if len(args) < 1:
             print("Usage: query_json <sql> [param1 param2 ...]", file=sys.stderr)

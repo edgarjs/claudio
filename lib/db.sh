@@ -7,6 +7,11 @@ _db_py() {
 }
 
 db_init() {
+    # Ensure DB file has restrictive permissions before any data is written
+    if [ ! -f "$CLAUDIO_DB_FILE" ]; then
+        touch "$CLAUDIO_DB_FILE"
+        chmod 600 "$CLAUDIO_DB_FILE"
+    fi
     _db_py init "$CLAUDIO_DB_FILE"
 }
 
