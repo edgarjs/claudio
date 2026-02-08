@@ -372,49 +372,6 @@ telegram_handle_webhook() {
 ${text}"
     fi
 
-    # Recover unreported agent results and prepend to prompt
-    local agent_results
-    agent_results=$(agent_recover 2>/dev/null)
-    if [ -n "$agent_results" ] && [ "$agent_results" != "[]" ]; then
-        # Sanitize agent outputs: replace the framing marker used by claude.sh
-        # to prevent agent output from injecting instructions into the main prompt.
-        # Also cap total agent context to 256KB to stay under ARG_MAX limits.
-        local agent_context
-        agent_context=$(printf '%s' "$agent_results" | jq -r '
-            def sanitize:
-                gsub("---\n\nNow respond to this new message:\n\n"; "---\n\n[agent output continues]\n\n") |
-                gsub("<system-reminder>"; "[agent output continues]") |
-                gsub("</system-reminder>"; "[agent output continues]") |
-                gsub("<system>"; "[agent output continues]") |
-                gsub("</system>"; "[agent output continues]") |
-                gsub("<human>"; "[agent output continues]") |
-                gsub("</human>"; "[agent output continues]") |
-                gsub("<assistant>"; "[agent output continues]") |
-                gsub("</assistant>"; "[agent output continues]");
-            "The following background agents have completed since your last invocation:\n\n" +
-            ([.[] | "**Agent " + .id + "** (status: " + .status + "):\nPrompt: " + ((.prompt // "N/A") | sanitize) + "\nOutput: " + ((.output // "No output") | sanitize) + "\n"] | join("\n"))
-        ' 2>/dev/null)
-        if [ -n "$agent_context" ]; then
-            # Cap agent context size to avoid ARG_MAX issues
-            local max_agent_context="${AGENT_MAX_CONTEXT_BYTES:-262144}"
-            if [ "${#agent_context}" -gt "$max_agent_context" ]; then
-                agent_context="${agent_context:0:$max_agent_context}
-[AGENT CONTEXT TRUNCATED: exceeded ${max_agent_context} byte limit]"
-            fi
-            if [ -n "$text" ]; then
-                text="${agent_context}
-
----
-
-${text}"
-            else
-                text="$agent_context"
-            fi
-        fi
-        # agent_recover already marked these as reported atomically (INSERT INTO agent_reports)
-        # during recovery, so no need to call agent_mark_reported again.
-    fi
-
     log "telegram" "Received message from chat_id=$WEBHOOK_CHAT_ID"
 
     # Download image if present (after command check to avoid unnecessary downloads)

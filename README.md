@@ -167,29 +167,9 @@ You can send documents (PDF, text files, CSV, code files, etc.) to Claudio. Incl
 - Claude reads the file directly from disk — text-based formats (PDF, CSV, code, plain text) work best; binary files may produce limited results
 - Files are stored temporarily during processing, then deleted immediately after Claude responds
 
-### Parallel Agents
+### Parallel Work
 
-Claudio can spawn independent `claude -p` subprocesses for parallel work (reviews, research, etc.).
-
-**How it works:**
-
-- `agent_spawn` launches each agent in an independent process session (`setsid` on Linux, `POSIX::setsid` via perl on macOS). The agent runs `claude -p` with the given prompt and writes its output to SQLite when done.
-- `agent_wait` polls the database every N seconds, sending Telegram typing indicators while agents work. It also enforces timeouts and detects dead processes.
-- `agent_get_results` returns a JSON array with all agent outputs for the parent invocation.
-- Each agent gets a unique ID, tracked in an `agents` table with status lifecycle: `pending` → `running` → `completed`/`failed`/`timeout`/`orphaned`.
-
-**Crash recovery:** If the main process dies while agents are running, the agents keep going (they're in their own session). On the next webhook, `agent_recover` detects orphaned agents (PIDs that no longer exist), recovers any output files they wrote before dying, and injects unreported results into the conversation context.
-
-**Usage from Claude's perspective:**
-
-```bash
-PARENT_ID="review_$(date +%s)"
-agent_spawn "$PARENT_ID" "Review for security issues: ..." "haiku" 300
-agent_spawn "$PARENT_ID" "Review for code quality: ..." "haiku" 300
-agent_spawn "$PARENT_ID" "Review documentation: ..." "haiku" 300
-agent_wait "$PARENT_ID" 5 "$TELEGRAM_CHAT_ID"
-agent_get_results "$PARENT_ID"
-```
+Parallel work (reviews, research, etc.) is handled by Claude Code's built-in Task tool (subagents). No custom agent infrastructure is needed — Claude natively spawns subagents, manages their lifecycle, and collects results within a single `claude -p` invocation.
 
 ### Backup
 
@@ -252,17 +232,6 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `ELEVENLABS_MODEL` — ElevenLabs TTS model. Default: `eleven_multilingual_v2`.
 - `ELEVENLABS_STT_MODEL` — ElevenLabs STT model. Default: `scribe_v1`.
 
-**Agents**
-
-- `AGENT_MAX_CONCURRENT` — Max parallel agents per parent invocation. Default: `5`.
-- `AGENT_MAX_GLOBAL_CONCURRENT` — Max total agents system-wide across all parents. Prevents DoS via many parent IDs. Default: `15`.
-- `AGENT_DEFAULT_TIMEOUT` — Per-agent timeout in seconds (capped at 3600). Default: `300`.
-- `AGENT_DEFAULT_MODEL` — Default Claude model for agents. Must be `haiku`, `sonnet`, or `opus`. Default: `haiku`.
-- `AGENT_POLL_INTERVAL` — Seconds between poll cycles in `agent_wait`. Default: `5`.
-- `AGENT_CLEANUP_AGE` — Hours before old agent records are deleted. Default: `24`.
-- `AGENT_MAX_OUTPUT_BYTES` — Max bytes of agent output stored; larger outputs are truncated. Default: `524288` (512 KB).
-- `AGENT_MAX_CONTEXT_BYTES` — Max bytes of recovered agent context injected into prompts. Default: `262144` (256 KB).
-
 **Memory**
 
 - `MEMORY_ENABLED` — Enable/disable the cognitive memory system. Default: `1`.
@@ -313,7 +282,7 @@ bats tests/db.bats
 - [x] Voice messages from bot (TTS)
 - [x] Voice messages from human (STT)
 - [x] File uploads
-- [x] Parallel agents (independent Claude processes with crash recovery)
+- [x] Parallel work via Claude Code's built-in Task tool (subagents)
 - [x] Cognitive memory system (ACT-R activation scoring, embedding-based retrieval)
 - [x] Automated backup system (hourly/daily rotating backups with rsync)
 

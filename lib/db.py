@@ -187,20 +187,6 @@ def cmd_query_json(db_path, sql, params):
     print(result)
 
 
-def _do_exec_stdin(db_path, sql, params):
-    """Like _do_exec but params come pre-parsed (from stdin JSON)."""
-    conn = sqlite3.connect(db_path)
-    try:
-        cursor = conn.execute(sql, params)
-        rows = cursor.fetchall()
-        conn.commit()
-        if rows:
-            for row in rows:
-                print("|".join("" if col is None else str(col) for col in row))
-    finally:
-        conn.close()
-
-
 def cmd_exec_stdin(db_path, sql):
     """Execute SQL with parameters read from stdin as JSON array."""
     raw = sys.stdin.read()
@@ -208,44 +194,7 @@ def cmd_exec_stdin(db_path, sql):
         params = tuple(json.loads(raw))
     else:
         params = ()
-    _retry(_do_exec_stdin, db_path, sql, params)
-
-
-def _do_agent_insert(db_path, agent_id, parent_id, prompt, model,
-                     timeout_secs, max_concurrent, max_global):
-    """Atomic check + insert for agent spawn with concurrency limits."""
-    conn = sqlite3.connect(db_path, isolation_level="EXCLUSIVE")
-    try:
-        cursor = conn.execute(
-            """INSERT INTO agents (id, parent_id, prompt, model, timeout_seconds)
-               SELECT ?, ?, ?, ?, ?
-               WHERE (SELECT COUNT(*) FROM agents
-                      WHERE parent_id=? AND status IN ('pending', 'running')) < ?
-               AND (SELECT COUNT(*) FROM agents
-                    WHERE status IN ('pending', 'running')) < ?""",
-            (agent_id, parent_id, prompt, model, timeout_secs,
-             parent_id, max_concurrent, max_global),
-        )
-        changes = cursor.rowcount
-        conn.commit()
-        return changes
-    finally:
-        conn.close()
-
-
-def cmd_agent_insert(db_path, args):
-    """agent_insert <agent_id> <parent_id> <prompt> <model> <timeout> <max_concurrent> <max_global>"""
-    if len(args) != 7:
-        print("Usage: agent_insert <id> <parent> <prompt> <model> <timeout> <max_conc> <max_global>",
-              file=sys.stderr)
-        sys.exit(1)
-    agent_id, parent_id, prompt, model = args[0], args[1], args[2], args[3]
-    timeout_secs = int(args[4])
-    max_concurrent = int(args[5])
-    max_global = int(args[6])
-    changes = _retry(_do_agent_insert, db_path, agent_id, parent_id, prompt,
-                     model, timeout_secs, max_concurrent, max_global)
-    print(changes)
+    _retry(_do_exec, db_path, sql, params)
 
 
 def main():
@@ -286,8 +235,6 @@ def main():
             print("Usage: query_json <sql> [param1 param2 ...]", file=sys.stderr)
             sys.exit(1)
         cmd_query_json(db_path, args[0], tuple(args[1:]))
-    elif command == "agent_insert":
-        cmd_agent_insert(db_path, args)
     else:
         print(f"Unknown command: {command}", file=sys.stderr)
         sys.exit(1)
