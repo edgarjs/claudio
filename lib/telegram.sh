@@ -10,6 +10,14 @@ _sanitize_for_prompt() {
     sed -E 's/<\/?[a-zA-Z_][a-zA-Z0-9_-]*[^>]*>/[quoted text]/g'
 }
 
+# Collapse text to a single line, trimmed and truncated to 200 chars
+_summarize() {
+    local summary
+    summary=$(printf '%s' "$1" | tr '\n' ' ' | sed -E 's/^[[:space:]]*//;s/[[:space:]]+/ /g')
+    [ ${#summary} -gt 200 ] && summary="${summary:0:200}..."
+    printf '%s' "$summary"
+}
+
 telegram_api() {
     local method="$1"
     shift
@@ -525,8 +533,6 @@ Read this file and summarize its contents."
             history_text="[Sent a file \"${doc_name}\"]"
         fi
     fi
-    history_add "user" "$history_text"
-
     # Send typing indicator while Claude is working
     # Telegram typing status lasts ~5s; we resend every 15s (gap is acceptable to avoid 429 rate limits)
     # The subshell monitors its parent PID to self-terminate if the parent
@@ -547,6 +553,20 @@ Read this file and summarize its contents."
 
     local response
     response=$(claude_run "$text")
+
+    # Enrich no-caption image/document history with summary from Claude's response.
+    # This runs after claude_run because: (1) the current message is already passed as the
+    # prompt, so it doesn't need to be in history for this request, and (2) we need Claude's
+    # response to generate the summary.
+    if [ -n "$response" ]; then
+        if [ -n "$image_file" ] && [ -z "${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}" ]; then
+            history_text="[Sent an image: $(_summarize "$response")]"
+        elif [ -n "$doc_file" ] && [ -z "${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}" ]; then
+            history_text="[Sent a file \"${doc_name}\": $(_summarize "$response")]"
+        fi
+    fi
+
+    history_add "user" "$history_text"
 
     if [ -n "$response" ]; then
         history_add "assistant" "$response"
