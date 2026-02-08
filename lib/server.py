@@ -112,10 +112,10 @@ def _process_queue_loop(chat_id):
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait()
+                    proc.wait(timeout=30)
                 except OSError:
                     try:
-                        proc.wait()
+                        proc.wait(timeout=30)
                     except Exception:
                         pass
             sys.stderr.write(f"[queue] Timeout processing message for chat {chat_id}\n")
@@ -372,13 +372,18 @@ def _start_cloudflared():
         pass
 
     log_fh = open(log_path, "a")
-    proc = subprocess.Popen(
-        ["cloudflared", "tunnel", "run",
-         "--url", f"http://localhost:{PORT}", tunnel_name],
-        stdout=log_fh,
-        stderr=log_fh,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            ["cloudflared", "tunnel", "run",
+             "--url", f"http://localhost:{PORT}", tunnel_name],
+            stdout=log_fh,
+            stderr=log_fh,
+            start_new_session=True,
+        )
+    except Exception as e:
+        log_fh.close()
+        sys.stderr.write(f"[cloudflared] Failed to start: {e}\n")
+        return None
     log_fh.close()  # Parent doesn't need the fd after Popen inherits it
     sys.stderr.write(f"[cloudflared] Named tunnel '{tunnel_name}' started (pid {proc.pid}).\n")
     return proc
@@ -393,7 +398,7 @@ def _stop_cloudflared(proc):
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait()
+        proc.wait(timeout=30)
     except OSError:
         pass
     sys.stderr.write("[cloudflared] Tunnel stopped.\n")
@@ -475,7 +480,7 @@ def _stop_memory_daemon(proc):
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait()
+        proc.wait(timeout=30)
     except OSError:
         pass
     sys.stderr.write("[memory-daemon] Stopped.\n")
@@ -502,6 +507,10 @@ def _check_memory_daemon():
                 f"[memory-daemon] Process died, attempting restart "
                 f"({_memory_restart_count}/{_MEMORY_MAX_RESTARTS}).\n"
             )
+            try:
+                _memory_proc.wait(timeout=1)
+            except Exception:
+                pass
             _memory_proc = _start_memory_daemon()
         else:
             sys.stderr.write(
