@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Webhook health check script - calls /health endpoint which verifies and fixes webhook
-# Intended to be run periodically via cron (every minute)
+# Intended to be run periodically via cron (every 5 minutes)
 # Auto-restarts the service if it's unreachable (throttled to once per 3 minutes)
 # Sends a Telegram alert after 3 restart attempts if the service never recovers
 #
@@ -164,7 +164,20 @@ _check_orphan_processes() {
 
         # Skip processes started less than 30 minutes ago (could be active handlers)
         local elapsed
-        elapsed=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ') || continue
+        if [[ "$(uname)" == "Darwin" ]]; then
+            # macOS: ps -o etime= gives [[dd-]hh:]mm:ss, convert to seconds
+            local etime
+            etime=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ') || continue
+            [[ -z "$etime" ]] && continue
+            elapsed=0
+            local parts
+            IFS=: read -ra parts <<< "${etime//-/:}"
+            for part in "${parts[@]}"; do
+                elapsed=$(( elapsed * 60 + 10#$part ))
+            done
+        else
+            elapsed=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ') || continue
+        fi
         [[ -z "$elapsed" ]] && continue
         (( elapsed < 1800 )) && continue
 
@@ -194,7 +207,7 @@ _check_disk_usage() {
             log_warn "health-check" "Disk usage high: ${mount} at ${usage}%"
             alert=true
         fi
-    done < <(df -P / /mnt/ssd 2>/dev/null | tail -n +2)
+    done < <(df -P / "$BACKUP_DEST" 2>/dev/null | tail -n +2)
 
     [[ "$alert" == true ]] && return 1
     return 0
@@ -240,7 +253,12 @@ _check_backup_freshness() {
     # Parse timestamp from directory name (YYYY-MM-DD_HHMM)
     if [[ "$dir_name" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})_([0-9]{2})([0-9]{2})$ ]]; then
         local backup_epoch
-        backup_epoch=$(date -d "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}" +%s 2>/dev/null) || return 1
+        local date_str="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}"
+        if [[ "$(uname)" == "Darwin" ]]; then
+            backup_epoch=$(date -j -f "%Y-%m-%d %H:%M" "$date_str" +%s 2>/dev/null) || return 1
+        else
+            backup_epoch=$(date -d "$date_str" +%s 2>/dev/null) || return 1
+        fi
         local now
         now=$(date +%s)
         local age=$(( now - backup_epoch ))
