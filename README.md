@@ -25,7 +25,15 @@ Claudio starts a local HTTP server that listens on port 8421, and creates a tunn
 
 The user message is passed as a one-shot prompt, along with some context to maintain continuity. All messages are kept in the database, with the last 20 used as conversation context (configurable via `MAX_HISTORY_LINES`).
 
-After Claude Code finishes, it outputs the response in plain text to stdout for Claudio to capture it and forward it to Telegram API.
+After Claude Code finishes, it outputs a JSON response to stdout. Claudio parses the result text and token usage stats, then forwards the response to the Telegram API.
+
+The HTTP server includes several reliability mechanisms:
+
+- **Message queue** — Incoming webhooks are queued per-chat (max 5) and processed serially, so multiple rapid messages don't spawn overlapping Claude sessions.
+- **Deduplication** — Telegram may retry webhook deliveries; Claudio tracks the last 1,000 `update_id`s to silently drop duplicates.
+- **Body size limit** — Requests larger than 1 MB are rejected to prevent abuse.
+- **Graceful shutdown** — On `SIGTERM`, the server stops accepting new requests and waits for active handlers to finish before exiting.
+- **Fallback model** — If Claude fails with the selected model, it automatically retries with Haiku as a fallback (unless Haiku is already selected).
 
 ---
 
@@ -82,7 +90,9 @@ The setup wizard will confirm when it receives the message and finish. Once done
 
 > For security, only the `chat_id` captured during setup is authorized to send messages.
 
-> A cron job runs every minute to monitor the webhook endpoint. It verifies the webhook is registered and re-registers it if needed. If the server is unreachable, it auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After exhausting restart attempts without recovery, it sends a Telegram alert and stops retrying until the server responds with HTTP 200. To reset the restart counter, delete `$HOME/.claudio/.last_restart_attempt` and `$HOME/.claudio/.restart_fail_count`.
+> A cron job runs every 5 minutes to monitor the webhook endpoint. It verifies the webhook is registered and re-registers it if needed. If the server is unreachable, it auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After exhausting restart attempts without recovery, it sends a Telegram alert and stops retrying until the server responds with HTTP 200. The restart counter auto-clears when the health endpoint returns HTTP 200. You can also reset it manually by deleting `$HOME/.claudio/.last_restart_attempt` and `$HOME/.claudio/.restart_fail_count`.
+>
+> The health check also monitors: orphan `claude`/`node` processes (kills them after 30 minutes), disk usage (alerts above 90%), log file sizes (rotates files over 10MB), and backup freshness (alerts if the last backup is older than 2 hours). These thresholds are configurable via environment variables.
 
 ### Status
 
@@ -143,7 +153,7 @@ Claudio uses Haiku by default. If you want to switch to another model, just send
 
 ### Voice
 
-Claudio supports voice messages in both directions using ElevenLabs. Set `ELEVENLABS_API_KEY` in your `service.env` to enable voice features (`ELEVENLABS_VOICE_ID` defaults to Chris if not set). When you send a voice message, Claudio transcribes it (STT), processes it, and responds with a voice message (as a reply) followed by a text version for reference. Text messages always get text-only responses. If `ELEVENLABS_API_KEY` is not set, voice messages will be rejected with an error reply.
+Claudio supports voice messages in both directions using ElevenLabs. Set `ELEVENLABS_API_KEY` in your `service.env` to enable voice features (`ELEVENLABS_VOICE_ID` defaults to Chris if not set). When you send a voice message, Claudio transcribes it (STT), processes it, and responds with a voice message (as a reply). If TTS fails, it falls back to a text-only response. Text messages always get text-only responses. If `ELEVENLABS_API_KEY` is not set, voice messages will be rejected with an error reply.
 
 ### Images
 
@@ -235,6 +245,13 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `MEMORY_ENABLED` — Enable/disable the cognitive memory system. Default: `1`.
 - `MEMORY_EMBEDDING_MODEL` — Sentence-transformers model for memory embeddings. Default: `sentence-transformers/all-MiniLM-L6-v2`.
 - `MEMORY_CONSOLIDATION_MODEL` — Claude model used for memory consolidation. Default: `haiku`.
+
+**Health Check**
+
+- `DISK_USAGE_THRESHOLD` — Disk usage percentage to trigger alerts. Default: `90`.
+- `LOG_MAX_SIZE` — Maximum log file size in bytes before rotation. Default: `10485760` (10 MB).
+- `BACKUP_MAX_AGE` — Maximum backup age in seconds before alerting. Default: `7200` (2 hours).
+- `BACKUP_DEST` — Backup destination path for freshness checks. Default: `/mnt/ssd`.
 
 **Tunnel**
 
