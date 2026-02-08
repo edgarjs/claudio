@@ -26,6 +26,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CLAUDIO_BIN = os.path.join(SCRIPT_DIR, "..", "claudio")
 CLAUDIO_PATH = os.path.join(os.path.expanduser("~"), ".claudio")
 LOG_FILE = os.path.join(CLAUDIO_PATH, "claudio.log")
+MEMORY_SOCKET = os.path.join(CLAUDIO_PATH, "memory.sock")
+MEMORY_DAEMON_LOG = os.path.join(CLAUDIO_PATH, "memory-daemon.log")
 PORT = int(os.environ.get("PORT", 8421))
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -275,6 +277,9 @@ def check_health():
     else:
         checks["telegram_webhook"] = {"status": "not_configured"}
 
+    # Check 2: Memory daemon (non-critical — degrades gracefully)
+    checks["memory_daemon"] = _check_memory_daemon()
+
     result = {"status": status, "checks": checks}
     # Only cache healthy results — unhealthy states should be re-checked
     # immediately so recovery is detected without waiting for TTL expiry
@@ -394,6 +399,154 @@ def _stop_cloudflared(proc):
     sys.stderr.write("[cloudflared] Tunnel stopped.\n")
 
 
+# Module-level reference so check_health() can inspect the daemon process
+_memory_proc = None
+_memory_restart_count = 0
+_memory_last_restart = 0
+_MEMORY_MAX_RESTARTS = 3
+_MEMORY_RESTART_COOLDOWN = 300  # seconds
+
+
+def _start_memory_daemon():
+    """Start the memory daemon as a subprocess.
+
+    Returns the Popen object, or None on failure.
+    """
+    memory_py = os.path.join(SCRIPT_DIR, "memory.py")
+    if not os.path.isfile(memory_py):
+        sys.stderr.write("[memory-daemon] memory.py not found, skipping.\n")
+        return None
+
+    log_path = MEMORY_DAEMON_LOG
+    try:
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 10 * 1024 * 1024:
+            backup = log_path + ".1"
+            if os.path.exists(backup):
+                os.remove(backup)
+            os.rename(log_path, backup)
+    except OSError:
+        pass
+
+    log_fh = open(log_path, "a")
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, memory_py, "serve"],
+            stdout=subprocess.PIPE,
+            stderr=log_fh,
+            start_new_session=True,
+        )
+    except Exception as e:
+        log_fh.close()
+        sys.stderr.write(f"[memory-daemon] Failed to start: {e}\n")
+        return None
+
+    # Wait for readiness signal (MEMORY_DAEMON_READY on stdout)
+    deadline = time.monotonic() + 30
+    ready = False
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            break
+        if os.path.exists(MEMORY_SOCKET):
+            ready = True
+            break
+        time.sleep(0.2)
+
+    # Close stdout pipe — daemon should only log to stderr
+    try:
+        proc.stdout.close()
+    except Exception:
+        pass
+
+    if ready:
+        sys.stderr.write(f"[memory-daemon] Started (pid {proc.pid}).\n")
+        log_fh.close()
+        return proc
+    else:
+        sys.stderr.write("[memory-daemon] Failed to start within 30s, continuing without it.\n")
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        log_fh.close()
+        return None
+
+
+def _stop_memory_daemon(proc):
+    """Gracefully stop the memory daemon."""
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    except OSError:
+        pass
+    sys.stderr.write("[memory-daemon] Stopped.\n")
+
+
+def _check_memory_daemon():
+    """Check memory daemon health for inclusion in health check response.
+
+    Returns a status dict. Does NOT affect overall health status since
+    the daemon degrades gracefully (falls back to local execution).
+    """
+    global _memory_proc, _memory_restart_count, _memory_last_restart
+
+    check = {}
+    # Check if process is alive; attempt restart with rate limiting
+    if _memory_proc is not None and _memory_proc.poll() is not None:
+        now = time.monotonic()
+        if now - _memory_last_restart > _MEMORY_RESTART_COOLDOWN:
+            _memory_restart_count = 0  # Reset counter after cooldown
+        if _memory_restart_count < _MEMORY_MAX_RESTARTS:
+            _memory_restart_count += 1
+            _memory_last_restart = now
+            sys.stderr.write(
+                f"[memory-daemon] Process died, attempting restart "
+                f"({_memory_restart_count}/{_MEMORY_MAX_RESTARTS}).\n"
+            )
+            _memory_proc = _start_memory_daemon()
+        else:
+            sys.stderr.write(
+                "[memory-daemon] Max restarts reached, giving up until server restart.\n"
+            )
+
+    if _memory_proc is None:
+        check["status"] = "down"
+        check["detail"] = "not running"
+        return check
+
+    # Ping via socket
+    import socket as sock_mod
+    s = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
+    try:
+        s.settimeout(5)
+        s.connect(MEMORY_SOCKET)
+        s.sendall(b'{"command":"ping"}\n')
+        data = b""
+        while b"\n" not in data:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+        resp = json.loads(data.strip())
+        if resp.get("ok"):
+            check["status"] = "ok"
+        else:
+            check["status"] = "error"
+            check["detail"] = "unexpected response"
+    except Exception as e:
+        check["status"] = "error"
+        check["detail"] = str(e)
+    finally:
+        s.close()
+
+    return check
+
+
 def main():
     # Require WEBHOOK_SECRET for security
     if not WEBHOOK_SECRET:
@@ -405,6 +558,10 @@ def main():
     if not TELEGRAM_CHAT_ID:
         sys.stderr.write("Warning: TELEGRAM_CHAT_ID not set — all messages will be rejected.\n")
         sys.stderr.write("Run 'claudio telegram setup' to configure it.\n")
+
+    # Start memory daemon (pre-loads ONNX model to eliminate cold-start)
+    global _memory_proc
+    _memory_proc = _start_memory_daemon()
 
     # Start cloudflared tunnel (managed by Python for proper cleanup)
     cloudflared_proc = _start_cloudflared()
@@ -435,6 +592,7 @@ def main():
     shutdown_thread.join()
     server.server_close()
     _stop_cloudflared(cloudflared_proc)
+    _stop_memory_daemon(_memory_proc)
 
 
 if __name__ == "__main__":

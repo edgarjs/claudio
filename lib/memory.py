@@ -9,6 +9,7 @@ Usage:
     python3 lib/memory.py retrieve --query "..." [--top-k 5]
     python3 lib/memory.py consolidate [--since-id N]
     python3 lib/memory.py reconsolidate
+    python3 lib/memory.py serve
     python3 lib/memory.py migrate-markdown <file>
     python3 lib/memory.py migrate-history
 """
@@ -17,10 +18,14 @@ import argparse
 import json
 import math
 import os
+import signal
+import socket
+import socketserver
 import sqlite3
 import struct
 import subprocess
 import sys
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +44,11 @@ W_ACT = 0.3  # Weight for ACT-R activation in retrieval scoring
 DECAY_PARAM = 0.5  # ACT-R decay parameter (d)
 NEAR_DUPLICATE_THRESHOLD = 0.92
 CONTRADICTION_CANDIDATE_THRESHOLD = 0.85
+SOCKET_PATH = os.path.join(
+    os.environ.get("CLAUDIO_PATH", os.path.expanduser("~/.claudio")),
+    "memory.sock",
+)
+DAEMON_TIMEOUT = 30  # seconds for socket operations
 MIN_TURNS_FOR_CONSOLIDATION = 3
 MIN_WORDS_FOR_CONSOLIDATION = 20
 REINFORCEMENT_GRACE_DAYS = 30
@@ -47,6 +57,37 @@ ACCESS_CAP_PER_MEMORY = 200
 
 # Lazy-loaded embedding model
 _embedding_model = None
+
+
+# -- Daemon client --
+
+def _try_daemon(request: dict) -> dict | None:
+    """Try to send a request to the memory daemon over Unix socket.
+
+    Returns the parsed JSON response, or None if the daemon is unavailable.
+    """
+    if not os.path.exists(SOCKET_PATH):
+        return None
+    timeout = request.pop("_timeout", DAEMON_TIMEOUT)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(timeout)
+        sock.connect(SOCKET_PATH)
+        sock.sendall(json.dumps(request).encode() + b"\n")
+        # Read response line
+        buf = b""
+        while b"\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        if buf:
+            return json.loads(buf.strip())
+    except Exception:
+        pass
+    finally:
+        sock.close()
+    return None
 
 
 # -- Database --
@@ -1167,6 +1208,107 @@ def migrate_history():
         conn.close()
 
 
+# -- Daemon server --
+
+class _DaemonHandler(socketserver.StreamRequestHandler):
+    """Handle one JSON-line request from a client."""
+
+    def handle(self):
+        try:
+            line = self.rfile.readline()
+            if not line:
+                return
+            request = json.loads(line)
+            command = request.get("command", "")
+            response = self.server.dispatch(command, request)
+            self.wfile.write(json.dumps(response).encode() + b"\n")
+            self.wfile.flush()
+        except Exception as e:
+            try:
+                self.wfile.write(json.dumps({"error": str(e)}).encode() + b"\n")
+                self.wfile.flush()
+            except Exception:
+                pass
+
+
+class _ThreadedUnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+    def __init__(self, socket_path, handler_class):
+        self._consolidation_lock = threading.Lock()
+        super().__init__(socket_path, handler_class)
+
+    def dispatch(self, command: str, request: dict) -> dict:
+        if command == "ping":
+            return {"ok": True}
+        elif command == "retrieve":
+            query = request.get("query", "")
+            top_k = request.get("top_k", 5)
+            memories = retrieve(query, top_k)
+            formatted = format_memories(memories)
+            return {"ok": True, "result": formatted}
+        elif command == "consolidate":
+            if not self._consolidation_lock.acquire(blocking=False):
+                return {"ok": True, "skipped": "already_running"}
+            try:
+                consolidate()
+            finally:
+                self._consolidation_lock.release()
+            return {"ok": True}
+        elif command == "reconsolidate":
+            if not self._consolidation_lock.acquire(blocking=False):
+                return {"ok": True, "skipped": "already_running"}
+            try:
+                reconsolidate()
+            finally:
+                self._consolidation_lock.release()
+            return {"ok": True}
+        else:
+            return {"error": f"unknown command: {command}"}
+
+
+def serve():
+    """Run as a persistent daemon with the embedding model pre-loaded."""
+    # Remove stale socket
+    if os.path.exists(SOCKET_PATH):
+        os.unlink(SOCKET_PATH)
+
+    # Initialize schema and pre-load model
+    init_schema()
+    model = _get_embedding_model()
+    if model is not None:
+        list(model.embed(["warmup"]))  # Force ONNX session init
+        _reembed_stale_memories()
+        print("Memory daemon: model loaded", file=sys.stderr)
+    else:
+        print("Memory daemon: no embedding model available", file=sys.stderr)
+
+    server = _ThreadedUnixServer(SOCKET_PATH, _DaemonHandler)
+
+    shutdown_event = threading.Event()
+
+    def _shutdown(signum, frame):
+        shutdown_event.set()
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+
+    # Signal readiness to parent process
+    print("MEMORY_DAEMON_READY", flush=True)
+
+    # Run server in a thread so signal handler can trigger shutdown
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    shutdown_event.wait()
+    server.shutdown()
+    server.server_close()
+    try:
+        os.unlink(SOCKET_PATH)
+    except FileNotFoundError:
+        pass
+
+
 # -- CLI --
 
 def main():
@@ -1185,6 +1327,8 @@ def main():
 
     subparsers.add_parser("reconsolidate", help="Run periodic maintenance")
 
+    subparsers.add_parser("serve", help="Run as persistent daemon")
+
     mm = subparsers.add_parser("migrate-markdown", help="Import MEMORY.md")
     mm.add_argument("file", help="Path to MEMORY.md")
 
@@ -1192,8 +1336,9 @@ def main():
 
     args = parser.parse_args()
 
-    # Always ensure schema exists
-    init_schema()
+    # Always ensure schema exists (serve handles its own init)
+    if args.command != "serve":
+        init_schema()
 
     if args.command == "init":
         if args.warmup:
@@ -1211,6 +1356,14 @@ def main():
             print("Memory schema initialized")
 
     elif args.command == "retrieve":
+        # Try daemon first for fast path (no ONNX cold-start)
+        if not args.json:
+            resp = _try_daemon({"command": "retrieve", "query": args.query, "top_k": args.top_k})
+            if resp and "result" in resp:
+                if resp["result"]:
+                    print(resp["result"])
+                sys.exit(0)
+        # Fallback to local execution
         memories = retrieve(args.query, args.top_k)
         if args.json:
             print(json.dumps(memories, indent=2, default=str))
@@ -1220,10 +1373,19 @@ def main():
                 print(output)
 
     elif args.command == "consolidate":
+        resp = _try_daemon({"command": "consolidate", "_timeout": 150})
+        if resp and resp.get("ok"):
+            sys.exit(0)
         consolidate()
 
     elif args.command == "reconsolidate":
+        resp = _try_daemon({"command": "reconsolidate", "_timeout": 150})
+        if resp and resp.get("ok"):
+            sys.exit(0)
         reconsolidate()
+
+    elif args.command == "serve":
+        serve()
 
     elif args.command == "migrate-markdown":
         migrate_markdown(args.file)

@@ -100,7 +100,7 @@ case "${1:-}" in
         ;;
     start)
         history_init
-        memory_init --warmup
+        memory_init
         server_start
         ;;
     install)
