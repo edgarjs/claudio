@@ -36,9 +36,11 @@ claude_run() {
         -p -
     )
 
-    if [ -f "$CLAUDIO_PROMPT_FILE" ]; then
+    local prompt_source
+    prompt_source="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/SYSTEM_PROMPT.md"
+    if [ -f "$prompt_source" ]; then
         local system_prompt
-        system_prompt=$(cat "$CLAUDIO_PROMPT_FILE")
+        system_prompt=$(cat "$prompt_source")
         if [ -n "$system_prompt" ]; then
             claude_args+=(--append-system-prompt "$system_prompt")
         fi

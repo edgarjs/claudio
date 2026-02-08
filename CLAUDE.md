@@ -32,11 +32,3 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 Run locally with `./claudio start`. Requires `jq`, `curl`, `python3`, `sqlite3`, `cloudflared`, and `claude` CLI. The memory system optionally requires the `fastembed` Python package (degrades gracefully without it).
 
 **Tests:** Run `bats tests/` (requires [bats-core](https://github.com/bats-core/bats-core)). Tests use an isolated `$CLAUDIO_PATH` to avoid touching production data.
-
-## Design decisions
-
-### No self-restart protection during webhook handling
-
-The safeguard hook (`lib/safeguard-hook.sh`) and `CLAUDIO_WEBHOOK_ACTIVE` env var were removed because shell script changes take effect on the next webhook automatically — there's no need for Claude to restart the service mid-webhook, so the protection added complexity without solving a real problem.
-
-If mid-webhook restart capability is ever needed (e.g., for `server.py` changes), the right approach is a "restart tool" pattern: the webhook handler writes a restart request to a file or socket, replies to the user, and a separate watcher process performs the restart after the handler exits.
