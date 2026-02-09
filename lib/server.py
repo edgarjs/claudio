@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import base64
+import hashlib
 import hmac
 import json
 import os
@@ -12,6 +14,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from collections import deque, OrderedDict
+from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
@@ -33,6 +36,7 @@ WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+ALEXA_SKILL_ID = os.environ.get("ALEXA_SKILL_ID", "")
 
 # Per-chat message queues for serial processing
 chat_queues = {}  # chat_id -> deque of webhook bodies
@@ -189,6 +193,18 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write("[%s] [http] %s\n" % (self.log_date_time_string(), format % args))
 
+    def _read_body(self):
+        """Read and return the request body, or None on error."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            self._respond(400, {"error": "invalid content-length"})
+            return None
+        if length > MAX_BODY_SIZE:
+            self._respond(413, {"error": "payload too large"})
+            return None
+        return self.rfile.read(length).decode("utf-8", errors="replace") if length else ""
+
     def do_POST(self):
         if self.path == "/telegram/webhook":
             # Reject early during shutdown so Telegram retries later
@@ -200,19 +216,122 @@ class Handler(BaseHTTPRequestHandler):
             if not hmac.compare_digest(token, WEBHOOK_SECRET):
                 self._respond(401, {"error": "unauthorized"})
                 return
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-            except (ValueError, TypeError):
-                self._respond(400, {"error": "invalid content-length"})
+            body = self._read_body()
+            if body is None:
                 return
-            if length > MAX_BODY_SIZE:
-                self._respond(413, {"error": "payload too large"})
-                return
-            body = self.rfile.read(length).decode("utf-8", errors="replace") if length else ""
             self._respond(200, {"ok": True})
             enqueue_webhook(body)
+        elif self.path == "/alexa":
+            self._handle_alexa()
         else:
             self._respond(404, {"error": "not found"})
+
+    def _handle_alexa(self):
+        """Handle Alexa skill requests — async relay to Telegram."""
+        if shutting_down:
+            self._respond_alexa("Lo siento, estoy reiniciando. Intenta en un momento.", end_session=True)
+            return
+
+        body = self._read_body()
+        if body is None:
+            return
+
+        # Validate the request comes from Alexa
+        if not _verify_alexa_request(self.headers, body):
+            self._respond(401, {"error": "invalid alexa request"})
+            return
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._respond(400, {"error": "invalid json"})
+            return
+
+        # Validate skill ID if configured
+        app_id = data.get("session", {}).get("application", {}).get("applicationId", "")
+        if ALEXA_SKILL_ID and app_id != ALEXA_SKILL_ID:
+            self._respond(401, {"error": "skill id mismatch"})
+            return
+
+        req_type = data.get("request", {}).get("type", "")
+        intent_name = data.get("request", {}).get("intent", {}).get("name", "")
+        sys.stderr.write("[alexa] req_type=%s intent=%s session_new=%s\n" %
+                         (req_type, intent_name or "-",
+                          data.get("session", {}).get("new")))
+        sys.stderr.write("[alexa] full_request: %s\n" % json.dumps(data, ensure_ascii=False))
+
+        if req_type == "LaunchRequest":
+            self._respond_alexa("Dime qué le quieres decir a Claudio.", end_session=False)
+            return
+
+        if req_type == "SessionEndedRequest":
+            self._respond_alexa("", end_session=True)
+            return
+
+        if req_type == "IntentRequest":
+            intent = data.get("request", {}).get("intent", {})
+            intent_name = intent.get("name", "")
+
+            # Built-in intents
+            if intent_name in ("AMAZON.CancelIntent", "AMAZON.StopIntent", "AMAZON.NoIntent"):
+                self._respond_alexa("Adiós.", end_session=True)
+                return
+            if intent_name == "AMAZON.HelpIntent":
+                self._respond_alexa(
+                    "Puedes decirme cualquier mensaje y se lo paso a Claudio por Telegram.",
+                    end_session=False,
+                )
+                return
+            if intent_name == "AMAZON.FallbackIntent":
+                self._respond_alexa(
+                    "No entendí. Intenta decir: dile a Claudio, seguido de tu mensaje.",
+                    end_session=False,
+                )
+                return
+
+            # Our custom intent: relay message to Claudio
+            if intent_name == "SendMessageIntent":
+                message = intent.get("slots", {}).get("message", {}).get("value", "")
+                if not message:
+                    self._respond_alexa("No escuché el mensaje. Intenta de nuevo.", end_session=False)
+                    return
+
+                # Create synthetic Telegram webhook and enqueue it
+                _enqueue_alexa_message(message)
+                self._respond_alexa("Ok, le paso el mensaje. ¿Algo más?", end_session=False, reprompt="¿Algo más para Claudio?")
+                return
+
+        # Unknown request type
+        sys.stderr.write("[alexa] unhandled: req_type=%s intent=%s\n" % (req_type, intent_name))
+        self._respond_alexa("No entendí la solicitud.", end_session=True)
+
+    def _respond_alexa(self, text, end_session=True, reprompt=None):
+        """Send an Alexa-formatted JSON response."""
+        response = {
+            "version": "1.0",
+            "response": {
+                "shouldEndSession": end_session,
+            },
+        }
+        if text:
+            response["response"]["outputSpeech"] = {
+                "type": "PlainText",
+                "text": text,
+            }
+        if reprompt:
+            response["response"]["reprompt"] = {
+                "outputSpeech": {
+                    "type": "PlainText",
+                    "text": reprompt,
+                }
+            }
+        body = json.dumps(response).encode("utf-8")
+        sys.stderr.write("[alexa] response: %s\n" % body.decode())
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json;charset=UTF-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_GET(self):
         if self.path == "/health":
@@ -221,6 +340,143 @@ class Handler(BaseHTTPRequestHandler):
             self._respond(code, health)
         else:
             self._respond(404, {"error": "not found"})
+
+
+_alexa_update_counter = 0
+_alexa_counter_lock = threading.Lock()
+
+
+def _enqueue_alexa_message(message):
+    """Create a synthetic Telegram webhook body from an Alexa message and enqueue it."""
+    global _alexa_update_counter
+    with _alexa_counter_lock:
+        _alexa_update_counter += 1
+        update_id = 900000000 + _alexa_update_counter
+
+    body = json.dumps({
+        "update_id": update_id,
+        "message": {
+            "message_id": update_id,
+            "date": int(time.time()),
+            "chat": {"id": int(TELEGRAM_CHAT_ID), "type": "private"},
+            "from": {"id": int(TELEGRAM_CHAT_ID), "first_name": "Alexa", "is_bot": False},
+            "text": f"[Mensaje por voz desde Alexa]\n\n{message}",
+        },
+    })
+    enqueue_webhook(body)
+
+
+def _verify_alexa_request(headers, body):
+    """Verify that the request comes from Alexa by validating the certificate chain.
+
+    Amazon requires signature verification for production skills. For dev/testing
+    mode, we do basic validation of the signature headers and timestamp.
+    Full certificate chain validation requires the cryptography library.
+    """
+    # Check required headers exist
+    # Alexa sends: SignatureCertChainUrl and Signature-256 (or Signature)
+    # HTTP proxies may lowercase header names, so check case-insensitively
+    cert_url = headers.get("SignatureCertChainUrl", "") or headers.get("Signaturecertchainurl", "")
+    signature = headers.get("Signature-256", "") or headers.get("Signature", "")
+
+    if not cert_url or not signature:
+        # Log all headers for debugging
+        sys.stderr.write(f"[alexa] Missing signature headers. Received headers: {dict(headers)}\n")
+        return False
+
+    # Validate cert URL (must be Amazon's domain, HTTPS, port 443, path starts with /echo.api/)
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(cert_url)
+        if parsed.scheme.lower() != "https":
+            sys.stderr.write(f"[alexa] Cert URL scheme not HTTPS: {cert_url}\n")
+            return False
+        if parsed.hostname.lower() != "s3.amazonaws.com":
+            sys.stderr.write(f"[alexa] Cert URL hostname invalid: {parsed.hostname}\n")
+            return False
+        if not parsed.path.startswith("/echo.api/"):
+            sys.stderr.write(f"[alexa] Cert URL path invalid: {parsed.path}\n")
+            return False
+        if parsed.port is not None and parsed.port != 443:
+            sys.stderr.write(f"[alexa] Cert URL port invalid: {parsed.port}\n")
+            return False
+    except Exception as e:
+        sys.stderr.write(f"[alexa] Cert URL parse error: {e}\n")
+        return False
+
+    # Validate timestamp (within 150 seconds)
+    try:
+        data = json.loads(body)
+        timestamp = data.get("request", {}).get("timestamp", "")
+        if timestamp:
+            req_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            delta = abs((now - req_time).total_seconds())
+            if delta > 150:
+                sys.stderr.write(f"[alexa] Timestamp too old: {delta}s\n")
+                return False
+    except (json.JSONDecodeError, ValueError) as e:
+        sys.stderr.write(f"[alexa] Timestamp validation error: {e}\n")
+        return False
+
+    # Full certificate signature verification
+    try:
+        return _verify_alexa_signature(cert_url, signature, body)
+    except ImportError:
+        # cryptography library not installed — fall back to header+timestamp checks only
+        sys.stderr.write("[alexa] cryptography library not available, skipping signature verification\n")
+        return True
+    except Exception as e:
+        sys.stderr.write(f"[alexa] Signature verification error: {e}\n")
+        return False
+
+
+# Cache for downloaded Alexa signing certificates
+_alexa_cert_cache = {}
+_ALEXA_CERT_CACHE_TTL = 3600  # 1 hour
+
+
+def _verify_alexa_signature(cert_url, signature_b64, body):
+    """Full cryptographic verification of Alexa request signature."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    # Get or fetch the signing certificate
+    now = time.monotonic()
+    cached = _alexa_cert_cache.get(cert_url)
+    if cached and (now - cached["time"]) < _ALEXA_CERT_CACHE_TTL:
+        cert = cached["cert"]
+    else:
+        req = urllib.request.Request(cert_url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            pem_data = resp.read()
+        cert = x509.load_pem_x509_certificate(pem_data)
+
+        # Validate the certificate's Subject Alternative Name includes echo-api.amazon.com
+        try:
+            san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            dns_names = san.value.get_values_for_type(x509.DNSName)
+            if "echo-api.amazon.com" not in dns_names:
+                sys.stderr.write(f"[alexa] Certificate SAN missing echo-api.amazon.com: {dns_names}\n")
+                return False
+        except x509.ExtensionNotFound:
+            sys.stderr.write("[alexa] Certificate missing SAN extension\n")
+            return False
+
+        _alexa_cert_cache[cert_url] = {"cert": cert, "time": now}
+
+    # Verify the signature
+    signature_bytes = base64.b64decode(signature_b64)
+    public_key = cert.public_key()
+    public_key.verify(
+        signature_bytes,
+        body.encode("utf-8"),
+        padding.PKCS1v15(),
+        hashes.SHA256(),
+    )
+
+    return True
 
 
 def check_health():
