@@ -81,6 +81,29 @@ _env_quote() {
 }
 
 claudio_save_env() {
+    # Managed variables (written by this function)
+    local -a managed_keys=(
+        PORT MODEL TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
+        WEBHOOK_URL TUNNEL_NAME TUNNEL_HOSTNAME WEBHOOK_SECRET
+        WEBHOOK_RETRY_DELAY ELEVENLABS_API_KEY ELEVENLABS_VOICE_ID
+        ELEVENLABS_MODEL ELEVENLABS_STT_MODEL MEMORY_ENABLED
+        MEMORY_EMBEDDING_MODEL MEMORY_CONSOLIDATION_MODEL MAX_HISTORY_LINES
+    )
+
+    # Collect extra (unmanaged) lines from existing file before overwriting
+    local extra_lines=""
+    if [ -f "$CLAUDIO_ENV_FILE" ]; then
+        local managed_pattern
+        managed_pattern=$(printf '%s|' "${managed_keys[@]}")
+        managed_pattern="^(${managed_pattern%|})="
+        while IFS= read -r line || [ -n "$line" ]; do
+            # Keep everything except managed variable assignments
+            if [[ ! "$line" =~ $managed_pattern ]]; then
+                extra_lines+="$line"$'\n'
+            fi
+        done < "$CLAUDIO_ENV_FILE"
+    fi
+
     # Use restrictive permissions for file with secrets
     (
         umask 077
@@ -103,6 +126,10 @@ claudio_save_env() {
             printf 'MEMORY_EMBEDDING_MODEL="%s"\n' "$(_env_quote "$MEMORY_EMBEDDING_MODEL")"
             printf 'MEMORY_CONSOLIDATION_MODEL="%s"\n' "$(_env_quote "$MEMORY_CONSOLIDATION_MODEL")"
             printf 'MAX_HISTORY_LINES="%s"\n' "$(_env_quote "$MAX_HISTORY_LINES")"
+            # Preserve unmanaged variables (e.g. HASS_TOKEN, ALEXA_SKILL_ID)
+            if [ -n "$extra_lines" ]; then
+                printf '%s' "$extra_lines"
+            fi
         } > "$CLAUDIO_ENV_FILE"
     )
 }
