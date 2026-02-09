@@ -97,9 +97,8 @@ claudio_save_env() {
         managed_pattern=$(printf '%s|' "${managed_keys[@]}")
         managed_pattern="^(${managed_pattern%|})="
         while IFS= read -r line || [ -n "$line" ]; do
-            # Skip lines that set managed variables; keep everything else
-            # (comments, blank lines, unmanaged vars)
-            if [[ -z "$line" || "$line" == \#* || ! "$line" =~ $managed_pattern ]]; then
+            # Keep everything except managed variable assignments
+            if [[ ! "$line" =~ $managed_pattern ]]; then
                 extra_lines+="$line"$'\n'
             fi
         done < "$CLAUDIO_ENV_FILE"
