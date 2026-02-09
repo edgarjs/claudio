@@ -47,6 +47,10 @@ The whole purpose of Claudio is to give you remote access to Claude Code from yo
 
 Since there's no human in front of the terminal to approve permission prompts, Claude Code must run autonomously. Rather than using `--dangerously-skip-permissions`, Claudio explicitly lists the tools Claude can use and auto-approves them — excluding interactive-only tools like `AskUserQuestion` and `Chrome`. Claudio mitigates the risk through: webhook secret validation (HMAC), single authorized `chat_id`, and binding the HTTP server to localhost only (external access goes through cloudflared).
 
+> **⚠️ Alexa Integration (Optional) — Higher Security Risk**
+>
+> The optional Alexa skill integration exposes an additional `/alexa` endpoint that accepts voice commands and relays them to Claude Code via Telegram. This carries a *higher security risk* than the Telegram-only setup because: (1) anyone with physical access to your Alexa device can send commands to Claude Code — there is no per-user authentication beyond Amazon's skill ID validation, (2) if the `cryptography` Python library is not installed, signature verification falls back to timestamp-only checks, and (3) unlike Telegram (which binds to a single `chat_id`), the Alexa endpoint relies on the skill remaining private (unpublished) to limit access. **Do not enable Alexa integration unless you understand these risks.** See the [Alexa](#alexa) section for setup instructions.
+
 ### Requirements
 
 - Claude Code CLI (with Pro/Max subscription)
@@ -175,6 +179,52 @@ You can send documents (PDF, text files, CSV, code files, etc.) to Claudio. Incl
 - Claude reads the file directly from disk — text-based formats (PDF, CSV, code, plain text) work best; binary files may produce limited results
 - Files are stored temporarily during processing, then deleted immediately after Claude responds
 
+### Alexa
+
+> **This integration is optional and carries additional security risks.** See the [security warning](#caution-security-risk) above before enabling.
+
+Claudio can receive voice commands through an Amazon Alexa skill. When you speak to Alexa, the message is relayed to Claude Code via the same Telegram pipeline — Claude's response appears in your Telegram chat.
+
+**How it works:**
+
+1. You say: _"Alexa, abre Claudio"_ → Alexa opens the skill
+2. You say your message → Alexa sends it to the `/alexa` endpoint
+3. Claudio relays it to Claude Code as a synthetic Telegram message
+4. Claude's response appears in your Telegram chat
+5. Alexa asks _"¿Algo más?"_ — you can send another message or say _"No"_ to end
+
+**Setup:**
+
+1. Install the `cryptography` Python library (strongly recommended):
+
+```bash
+pip3 install cryptography
+```
+
+2. Create a custom Alexa skill at [developer.amazon.com](https://developer.amazon.com/alexa/console/ask):
+   - Invocation name: `claudio` (or your preferred name)
+   - Endpoint: HTTPS, URL: `https://<your-tunnel-hostname>/alexa`
+   - SSL certificate type: _"My development endpoint is a sub-domain of a domain that has a wildcard certificate from a certificate authority"_
+   - Create a custom intent `SendMessageIntent` with a slot `message` of type `AMAZON.SearchQuery`
+   - Add sample utterances: `dile {message}`, `dile a claudio {message}`, `{message}`
+   - Enable built-in intents: `AMAZON.CancelIntent`, `AMAZON.StopIntent`, `AMAZON.HelpIntent`, `AMAZON.FallbackIntent`
+
+3. Copy the skill ID and add it to your config:
+
+```bash
+echo 'ALEXA_SKILL_ID="amzn1.ask.skill.YOUR-SKILL-ID"' >> ~/.claudio/service.env
+claudio restart
+```
+
+4. Keep the skill in **development mode** (do not publish it) to restrict access to your Amazon account only.
+
+**Security considerations:**
+
+- Without `cryptography`, signature verification falls back to timestamp + header checks only (no certificate chain validation)
+- Anyone with physical access to your Alexa device can send commands — there is no voice PIN or per-user auth
+- Setting `ALEXA_SKILL_ID` is strongly recommended to reject requests from other skills
+- Alexa messages appear in Telegram prefixed with `[Mensaje por voz desde Alexa]` so you can distinguish the source
+
 ### Parallel Work
 
 Parallel work (reviews, research, etc.) is handled by Claude Code's built-in Task tool (subagents). No custom agent infrastructure is needed — Claude natively spawns subagents, manages their lifecycle, and collects results within a single `claude -p` invocation.
@@ -232,6 +282,10 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `WEBHOOK_URL` — Public URL where Telegram sends webhook updates (e.g. `https://claudio.example.com`). Set automatically when using a named tunnel.
 - `WEBHOOK_SECRET` — HMAC secret for validating incoming webhook requests. Auto-generated on first run if not set.
 - `WEBHOOK_RETRY_DELAY` — Seconds between webhook registration retry attempts. Default: `60`.
+
+**Alexa (Optional)**
+
+- `ALEXA_SKILL_ID` — Amazon Alexa skill application ID. If set, only requests from this skill are accepted. Strongly recommended for security.
 
 **Voice (TTS/STT)**
 
@@ -300,6 +354,7 @@ bats tests/db.bats
 - [x] Parallel work via Claude Code's built-in Task tool (subagents)
 - [x] Cognitive memory system (ACT-R activation scoring, embedding-based retrieval)
 - [x] Automated backup system (hourly/daily rotating backups with rsync)
+- [x] Alexa skill integration (optional voice-to-Telegram relay)
 
 **Future**
 
