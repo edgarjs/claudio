@@ -19,6 +19,7 @@ from socketserver import ThreadingMixIn
 
 MAX_BODY_SIZE = 1024 * 1024  # 1 MB
 MAX_QUEUE_SIZE = 5  # Max queued messages per chat
+WEBHOOK_TIMEOUT = 600  # 10 minutes max per Claude invocation
 HEALTH_CACHE_TTL = 30  # seconds between health check API calls
 QUEUE_WARNING_RATIO = 0.8  # Warn when queue reaches this fraction of max
 
@@ -101,12 +102,23 @@ def _process_queue_loop(chat_id):
                     env=env,
                     start_new_session=True,
                 )
-                proc.communicate(input=body.encode())
+                proc.communicate(input=body.encode(), timeout=WEBHOOK_TIMEOUT)
                 if proc.returncode != 0:
                     sys.stderr.write(
                         f"[queue] Webhook handler exited with code {proc.returncode} "
                         f"for chat {chat_id}\n"
                     )
+        except subprocess.TimeoutExpired:
+            sys.stderr.write(
+                f"[queue] Webhook handler timed out after {WEBHOOK_TIMEOUT}s "
+                f"for chat {chat_id}, killing process\n"
+            )
+            if proc:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except Exception as e:
             sys.stderr.write(f"[queue] Error processing message for chat {chat_id}: {e}\n")
             time.sleep(1)  # Avoid tight loop on persistent errors
@@ -589,7 +601,7 @@ def _graceful_shutdown(server, shutdown_event):
     if threads_to_wait:
         sys.stderr.write(f"[shutdown] Waiting for {len(threads_to_wait)} active handler(s)...\n")
         for t in threads_to_wait:
-            t.join(timeout=300)  # Wait up to 5 min for handler to finish on shutdown
+            t.join(timeout=WEBHOOK_TIMEOUT + 10)
             if t.is_alive():
                 sys.stderr.write(f"[shutdown] WARNING: thread {t.name} still alive after timeout\n")
     sys.stderr.write("[shutdown] All handlers finished, exiting cleanly.\n")
