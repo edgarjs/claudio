@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import base64
-import hashlib
 import hmac
 import json
 import os
@@ -20,7 +19,6 @@ from socketserver import ThreadingMixIn
 
 MAX_BODY_SIZE = 1024 * 1024  # 1 MB
 MAX_QUEUE_SIZE = 5  # Max queued messages per chat
-WEBHOOK_TIMEOUT = 600  # 10 minutes max per Claude invocation
 HEALTH_CACHE_TTL = 30  # seconds between health check API calls
 QUEUE_WARNING_RATIO = 0.8  # Warn when queue reaches this fraction of max
 
@@ -103,26 +101,12 @@ def _process_queue_loop(chat_id):
                     env=env,
                     start_new_session=True,
                 )
-                proc.communicate(input=body.encode(), timeout=WEBHOOK_TIMEOUT)
+                proc.communicate(input=body.encode())
                 if proc.returncode != 0:
                     sys.stderr.write(
                         f"[queue] Webhook handler exited with code {proc.returncode} "
                         f"for chat {chat_id}\n"
                     )
-        except subprocess.TimeoutExpired:
-            if proc is not None:
-                try:
-                    os.killpg(proc.pid, signal.SIGTERM)
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait(timeout=30)
-                except OSError:
-                    try:
-                        proc.wait(timeout=30)
-                    except Exception:
-                        pass
-            sys.stderr.write(f"[queue] Timeout processing message for chat {chat_id}\n")
         except Exception as e:
             sys.stderr.write(f"[queue] Error processing message for chat {chat_id}: {e}\n")
             time.sleep(1)  # Avoid tight loop on persistent errors
@@ -258,7 +242,6 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[alexa] req_type=%s intent=%s session_new=%s\n" %
                          (req_type, intent_name or "-",
                           data.get("session", {}).get("new")))
-        sys.stderr.write("[alexa] full_request: %s\n" % json.dumps(data, ensure_ascii=False))
 
         if req_type == "LaunchRequest":
             self._respond_alexa("Dime qué le quieres decir a Claudio.", end_session=False)
@@ -326,7 +309,7 @@ class Handler(BaseHTTPRequestHandler):
                 }
             }
         body = json.dumps(response).encode("utf-8")
-        sys.stderr.write("[alexa] response: %s\n" % body.decode())
+        sys.stderr.write("[alexa] response: end_session=%s text_len=%d\n" % (end_session, len(text)))
         self.send_response(200)
         self.send_header("Content-Type", "application/json;charset=UTF-8")
         self.send_header("Content-Length", str(len(body)))
@@ -348,6 +331,9 @@ _alexa_counter_lock = threading.Lock()
 
 def _enqueue_alexa_message(message):
     """Create a synthetic Telegram webhook body from an Alexa message and enqueue it."""
+    if not TELEGRAM_CHAT_ID:
+        sys.stderr.write("[alexa] TELEGRAM_CHAT_ID not configured, cannot relay message\n")
+        return
     global _alexa_update_counter
     with _alexa_counter_lock:
         _alexa_update_counter += 1
@@ -376,18 +362,17 @@ def _verify_alexa_request(headers, body):
     # Check required headers exist
     # Alexa sends: SignatureCertChainUrl and Signature-256 (or Signature)
     # HTTP proxies may lowercase header names, so check case-insensitively
-    cert_url = headers.get("SignatureCertChainUrl", "") or headers.get("Signaturecertchainurl", "")
-    signature = headers.get("Signature-256", "") or headers.get("Signature", "")
+    cert_url = headers.get("SignatureCertChainUrl", "")
+    signature = headers.get("Signature-256", "")
 
     if not cert_url or not signature:
-        # Log all headers for debugging
-        sys.stderr.write(f"[alexa] Missing signature headers. Received headers: {dict(headers)}\n")
+        sys.stderr.write("[alexa] Missing signature headers: SignatureCertChainUrl=%s Signature-256=%s\n" %
+                         ("present" if cert_url else "missing", "present" if signature else "missing"))
         return False
 
     # Validate cert URL (must be Amazon's domain, HTTPS, port 443, path starts with /echo.api/)
     try:
-        from urllib.parse import urlparse
-        parsed = urlparse(cert_url)
+        parsed = urllib.parse.urlparse(cert_url)
         if parsed.scheme.lower() != "https":
             sys.stderr.write(f"[alexa] Cert URL scheme not HTTPS: {cert_url}\n")
             return False
@@ -423,9 +408,9 @@ def _verify_alexa_request(headers, body):
     try:
         return _verify_alexa_signature(cert_url, signature, body)
     except ImportError:
-        # cryptography library not installed — fall back to header+timestamp checks only
-        sys.stderr.write("[alexa] cryptography library not available, skipping signature verification\n")
-        return True
+        # cryptography library not installed — fail securely
+        sys.stderr.write("[alexa] cryptography library not available, rejecting request\n")
+        return False
     except Exception as e:
         sys.stderr.write(f"[alexa] Signature verification error: {e}\n")
         return False
@@ -452,6 +437,12 @@ def _verify_alexa_signature(cert_url, signature_b64, body):
         with urllib.request.urlopen(req, timeout=10) as resp:
             pem_data = resp.read()
         cert = x509.load_pem_x509_certificate(pem_data)
+
+        # Validate certificate is currently valid
+        now_utc = datetime.now(timezone.utc)
+        if now_utc < cert.not_valid_before_utc or now_utc > cert.not_valid_after_utc:
+            sys.stderr.write("[alexa] Certificate is expired or not yet valid\n")
+            return False
 
         # Validate the certificate's Subject Alternative Name includes echo-api.amazon.com
         try:
@@ -598,7 +589,7 @@ def _graceful_shutdown(server, shutdown_event):
     if threads_to_wait:
         sys.stderr.write(f"[shutdown] Waiting for {len(threads_to_wait)} active handler(s)...\n")
         for t in threads_to_wait:
-            t.join(timeout=WEBHOOK_TIMEOUT + 10)
+            t.join(timeout=300)  # Wait up to 5 min for handler to finish on shutdown
             if t.is_alive():
                 sys.stderr.write(f"[shutdown] WARNING: thread {t.name} still alive after timeout\n")
     sys.stderr.write("[shutdown] All handlers finished, exiting cleanly.\n")
