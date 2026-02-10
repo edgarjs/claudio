@@ -177,7 +177,7 @@ You can send documents (PDF, text files, CSV, code files, etc.) to Claudio. Incl
 
 ### Alexa
 
-> **⚠️ This integration is optional and carries additional security risks.** The Alexa skill exposes an additional `/alexa` endpoint that accepts voice commands and relays them to Claude Code via Telegram. This carries a *higher security risk* than the Telegram-only setup because: (1) anyone with physical access to your Alexa device can send commands to Claude Code — there is no per-user authentication beyond Amazon's skill ID validation, (2) if the `cryptography` Python library is not installed, signature verification falls back to timestamp-only checks, and (3) unlike Telegram (which binds to a single `chat_id`), the Alexa endpoint relies on the skill remaining private (unpublished) to limit access. **Do not enable Alexa integration unless you understand these risks.**
+> **⚠️ This integration is optional and carries additional security risks.** The Alexa skill exposes an additional `/alexa` endpoint that accepts voice commands and relays them to Claude Code via Telegram. This carries a *higher security risk* than the Telegram-only setup because: (1) anyone with physical access to your Alexa device can send commands to Claude Code — there is no per-user authentication beyond Amazon's skill ID validation, and (2) unlike Telegram (which binds to a single `chat_id`), the Alexa endpoint relies on the skill remaining private (unpublished) to limit access. Both `cryptography` and `ALEXA_SKILL_ID` are required — the endpoint is disabled without them. **Do not enable Alexa integration unless you understand these risks.**
 
 Claudio can receive voice commands through an Amazon Alexa skill. When you speak to Alexa, the message is relayed to Claude Code via the same Telegram pipeline — Claude's response appears in your Telegram chat.
 
@@ -191,7 +191,7 @@ Claudio can receive voice commands through an Amazon Alexa skill. When you speak
 
 **Setup:**
 
-1. Install the `cryptography` Python library (strongly recommended):
+1. Install the `cryptography` Python library (required for signature verification):
 
 ```bash
 pip3 install cryptography
@@ -216,9 +216,8 @@ claudio restart
 
 **Security considerations:**
 
-- Without `cryptography`, signature verification falls back to timestamp + header checks only (no certificate chain validation)
+- `cryptography` and `ALEXA_SKILL_ID` are both required — without them, the Alexa endpoint is disabled
 - Anyone with physical access to your Alexa device can send commands — there is no voice PIN or per-user auth
-- Setting `ALEXA_SKILL_ID` is strongly recommended to reject requests from other skills
 - Alexa messages appear in Telegram prefixed with `[Mensaje por voz desde Alexa]` so you can distinguish the source
 
 ### Parallel Work
@@ -281,7 +280,7 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 
 **Alexa (Optional)**
 
-- `ALEXA_SKILL_ID` — Amazon Alexa skill application ID. If set, only requests from this skill are accepted. Strongly recommended for security.
+- `ALEXA_SKILL_ID` — Amazon Alexa skill application ID. Required to enable the Alexa endpoint.
 
 **Voice (TTS/STT)**
 
