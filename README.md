@@ -202,8 +202,9 @@ pip3 install cryptography
    - Endpoint: HTTPS, URL: `https://<your-tunnel-hostname>/alexa`
    - SSL certificate type: _"My development endpoint is a sub-domain of a domain that has a wildcard certificate from a certificate authority"_
    - Create a custom intent `SendMessageIntent` with a slot `message` of type `AMAZON.SearchQuery`
-   - Add sample utterances: `dile {message}`, `dile a claudio {message}`, `{message}`
-   - Enable built-in intents: `AMAZON.CancelIntent`, `AMAZON.StopIntent`, `AMAZON.HelpIntent`, `AMAZON.FallbackIntent`
+   - Add sample utterances (Spanish): `dile {message}`, `dile a claudio {message}`, `{message}`
+   - Add sample utterances (English): `tell him {message}`, `tell claudio {message}`, `{message}`
+   - Enable built-in intents: `AMAZON.CancelIntent`, `AMAZON.StopIntent`, `AMAZON.HelpIntent`, `AMAZON.FallbackIntent`, `AMAZON.NoIntent`
 
 3. Copy the skill ID and add it to your config:
 
