@@ -346,7 +346,7 @@ def _enqueue_alexa_message(message):
             "date": int(time.time()),
             "chat": {"id": int(TELEGRAM_CHAT_ID), "type": "private"},
             "from": {"id": int(TELEGRAM_CHAT_ID), "first_name": "Alexa", "is_bot": False},
-            "text": f"[Mensaje por voz desde Alexa]\n\n{message}",
+            "text": f'_[Alexa voice query]:_ "{message}"',
         },
     })
     enqueue_webhook(body)
