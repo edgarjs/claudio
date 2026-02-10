@@ -205,23 +205,46 @@ pip3 install cryptography
    - Add sample utterances (Spanish):
      ```
      dile {message}
+     dile que {message}
      dile a claudio {message}
+     dile a claudio que {message}
      que {message}
      y {message}
      también {message}
      y también {message}
      pregúntale {message}
-     dile que {message}
+     pregúntale que {message}
+     pregúntale a claudio {message}
+     luego {message}
+     luego que {message}
+     pero {message}
+     además {message}
+     aparte {message}
+     manda {message}
+     pásale {message}
+     por favor dile {message}
+     dile por favor {message}
      ```
    - Add sample utterances (English):
      ```
      tell him {message}
+     tell him that {message}
      tell claudio {message}
+     tell claudio that {message}
      and {message}
      also {message}
      and also {message}
      ask him {message}
-     tell him that {message}
+     ask him about {message}
+     ask claudio {message}
+     ask claudio about {message}
+     then {message}
+     but {message}
+     also ask {message}
+     send {message}
+     pass along {message}
+     please tell him {message}
+     tell him please {message}
      ```
    - Enable built-in intents: `AMAZON.CancelIntent`, `AMAZON.StopIntent`, `AMAZON.HelpIntent`, `AMAZON.FallbackIntent`, `AMAZON.NoIntent`
 
