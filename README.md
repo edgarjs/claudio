@@ -183,11 +183,11 @@ Claudio can receive voice commands through an Amazon Alexa skill. When you speak
 
 **How it works:**
 
-1. You say: _"Alexa, abre Claudio"_ → Alexa opens the skill
+1. You say: _"Alexa, open Claudio"_ → Alexa opens the skill
 2. You say your message → Alexa sends it to the `/alexa` endpoint
 3. Claudio relays it to Claude Code as a synthetic Telegram message
 4. Claude's response appears in your Telegram chat
-5. Alexa asks _"¿Algo más?"_ — you can send another message or say _"No"_ to end
+5. Alexa asks _"Anything else?"_ — you can send another message or say _"No"_ to end
 
 **Setup:**
 
@@ -218,7 +218,7 @@ claudio restart
 
 - `cryptography` and `ALEXA_SKILL_ID` are both required — without them, the Alexa endpoint is disabled
 - Anyone with physical access to your Alexa device can send commands — there is no voice PIN or per-user auth
-- Alexa messages appear in Telegram prefixed with `[Mensaje por voz desde Alexa]` so you can distinguish the source
+- Alexa messages appear in Telegram prefixed with `[Alexa voice query]` so you can distinguish the source
 
 ### Parallel Work
 
