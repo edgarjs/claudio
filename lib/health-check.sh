@@ -15,6 +15,8 @@ set -euo pipefail
 
 # shellcheck source=lib/log.sh
 source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
+# shellcheck source=lib/telegram.sh
+source "$(dirname "${BASH_SOURCE[0]}")/telegram.sh"
 
 CLAUDIO_PATH="$HOME/.claudio"
 CLAUDIO_ENV_FILE="$CLAUDIO_PATH/service.env"
@@ -67,18 +69,15 @@ if [[ "$(uname)" != "Darwin" ]]; then
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 fi
 
-# Send a Telegram alert message (standalone, no dependency on telegram.sh)
+# Send a Telegram alert message via telegram_send_message (which handles
+# retries, chunking, and parse-mode fallback).
 _send_alert() {
     local message="$1"
     if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
         log_error "health-check" "Cannot send alert: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set"
         return 1
     fi
-    curl -s --connect-timeout 5 --max-time 10 \
-        --config <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN") \
-        -d "chat_id=${TELEGRAM_CHAT_ID}" \
-        --data-urlencode "text=${message}" \
-        > /dev/null 2>&1 || true
+    telegram_send_message "$TELEGRAM_CHAT_ID" "$message"
 }
 
 # Read current attempt count (0 if file doesn't exist or invalid)
@@ -233,8 +232,29 @@ _rotate_logs() {
 
 # --- Backup freshness check ---
 # Checks if the most recent backup is within BACKUP_MAX_AGE seconds.
-# Returns 0 if fresh (or no backup dest configured), 1 if stale.
+# Returns 0 if fresh (or no backup dest configured), 1 if stale, 2 if unmounted.
 _check_backup_freshness() {
+    # Fail loudly if the backup destination looks like an external drive
+    # path but isn't mounted (e.g., SSD disconnected via USB error —
+    # the dir stays as an empty mount point).
+    # Uses findmnt --target which resolves subdirectories correctly.
+    if [[ "$BACKUP_DEST" == /mnt/* || "$BACKUP_DEST" == /media/* ]] && [[ -d "$BACKUP_DEST" ]]; then
+        local _not_mounted=false
+        if command -v findmnt >/dev/null 2>&1; then
+            local _mount_target
+            _mount_target=$(findmnt --target "$BACKUP_DEST" -n -o TARGET 2>/dev/null) || _mount_target=""
+            [[ "$_mount_target" == "/" || -z "$_mount_target" ]] && _not_mounted=true
+        elif command -v mountpoint >/dev/null 2>&1; then
+            local _mount_root
+            _mount_root=$(echo "$BACKUP_DEST" | cut -d/ -f1-3)
+            mountpoint -q "$_mount_root" 2>/dev/null || _not_mounted=true
+        fi
+        if [[ "$_not_mounted" == true ]]; then
+            log_warn "health-check" "Backup destination $BACKUP_DEST is not mounted"
+            return 2
+        fi
+    fi
+
     local backup_dir="$BACKUP_DEST/claudio-backups/hourly"
     [[ -d "$backup_dir" ]] || return 0  # no backups configured yet
 
@@ -304,12 +324,18 @@ if [ "$http_code" = "200" ]; then
     # Log rotation
     rotated=$(_rotate_logs)
 
-    # Backup freshness
-    if ! _check_backup_freshness; then
+    # Backup freshness (returns 0=fresh, 1=stale, 2=unmounted)
+    backup_rc=0
+    _check_backup_freshness || backup_rc=$?
+    if (( backup_rc == 2 )); then
+        alerts="${alerts}Backup drive not mounted ($BACKUP_DEST). "
+    elif (( backup_rc == 1 )); then
         alerts="${alerts}Backups are stale. "
     fi
 
     # Send combined alert if anything needs attention
+    # || true: don't let alert delivery failure abort the health check (set -e)
+    # _send_alert already logs on failure internally
     if [[ -n "$alerts" ]]; then
         _send_alert "⚠️ Health check warnings: ${alerts}" || true
     fi
@@ -390,6 +416,7 @@ elif [ "$http_code" = "000" ]; then
 
     if (( fail_count >= MAX_RESTART_ATTEMPTS )); then
         log_error "health-check" "Max restart attempts reached, sending alert"
+        # || true: don't abort script; _send_alert logs on failure internally
         _send_alert "⚠️ Claudio server is down after $MAX_RESTART_ATTEMPTS restart attempts. Please check the server manually." || true
     fi
     exit 1

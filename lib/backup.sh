@@ -23,6 +23,29 @@ backup_run() {
         return 1
     fi
 
+    # Verify the destination sits on a mounted drive when it looks like an
+    # external drive path (/mnt/*, /media/*). Catches disconnected drives
+    # that leave an empty mount point directory behind.
+    # Uses findmnt --target which resolves subdirectories (e.g. /mnt/ssd/backups
+    # correctly finds /mnt/ssd). Falls back to mountpoint for the root component.
+    if [[ "$dest" == /mnt/* || "$dest" == /media/* ]]; then
+        local _not_mounted=false
+        if command -v findmnt >/dev/null 2>&1; then
+            local _mount_target
+            _mount_target=$(findmnt --target "$dest" -n -o TARGET 2>/dev/null) || _mount_target=""
+            [[ "$_mount_target" == "/" || -z "$_mount_target" ]] && _not_mounted=true
+        elif command -v mountpoint >/dev/null 2>&1; then
+            # Fallback: check the first two components (e.g. /mnt/ssd)
+            local _mount_root
+            _mount_root=$(echo "$dest" | cut -d/ -f1-3)
+            mountpoint -q "$_mount_root" 2>/dev/null || _not_mounted=true
+        fi
+        if [[ "$_not_mounted" == true ]]; then
+            echo "Error: '$dest' is not on a mounted filesystem. Is the drive connected?" >&2
+            return 1
+        fi
+    fi
+
     # Resolve to absolute path (important for cron context)
     dest="$(cd "$dest" && pwd)"
 
