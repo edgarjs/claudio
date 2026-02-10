@@ -311,15 +311,6 @@ EOF
     ! grep -q "Backup stale" "$CLAUDIO_PATH/claudio.log" 2>/dev/null
 }
 
-@test "orphan check runs without errors when no processes found" {
-    create_env_file
-    create_mock_curl_healthy
-
-    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
-
-    [ "$status" -eq 0 ]
-    ! grep -q "Orphan process" "$CLAUDIO_PATH/claudio.log" 2>/dev/null
-}
 
 @test "cron_install adds cron entry" {
     source "$BATS_TEST_DIRNAME/../lib/service.sh"

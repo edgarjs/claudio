@@ -6,7 +6,6 @@
 # Sends a Telegram alert after 3 restart attempts if the service never recovers
 #
 # Additional checks (run when service is healthy):
-# - Orphan claude/node processes not belonging to the active service
 # - Disk usage alerts (configurable threshold, default 90%)
 # - Log rotation (configurable max size, default 10MB)
 # - Backup freshness (alerts if last backup is older than threshold)
@@ -118,77 +117,6 @@ _get_stamp_time() {
 
 _clear_fail_state() {
     rm -f "$RESTART_STAMP" "$FAIL_COUNT_FILE"
-}
-
-# --- Orphan process detection ---
-# Finds claude/node processes that are NOT children of the active claudio service.
-# Orphans are logged and killed (SIGTERM). Returns the count found.
-_check_orphan_processes() {
-    local service_pid=""
-    if [[ "$(uname)" == "Darwin" ]]; then
-        service_pid=$(launchctl list | awk '/com\.claudio\.server/{print $1}')
-    else
-        service_pid=$(systemctl --user show claudio --property=MainPID --value 2>/dev/null || echo "")
-    fi
-    # Normalize: "0" or empty means no active service PID
-    [[ "$service_pid" == "0" || -z "$service_pid" ]] && service_pid=""
-
-    local orphan_count=0
-    local pids
-    # Find claude and node processes owned by this user
-    pids=$(pgrep -u "$(id -u)" -f '(claude|node)' 2>/dev/null || true)
-    [[ -z "$pids" ]] && echo 0 && return
-
-    for pid in $pids; do
-        # Skip our own process tree
-        [[ "$pid" == "$$" ]] && continue
-
-        # Skip if it's a child of the service main PID
-        if [[ -n "$service_pid" ]]; then
-            local ancestor="$pid"
-            local is_child=false
-            # Walk up the process tree (max 20 levels to avoid loops)
-            for (( depth=0; depth<20; depth++ )); do
-                local ppid
-                ppid=$(ps -o ppid= -p "$ancestor" 2>/dev/null | tr -d ' ') || break
-                [[ -z "$ppid" || "$ppid" == "0" || "$ppid" == "1" ]] && break
-                if [[ "$ppid" == "$service_pid" ]]; then
-                    is_child=true
-                    break
-                fi
-                ancestor="$ppid"
-            done
-            [[ "$is_child" == true ]] && continue
-        fi
-
-        # Skip processes started less than 30 minutes ago (could be active handlers)
-        local elapsed
-        if [[ "$(uname)" == "Darwin" ]]; then
-            # macOS: ps -o etime= gives [[dd-]hh:]mm:ss, convert to seconds
-            local etime
-            etime=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ') || continue
-            [[ -z "$etime" ]] && continue
-            elapsed=0
-            local parts
-            IFS=: read -ra parts <<< "${etime//-/:}"
-            for part in "${parts[@]}"; do
-                elapsed=$(( elapsed * 60 + 10#$part ))
-            done
-        else
-            elapsed=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ') || continue
-        fi
-        [[ -z "$elapsed" ]] && continue
-        (( elapsed < 1800 )) && continue
-
-        # This looks like an orphan
-        local cmdline
-        cmdline=$(ps -o args= -p "$pid" 2>/dev/null | head -c 120) || cmdline="unknown"
-        log_warn "health-check" "Orphan process found: PID=$pid age=${elapsed}s cmd=$cmdline"
-        kill "$pid" 2>/dev/null || true
-        orphan_count=$((orphan_count + 1))
-    done
-
-    echo "$orphan_count"
 }
 
 # --- Disk usage check ---
@@ -309,12 +237,6 @@ if [ "$http_code" = "200" ]; then
 
     # --- Additional system checks (only when service is healthy) ---
     alerts=""
-
-    # Orphan processes
-    orphans=$(_check_orphan_processes)
-    if (( orphans > 0 )); then
-        alerts="${alerts}Killed $orphans orphan process(es). "
-    fi
 
     # Disk usage
     if ! _check_disk_usage; then
