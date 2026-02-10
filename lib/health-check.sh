@@ -256,16 +256,26 @@ _rotate_logs() {
 
 # --- Backup freshness check ---
 # Checks if the most recent backup is within BACKUP_MAX_AGE seconds.
-# Returns 0 if fresh (or no backup dest configured), 1 if stale or unmounted.
+# Returns 0 if fresh (or no backup dest configured), 1 if stale, 2 if unmounted.
 _check_backup_freshness() {
     # Fail loudly if the backup destination looks like an external drive
     # path but isn't mounted (e.g., SSD disconnected via USB error —
-    # the dir stays as an empty mount point)
-    if [[ "$BACKUP_DEST" == /mnt/* || "$BACKUP_DEST" == /media/* ]]; then
-        if [[ -d "$BACKUP_DEST" ]] && command -v mountpoint >/dev/null 2>&1 \
-                && ! mountpoint -q "$BACKUP_DEST" 2>/dev/null; then
+    # the dir stays as an empty mount point).
+    # Uses findmnt --target which resolves subdirectories correctly.
+    if [[ "$BACKUP_DEST" == /mnt/* || "$BACKUP_DEST" == /media/* ]] && [[ -d "$BACKUP_DEST" ]]; then
+        local _not_mounted=false
+        if command -v findmnt >/dev/null 2>&1; then
+            local _mount_target
+            _mount_target=$(findmnt --target "$BACKUP_DEST" -n -o TARGET 2>/dev/null) || _mount_target=""
+            [[ "$_mount_target" == "/" || -z "$_mount_target" ]] && _not_mounted=true
+        elif command -v mountpoint >/dev/null 2>&1; then
+            local _mount_root
+            _mount_root=$(echo "$BACKUP_DEST" | cut -d/ -f1-3)
+            mountpoint -q "$_mount_root" 2>/dev/null || _not_mounted=true
+        fi
+        if [[ "$_not_mounted" == true ]]; then
             log_warn "health-check" "Backup destination $BACKUP_DEST is not mounted"
-            return 1
+            return 2
         fi
     fi
 
@@ -338,15 +348,13 @@ if [ "$http_code" = "200" ]; then
     # Log rotation
     rotated=$(_rotate_logs)
 
-    # Backup freshness (also checks mount for /mnt/* and /media/* destinations)
-    if ! _check_backup_freshness; then
-        if [[ "$BACKUP_DEST" == /mnt/* || "$BACKUP_DEST" == /media/* ]] \
-                && [[ -d "$BACKUP_DEST" ]] && command -v mountpoint >/dev/null 2>&1 \
-                && ! mountpoint -q "$BACKUP_DEST" 2>/dev/null; then
-            alerts="${alerts}Backup drive not mounted ($BACKUP_DEST). "
-        else
-            alerts="${alerts}Backups are stale. "
-        fi
+    # Backup freshness (returns 0=fresh, 1=stale, 2=unmounted)
+    backup_rc=0
+    _check_backup_freshness || backup_rc=$?
+    if (( backup_rc == 2 )); then
+        alerts="${alerts}Backup drive not mounted ($BACKUP_DEST). "
+    elif (( backup_rc == 1 )); then
+        alerts="${alerts}Backups are stale. "
     fi
 
     # Send combined alert if anything needs attention
