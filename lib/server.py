@@ -257,10 +257,18 @@ class Handler(BaseHTTPRequestHandler):
                           data.get("session", {}).get("new")))
 
         if req_type == "LaunchRequest":
-            self._respond_alexa(_alexa_str(locale, "launch"), end_session=False)
+            self._respond_alexa(
+                _alexa_str(locale, "launch"),
+                end_session=False,
+                reprompt=_alexa_str(locale, "reprompt"),
+            )
             return
 
+        session_id = data.get("session", {}).get("sessionId", "")
+
         if req_type == "SessionEndedRequest":
+            # Flush buffered messages before closing
+            _flush_alexa_session(session_id, locale)
             self._respond_alexa("", end_session=True)
             return
 
@@ -270,7 +278,10 @@ class Handler(BaseHTTPRequestHandler):
 
             # Built-in intents
             if intent_name in ("AMAZON.CancelIntent", "AMAZON.StopIntent", "AMAZON.NoIntent"):
-                self._respond_alexa(_alexa_str(locale, "goodbye"), end_session=True)
+                has_messages = _alexa_session_has_messages(session_id)
+                _flush_alexa_session(session_id, locale)
+                goodbye_key = "goodbye" if has_messages else "goodbye_empty"
+                self._respond_alexa(_alexa_str(locale, goodbye_key), end_session=True)
                 return
             if intent_name == "AMAZON.HelpIntent":
                 self._respond_alexa(_alexa_str(locale, "help"), end_session=False)
@@ -279,17 +290,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._respond_alexa(_alexa_str(locale, "fallback"), end_session=False)
                 return
 
-            # Our custom intent: relay message to Claudio
+            # Our custom intent: buffer message locally
             if intent_name == "SendMessageIntent":
                 message = intent.get("slots", {}).get("message", {}).get("value", "")
                 if not message:
                     self._respond_alexa(_alexa_str(locale, "no_message"), end_session=False)
                     return
 
-                # Create synthetic Telegram webhook and enqueue it
-                _enqueue_alexa_message(message)
+                _buffer_alexa_message(session_id, message, locale)
                 self._respond_alexa(
-                    _alexa_str(locale, "relayed"),
+                    _alexa_str(locale, "buffered"),
                     end_session=False,
                     reprompt=_alexa_str(locale, "reprompt"),
                 )
@@ -339,27 +349,34 @@ class Handler(BaseHTTPRequestHandler):
 _alexa_update_counter = 0
 _alexa_counter_lock = threading.Lock()
 
+# Alexa session buffers: session_id -> {"messages": [...], "locale": str, "last_activity": float}
+_alexa_sessions = {}
+_alexa_sessions_lock = threading.Lock()
+_ALEXA_SESSION_TTL = 300  # 5 min — cleanup stale sessions
+
 # Alexa response strings by locale (2-letter language code)
 _ALEXA_STRINGS = {
     "es": {
         "shutting_down": "Lo siento, estoy reiniciando. Intenta en un momento.",
         "launch": "Dime qué le quieres decir a Claudio.",
-        "goodbye": "Adiós.",
-        "help": "Puedes decirme cualquier mensaje y se lo paso a Claudio por Telegram.",
+        "goodbye": "Listo, le paso todo a Claudio. Adiós.",
+        "goodbye_empty": "Adiós.",
+        "help": "Puedes decirme varios mensajes y al final se los paso todos juntos a Claudio por Telegram. Di 'eso es todo' cuando termines.",
         "fallback": "No entendí. Intenta decir: dile a Claudio, seguido de tu mensaje.",
         "no_message": "No escuché el mensaje. Intenta de nuevo.",
-        "relayed": "Ok, le paso el mensaje. ¿Algo más?",
+        "buffered": "Anotado. ¿Algo más?",
         "reprompt": "¿Algo más para Claudio?",
         "unknown": "No entendí la solicitud.",
     },
     "en": {
         "shutting_down": "Sorry, I'm restarting. Try again in a moment.",
         "launch": "Tell me what you want to say to Claudio.",
-        "goodbye": "Goodbye.",
-        "help": "Say any message and I'll relay it to Claudio on Telegram.",
+        "goodbye": "Got it, sending everything to Claudio. Goodbye.",
+        "goodbye_empty": "Goodbye.",
+        "help": "You can send multiple messages and I'll relay them all to Claudio at the end. Say 'that's all' when you're done.",
         "fallback": "I didn't catch that. Try saying: tell Claudio, followed by your message.",
         "no_message": "I didn't hear the message. Try again.",
-        "relayed": "Ok, message sent. Anything else?",
+        "buffered": "Noted. Anything else?",
         "reprompt": "Anything else for Claudio?",
         "unknown": "I didn't understand the request.",
     },
@@ -373,11 +390,54 @@ def _alexa_str(locale, key):
     return strings[key]
 
 
-def _enqueue_alexa_message(message):
-    """Create a synthetic Telegram webhook body from an Alexa message and enqueue it."""
-    if not TELEGRAM_CHAT_ID:
-        sys.stderr.write("[alexa] TELEGRAM_CHAT_ID not configured, cannot relay message\n")
+def _buffer_alexa_message(session_id, message, locale):
+    """Add a message to the Alexa session buffer."""
+    with _alexa_sessions_lock:
+        if session_id not in _alexa_sessions:
+            _alexa_sessions[session_id] = {
+                "messages": [],
+                "locale": locale,
+                "last_activity": time.monotonic(),
+            }
+        _alexa_sessions[session_id]["messages"].append(message)
+        _alexa_sessions[session_id]["last_activity"] = time.monotonic()
+        count = len(_alexa_sessions[session_id]["messages"])
+    sys.stderr.write(f"[alexa] Buffered message #{count} for session {session_id[:16]}...\n")
+
+    # Cleanup stale sessions while we're here
+    _cleanup_stale_alexa_sessions()
+
+
+def _alexa_session_has_messages(session_id):
+    """Check if a session has buffered messages."""
+    with _alexa_sessions_lock:
+        session = _alexa_sessions.get(session_id)
+        return bool(session and session["messages"])
+
+
+def _flush_alexa_session(session_id, locale):
+    """Flush all buffered messages for a session as a single webhook."""
+    with _alexa_sessions_lock:
+        session = _alexa_sessions.pop(session_id, None)
+
+    if not session or not session["messages"]:
+        sys.stderr.write(f"[alexa] No messages to flush for session {session_id[:16]}...\n")
         return
+
+    messages = session["messages"]
+    sys.stderr.write(f"[alexa] Flushing {len(messages)} message(s) for session {session_id[:16]}...\n")
+
+    # Build transcript
+    lines = ["_[Alexa session transcript]:_", ""]
+    for msg in messages:
+        lines.append(f'- "{msg}"')
+
+    transcript = "\n".join(lines)
+
+    if not TELEGRAM_CHAT_ID:
+        sys.stderr.write("[alexa] TELEGRAM_CHAT_ID not configured, cannot relay\n")
+        return
+
     global _alexa_update_counter
     with _alexa_counter_lock:
         _alexa_update_counter += 1
@@ -390,10 +450,23 @@ def _enqueue_alexa_message(message):
             "date": int(time.time()),
             "chat": {"id": int(TELEGRAM_CHAT_ID), "type": "private"},
             "from": {"id": int(TELEGRAM_CHAT_ID), "first_name": "Alexa", "is_bot": False},
-            "text": f'_[Alexa voice query]:_ "{message}"',
+            "text": transcript,
         },
     })
     enqueue_webhook(body)
+
+
+def _cleanup_stale_alexa_sessions():
+    """Remove sessions older than TTL to prevent memory leaks."""
+    now = time.monotonic()
+    with _alexa_sessions_lock:
+        stale = [sid for sid, s in _alexa_sessions.items()
+                 if now - s["last_activity"] > _ALEXA_SESSION_TTL]
+        for sid in stale:
+            session = _alexa_sessions.pop(sid)
+            count = len(session["messages"])
+            if count:
+                sys.stderr.write(f"[alexa] Stale session {sid[:16]}... expired with {count} unflushed message(s)\n")
 
 
 def _verify_alexa_request(headers, body):
@@ -484,7 +557,9 @@ def _verify_alexa_signature(cert_url, signature_b64, body):
 
         # Validate certificate is currently valid
         now_utc = datetime.now(timezone.utc)
-        if now_utc < cert.not_valid_before_utc or now_utc > cert.not_valid_after_utc:
+        not_before = getattr(cert, "not_valid_before_utc", cert.not_valid_before.replace(tzinfo=timezone.utc))
+        not_after = getattr(cert, "not_valid_after_utc", cert.not_valid_after.replace(tzinfo=timezone.utc))
+        if now_utc < not_before or now_utc > not_after:
             sys.stderr.write("[alexa] Certificate is expired or not yet valid\n")
             return False
 
