@@ -15,6 +15,8 @@ set -euo pipefail
 
 # shellcheck source=lib/log.sh
 source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
+# shellcheck source=lib/telegram.sh
+source "$(dirname "${BASH_SOURCE[0]}")/telegram.sh"
 
 CLAUDIO_PATH="$HOME/.claudio"
 CLAUDIO_ENV_FILE="$CLAUDIO_PATH/service.env"
@@ -67,41 +69,15 @@ if [[ "$(uname)" != "Darwin" ]]; then
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 fi
 
-# Send a Telegram alert message (standalone, no dependency on telegram.sh)
-# Retries up to 3 times with exponential backoff. Logs failures instead of
-# silently swallowing them, so we never lose alerts without knowing.
+# Send a Telegram alert message via telegram_send_message (which handles
+# retries, chunking, and parse-mode fallback).
 _send_alert() {
     local message="$1"
     if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
         log_error "health-check" "Cannot send alert: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set"
         return 1
     fi
-
-    local attempt=0
-    local max_retries=3
-    while [ $attempt -le $max_retries ]; do
-        local response http_code
-        response=$(curl -s --connect-timeout 5 --max-time 10 -w "\n%{http_code}" \
-            --config <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN") \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=${message}" 2>&1) || true
-        http_code=$(echo "$response" | tail -n1 | tr -d '\n')
-        [[ -z "$http_code" ]] && http_code="000"
-
-        if [[ "$http_code" =~ ^2 ]]; then
-            return 0
-        fi
-
-        if [ $attempt -lt $max_retries ]; then
-            local delay=$(( 2 ** attempt ))  # 1, 2, 4
-            log_warn "health-check" "Alert send failed (HTTP $http_code), retrying in ${delay}s..."
-            sleep "$delay"
-        fi
-        ((attempt++)) || true
-    done
-
-    log_error "health-check" "Failed to send alert after $((max_retries + 1)) attempts (HTTP $http_code): ${message:0:100}"
-    return 1
+    telegram_send_message "$TELEGRAM_CHAT_ID" "$message"
 }
 
 # Read current attempt count (0 if file doesn't exist or invalid)
