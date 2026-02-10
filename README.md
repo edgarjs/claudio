@@ -47,10 +47,6 @@ The whole purpose of Claudio is to give you remote access to Claude Code from yo
 
 Since there's no human in front of the terminal to approve permission prompts, Claude Code must run autonomously. Rather than using `--dangerously-skip-permissions`, Claudio explicitly lists the tools Claude can use and auto-approves them — excluding interactive-only tools like `AskUserQuestion` and `Chrome`. Claudio mitigates the risk through: webhook secret validation (HMAC), single authorized `chat_id`, and binding the HTTP server to localhost only (external access goes through cloudflared).
 
-> **⚠️ Alexa Integration (Optional) — Higher Security Risk**
->
-> The optional Alexa skill integration exposes an additional `/alexa` endpoint that accepts voice commands and relays them to Claude Code via Telegram. This carries a *higher security risk* than the Telegram-only setup because: (1) anyone with physical access to your Alexa device can send commands to Claude Code — there is no per-user authentication beyond Amazon's skill ID validation, (2) if the `cryptography` Python library is not installed, signature verification falls back to timestamp-only checks, and (3) unlike Telegram (which binds to a single `chat_id`), the Alexa endpoint relies on the skill remaining private (unpublished) to limit access. **Do not enable Alexa integration unless you understand these risks.** See the [Alexa](#alexa) section for setup instructions.
-
 ### Requirements
 
 - Claude Code CLI (with Pro/Max subscription)
@@ -181,7 +177,7 @@ You can send documents (PDF, text files, CSV, code files, etc.) to Claudio. Incl
 
 ### Alexa
 
-> **This integration is optional and carries additional security risks.** See the [security warning](#caution-security-risk) above before enabling.
+> **⚠️ This integration is optional and carries additional security risks.** The Alexa skill exposes an additional `/alexa` endpoint that accepts voice commands and relays them to Claude Code via Telegram. This carries a *higher security risk* than the Telegram-only setup because: (1) anyone with physical access to your Alexa device can send commands to Claude Code — there is no per-user authentication beyond Amazon's skill ID validation, (2) if the `cryptography` Python library is not installed, signature verification falls back to timestamp-only checks, and (3) unlike Telegram (which binds to a single `chat_id`), the Alexa endpoint relies on the skill remaining private (unpublished) to limit access. **Do not enable Alexa integration unless you understand these risks.**
 
 Claudio can receive voice commands through an Amazon Alexa skill. When you speak to Alexa, the message is relayed to Claude Code via the same Telegram pipeline — Claude's response appears in your Telegram chat.
 
