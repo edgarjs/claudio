@@ -225,7 +225,7 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_alexa(self):
         """Handle Alexa skill requests — async relay to Telegram."""
         if shutting_down:
-            self._respond_alexa("Lo siento, estoy reiniciando. Intenta en un momento.", end_session=True)
+            self._respond_alexa(_alexa_str("en", "shutting_down"), end_session=True)
             return
 
         body = self._read_body()
@@ -249,14 +249,15 @@ class Handler(BaseHTTPRequestHandler):
             self._respond(401, {"error": "skill id mismatch"})
             return
 
+        locale = data.get("request", {}).get("locale", "en-US")
         req_type = data.get("request", {}).get("type", "")
         intent_name = data.get("request", {}).get("intent", {}).get("name", "")
-        sys.stderr.write("[alexa] req_type=%s intent=%s session_new=%s\n" %
-                         (req_type, intent_name or "-",
+        sys.stderr.write("[alexa] req_type=%s intent=%s locale=%s session_new=%s\n" %
+                         (req_type, intent_name or "-", locale,
                           data.get("session", {}).get("new")))
 
         if req_type == "LaunchRequest":
-            self._respond_alexa("Dime qué le quieres decir a Claudio.", end_session=False)
+            self._respond_alexa(_alexa_str(locale, "launch"), end_session=False)
             return
 
         if req_type == "SessionEndedRequest":
@@ -269,36 +270,34 @@ class Handler(BaseHTTPRequestHandler):
 
             # Built-in intents
             if intent_name in ("AMAZON.CancelIntent", "AMAZON.StopIntent", "AMAZON.NoIntent"):
-                self._respond_alexa("Adiós.", end_session=True)
+                self._respond_alexa(_alexa_str(locale, "goodbye"), end_session=True)
                 return
             if intent_name == "AMAZON.HelpIntent":
-                self._respond_alexa(
-                    "Puedes decirme cualquier mensaje y se lo paso a Claudio por Telegram.",
-                    end_session=False,
-                )
+                self._respond_alexa(_alexa_str(locale, "help"), end_session=False)
                 return
             if intent_name == "AMAZON.FallbackIntent":
-                self._respond_alexa(
-                    "No entendí. Intenta decir: dile a Claudio, seguido de tu mensaje.",
-                    end_session=False,
-                )
+                self._respond_alexa(_alexa_str(locale, "fallback"), end_session=False)
                 return
 
             # Our custom intent: relay message to Claudio
             if intent_name == "SendMessageIntent":
                 message = intent.get("slots", {}).get("message", {}).get("value", "")
                 if not message:
-                    self._respond_alexa("No escuché el mensaje. Intenta de nuevo.", end_session=False)
+                    self._respond_alexa(_alexa_str(locale, "no_message"), end_session=False)
                     return
 
                 # Create synthetic Telegram webhook and enqueue it
                 _enqueue_alexa_message(message)
-                self._respond_alexa("Ok, le paso el mensaje. ¿Algo más?", end_session=False, reprompt="¿Algo más para Claudio?")
+                self._respond_alexa(
+                    _alexa_str(locale, "relayed"),
+                    end_session=False,
+                    reprompt=_alexa_str(locale, "reprompt"),
+                )
                 return
 
         # Unknown request type
         sys.stderr.write("[alexa] unhandled: req_type=%s intent=%s\n" % (req_type, intent_name))
-        self._respond_alexa("No entendí la solicitud.", end_session=True)
+        self._respond_alexa(_alexa_str(locale, "unknown"), end_session=True)
 
     def _respond_alexa(self, text, end_session=True, reprompt=None):
         """Send an Alexa-formatted JSON response."""
@@ -339,6 +338,39 @@ class Handler(BaseHTTPRequestHandler):
 
 _alexa_update_counter = 0
 _alexa_counter_lock = threading.Lock()
+
+# Alexa response strings by locale (2-letter language code)
+_ALEXA_STRINGS = {
+    "es": {
+        "shutting_down": "Lo siento, estoy reiniciando. Intenta en un momento.",
+        "launch": "Dime qué le quieres decir a Claudio.",
+        "goodbye": "Adiós.",
+        "help": "Puedes decirme cualquier mensaje y se lo paso a Claudio por Telegram.",
+        "fallback": "No entendí. Intenta decir: dile a Claudio, seguido de tu mensaje.",
+        "no_message": "No escuché el mensaje. Intenta de nuevo.",
+        "relayed": "Ok, le paso el mensaje. ¿Algo más?",
+        "reprompt": "¿Algo más para Claudio?",
+        "unknown": "No entendí la solicitud.",
+    },
+    "en": {
+        "shutting_down": "Sorry, I'm restarting. Try again in a moment.",
+        "launch": "Tell me what you want to say to Claudio.",
+        "goodbye": "Goodbye.",
+        "help": "Say any message and I'll relay it to Claudio on Telegram.",
+        "fallback": "I didn't catch that. Try saying: tell Claudio, followed by your message.",
+        "no_message": "I didn't hear the message. Try again.",
+        "relayed": "Ok, message sent. Anything else?",
+        "reprompt": "Anything else for Claudio?",
+        "unknown": "I didn't understand the request.",
+    },
+}
+
+
+def _alexa_str(locale, key):
+    """Get a localized Alexa response string. Falls back to English."""
+    lang = (locale or "en")[:2].lower()
+    strings = _ALEXA_STRINGS.get(lang, _ALEXA_STRINGS["en"])
+    return strings[key]
 
 
 def _enqueue_alexa_message(message):
