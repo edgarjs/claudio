@@ -92,7 +92,7 @@ The setup wizard will confirm when it receives the message and finish. Once done
 
 > A cron job runs every 5 minutes to monitor the webhook endpoint. It verifies the webhook is registered and re-registers it if needed. If the server is unreachable, it auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After exhausting restart attempts without recovery, it sends a Telegram alert and stops retrying until the server responds with HTTP 200. The restart counter auto-clears when the health endpoint returns HTTP 200. You can also reset it manually by deleting `$HOME/.claudio/.last_restart_attempt` and `$HOME/.claudio/.restart_fail_count`.
 >
-> The health check also monitors: orphan `claude`/`node` processes (kills them after 30 minutes), disk usage (alerts above 90%), log file sizes (rotates files over 10MB), and backup freshness (alerts if the last backup is older than 2 hours). These thresholds are configurable via environment variables.
+> The health check also monitors: disk usage (alerts above 90%), log file sizes (rotates files over 10MB), and backup freshness (alerts if the last backup is older than 2 hours). These thresholds are configurable via environment variables.
 
 ### Status
 

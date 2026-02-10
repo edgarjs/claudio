@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Removed
+
+- Orphan process detection from health check — no longer needed; subagents run as native Task tools with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`
+
 ## [1.2.2] - 2026-02-08
 
 ### Fixed
