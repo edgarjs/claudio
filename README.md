@@ -204,7 +204,6 @@ pip3 install cryptography
    - Create a custom intent `SendMessageIntent` with a slot `message` of type `AMAZON.SearchQuery`
    - Add sample utterances (Spanish):
      ```
-     {message}
      dile {message}
      dile a claudio {message}
      que {message}
@@ -216,7 +215,6 @@ pip3 install cryptography
      ```
    - Add sample utterances (English):
      ```
-     {message}
      tell him {message}
      tell claudio {message}
      and {message}
