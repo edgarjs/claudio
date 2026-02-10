@@ -68,17 +68,40 @@ if [[ "$(uname)" != "Darwin" ]]; then
 fi
 
 # Send a Telegram alert message (standalone, no dependency on telegram.sh)
+# Retries up to 3 times with exponential backoff. Logs failures instead of
+# silently swallowing them, so we never lose alerts without knowing.
 _send_alert() {
     local message="$1"
     if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
         log_error "health-check" "Cannot send alert: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set"
         return 1
     fi
-    curl -s --connect-timeout 5 --max-time 10 \
-        --config <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN") \
-        -d "chat_id=${TELEGRAM_CHAT_ID}" \
-        --data-urlencode "text=${message}" \
-        > /dev/null 2>&1 || true
+
+    local attempt=0
+    local max_retries=3
+    while [ $attempt -le $max_retries ]; do
+        local response http_code
+        response=$(curl -s --connect-timeout 5 --max-time 10 -w "\n%{http_code}" \
+            --config <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN") \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}" 2>&1) || true
+        http_code=$(echo "$response" | tail -n1 | tr -d '\n')
+        [[ -z "$http_code" ]] && http_code="000"
+
+        if [[ "$http_code" =~ ^2 ]]; then
+            return 0
+        fi
+
+        if [ $attempt -lt $max_retries ]; then
+            local delay=$(( 2 ** attempt ))  # 1, 2, 4
+            log_warn "health-check" "Alert send failed (HTTP $http_code), retrying in ${delay}s..."
+            sleep "$delay"
+        fi
+        ((attempt++)) || true
+    done
+
+    log_error "health-check" "Failed to send alert after $((max_retries + 1)) attempts (HTTP $http_code): ${message:0:100}"
+    return 1
 }
 
 # Read current attempt count (0 if file doesn't exist or invalid)
@@ -233,8 +256,19 @@ _rotate_logs() {
 
 # --- Backup freshness check ---
 # Checks if the most recent backup is within BACKUP_MAX_AGE seconds.
-# Returns 0 if fresh (or no backup dest configured), 1 if stale.
+# Returns 0 if fresh (or no backup dest configured), 1 if stale or unmounted.
 _check_backup_freshness() {
+    # Fail loudly if the backup destination looks like an external drive
+    # path but isn't mounted (e.g., SSD disconnected via USB error —
+    # the dir stays as an empty mount point)
+    if [[ "$BACKUP_DEST" == /mnt/* || "$BACKUP_DEST" == /media/* ]]; then
+        if [[ -d "$BACKUP_DEST" ]] && command -v mountpoint >/dev/null 2>&1 \
+                && ! mountpoint -q "$BACKUP_DEST" 2>/dev/null; then
+            log_warn "health-check" "Backup destination $BACKUP_DEST is not mounted"
+            return 1
+        fi
+    fi
+
     local backup_dir="$BACKUP_DEST/claudio-backups/hourly"
     [[ -d "$backup_dir" ]] || return 0  # no backups configured yet
 
@@ -304,12 +338,20 @@ if [ "$http_code" = "200" ]; then
     # Log rotation
     rotated=$(_rotate_logs)
 
-    # Backup freshness
+    # Backup freshness (also checks mount for /mnt/* and /media/* destinations)
     if ! _check_backup_freshness; then
-        alerts="${alerts}Backups are stale. "
+        if [[ "$BACKUP_DEST" == /mnt/* || "$BACKUP_DEST" == /media/* ]] \
+                && [[ -d "$BACKUP_DEST" ]] && command -v mountpoint >/dev/null 2>&1 \
+                && ! mountpoint -q "$BACKUP_DEST" 2>/dev/null; then
+            alerts="${alerts}Backup drive not mounted ($BACKUP_DEST). "
+        else
+            alerts="${alerts}Backups are stale. "
+        fi
     fi
 
     # Send combined alert if anything needs attention
+    # || true: don't let alert delivery failure abort the health check (set -e)
+    # _send_alert already logs on failure internally
     if [[ -n "$alerts" ]]; then
         _send_alert "⚠️ Health check warnings: ${alerts}" || true
     fi
@@ -390,6 +432,7 @@ elif [ "$http_code" = "000" ]; then
 
     if (( fail_count >= MAX_RESTART_ATTEMPTS )); then
         log_error "health-check" "Max restart attempts reached, sending alert"
+        # || true: don't abort script; _send_alert logs on failure internally
         _send_alert "⚠️ Claudio server is down after $MAX_RESTART_ATTEMPTS restart attempts. Please check the server manually." || true
     fi
     exit 1

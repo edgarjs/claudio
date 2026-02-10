@@ -23,6 +23,16 @@ backup_run() {
         return 1
     fi
 
+    # Verify the destination is a mount point when it looks like an external
+    # drive path (/mnt/*, /media/*). Catches disconnected drives that leave
+    # an empty mount point directory behind.
+    if [[ "$dest" == /mnt/* || "$dest" == /media/* ]]; then
+        if command -v mountpoint >/dev/null 2>&1 && ! mountpoint -q "$dest" 2>/dev/null; then
+            echo "Error: '$dest' is not a mounted filesystem. Is the drive connected?" >&2
+            return 1
+        fi
+    fi
+
     # Resolve to absolute path (important for cron context)
     dest="$(cd "$dest" && pwd)"
 
