@@ -246,6 +246,7 @@ pip3 install cryptography
      please tell him {message}
      tell him please {message}
      ```
+   - **Note:** `AMAZON.SearchQuery` slots require a carrier phrase — the slot cannot be the only word in the utterance, and it must appear at the end. For best practices on designing and testing utterances, see the official Alexa documentation: https://developer.amazon.com/en-US/docs/alexa/custom-skills/best-practices-for-sample-utterances-and-custom-slot-type-values.html and https://developer.amazon.com/en-US/docs/alexa/custom-skills/test-utterances-and-improve-your-interaction-model.html
    - Enable built-in intents: `AMAZON.CancelIntent`, `AMAZON.StopIntent`, `AMAZON.HelpIntent`, `AMAZON.FallbackIntent`, `AMAZON.NoIntent`
 
 3. Copy the skill ID and add it to your config:
