@@ -113,7 +113,7 @@ _claude_run_perl_fallback() {
     # Create a claude stub that writes to the notifier log (simulating MCP messages)
     cat > "$BATS_TEST_TMPDIR/.local/bin/claude" << 'STUB'
 #!/bin/sh
-# Extract notifier log path from MCP config using grep/sed (portable, no jq needed)
+# Extract notifier log path from MCP config
 mcp_cfg=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -122,8 +122,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 if [ -n "$mcp_cfg" ]; then
-    log_file=$(sed -n 's/.*"NOTIFIER_LOG_FILE"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$mcp_cfg" 2>/dev/null)
-    if [ -n "$log_file" ]; then
+    log_file=$(jq -r '.mcpServers["telegram-notifier"].env.NOTIFIER_LOG_FILE' "$mcp_cfg" 2>/dev/null)
+    if [ -n "$log_file" ] && [ "$log_file" != "null" ]; then
         printf '"working on it..."\n' >> "$log_file"
         printf '"almost done"\n' >> "$log_file"
     fi
