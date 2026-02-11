@@ -31,20 +31,22 @@ claude_run() {
     chmod 600 "$mcp_config"
     local lib_dir
     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    cat > "$mcp_config" <<MCPEOF
-{
-  "mcpServers": {
-    "telegram-notifier": {
-      "command": "python3",
-      "args": ["${lib_dir}/mcp_telegram.py"],
-      "env": {
-        "TELEGRAM_BOT_TOKEN": "${TELEGRAM_BOT_TOKEN}",
-        "TELEGRAM_CHAT_ID": "${TELEGRAM_CHAT_ID}"
-      }
-    }
-  }
-}
-MCPEOF
+    jq -n \
+        --arg path "${lib_dir}/mcp_telegram.py" \
+        --arg token "${TELEGRAM_BOT_TOKEN}" \
+        --arg chat_id "${TELEGRAM_CHAT_ID}" \
+        '{
+            mcpServers: {
+                "telegram-notifier": {
+                    command: "python3",
+                    args: [ $path ],
+                    env: {
+                        TELEGRAM_BOT_TOKEN: $token,
+                        TELEGRAM_CHAT_ID: $chat_id
+                    }
+                }
+            }
+        }' > "$mcp_config"
 
     local -a claude_args=(
         --disable-slash-commands

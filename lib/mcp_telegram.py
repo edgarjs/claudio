@@ -7,6 +7,7 @@ Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from environment.
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -15,6 +16,10 @@ import urllib.request
 TELEGRAM_API = "https://api.telegram.org/bot"
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+# Validate token format to prevent SSRF via malicious env var
+if BOT_TOKEN and not re.match(r"^[0-9]+:[a-zA-Z0-9_-]+$", BOT_TOKEN):
+    BOT_TOKEN = ""
 
 
 def send_telegram_message(text: str) -> dict:
