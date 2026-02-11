@@ -151,8 +151,9 @@ _check_recent_logs() {
     # Extract recent lines (within time window)
     local recent_lines
     recent_lines=$(awk -v cutoff="$cutoff_time" '
-        match($0, /^\[([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\]/, m) {
-            if (m[1] >= cutoff) print
+        /^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]/ {
+            ts = substr($0, 2, 19)
+            if (ts >= cutoff) print
         }
     ' "$log_file")
 
