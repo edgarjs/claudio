@@ -22,6 +22,7 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 - `lib/stt.sh` — ElevenLabs speech-to-text integration for transcribing incoming voice messages.
 - `lib/backup.sh` — Automated backup management: rsync-based hourly/daily rotating backups of `$HOME/.claudio/` with cron scheduling. Subcommands: `backup <dest>`, `backup status <dest>`, `backup cron install/uninstall`.
 - `lib/memory.sh` — Cognitive memory system (bash glue). Invokes `lib/memory.py` for embedding-based retrieval and ACT-R activation scoring. Consolidates conversation history into long-term memories. Degrades gracefully if fastembed is not installed.
+- `lib/mcp_tools.py` — MCP stdio server exposing Claudio tools: Telegram notifications (`send_telegram_message`), delayed service restart (`restart_service`), and git pull + restart (`update_service`). Pure stdlib, no external dependencies.
 - `lib/memory.py` — Python backend for cognitive memory: embedding generation (fastembed), SQLite-backed storage, ACT-R activation scoring for retrieval, and memory consolidation via Claude.
 - `lib/db.py` — Python SQLite helper providing parameterized queries to eliminate SQL injection risk. Used by `db.sh`.
 - `lib/service.sh` — systemd (Linux) and launchd (macOS) service management. Also handles cloudflared installation and named tunnel setup during `claudio install`. Enables loginctl linger on install/update (so the user service survives logout) and disables it on uninstall if no other user services remain.

@@ -33,13 +33,13 @@ claude_run() {
     local lib_dir
     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     jq -n \
-        --arg path "${lib_dir}/mcp_telegram.py" \
+        --arg path "${lib_dir}/mcp_tools.py" \
         --arg token "${TELEGRAM_BOT_TOKEN}" \
         --arg chat_id "${TELEGRAM_CHAT_ID}" \
         --arg log_file "${notifier_log}" \
         '{
             mcpServers: {
-                "telegram-notifier": {
+                "claudio-tools": {
                     command: "python3",
                     args: [ $path ],
                     env: {
@@ -58,8 +58,8 @@ claude_run() {
         --no-chrome
         --no-session-persistence
         --output-format json
-        --tools "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch,Task,TaskOutput,TaskStop,TodoWrite,mcp__telegram-notifier__send_telegram_message"
-        --allowedTools "Read" "Write" "Edit" "Bash" "Glob" "Grep" "WebFetch" "WebSearch" "Task" "TaskOutput" "TaskStop" "TodoWrite" "mcp__telegram-notifier__send_telegram_message"
+        --tools "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch,Task,TaskOutput,TaskStop,TodoWrite,mcp__claudio-tools__send_telegram_message,mcp__claudio-tools__restart_service,mcp__claudio-tools__update_service"
+        --allowedTools "Read" "Write" "Edit" "Bash" "Glob" "Grep" "WebFetch" "WebSearch" "Task" "TaskOutput" "TaskStop" "TodoWrite" "mcp__claudio-tools__send_telegram_message" "mcp__claudio-tools__restart_service" "mcp__claudio-tools__update_service"
         -p -
     )
 
