@@ -427,12 +427,14 @@ def _flush_alexa_session(session_id, locale):
     messages = session["messages"]
     sys.stderr.write(f"[alexa] Flushing {len(messages)} message(s) for session {session_id[:16]}...\n")
 
-    # Build transcript
-    lines = ["_[Alexa session transcript]:_", ""]
-    for msg in messages:
-        lines.append(f'- "{msg}"')
-
-    transcript = "\n".join(lines)
+    # Build transcript — no "Alexa" label to avoid Claude filtering out requests
+    if len(messages) == 1:
+        transcript = messages[0]
+    else:
+        lines = []
+        for msg in messages:
+            lines.append(f'- "{msg}"')
+        transcript = "\n".join(lines)
 
     if not TELEGRAM_CHAT_ID:
         sys.stderr.write("[alexa] TELEGRAM_CHAT_ID not configured, cannot relay\n")

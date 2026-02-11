@@ -205,24 +205,48 @@ pip3 install cryptography
    - Add sample utterances (Spanish):
      ```
      dile {message}
+     dile que {message}
      dile a claudio {message}
+     dile a claudio que {message}
      que {message}
      y {message}
      también {message}
      y también {message}
      pregúntale {message}
-     dile que {message}
+     pregúntale que {message}
+     pregúntale a claudio {message}
+     luego {message}
+     luego que {message}
+     pero {message}
+     además {message}
+     aparte {message}
+     manda {message}
+     pásale {message}
+     por favor dile {message}
+     dile por favor {message}
      ```
    - Add sample utterances (English):
      ```
      tell him {message}
+     tell him that {message}
      tell claudio {message}
+     tell claudio that {message}
      and {message}
      also {message}
      and also {message}
      ask him {message}
-     tell him that {message}
+     ask him about {message}
+     ask claudio {message}
+     ask claudio about {message}
+     then {message}
+     but {message}
+     also ask {message}
+     send {message}
+     pass along {message}
+     please tell him {message}
+     tell him please {message}
      ```
+   - **Note:** `AMAZON.SearchQuery` slots require a carrier phrase — the slot cannot be the only word in the utterance, and it must appear at the end. For best practices on designing and testing utterances, see the official Alexa documentation: https://developer.amazon.com/en-US/docs/alexa/custom-skills/best-practices-for-sample-utterances-and-custom-slot-type-values.html and https://developer.amazon.com/en-US/docs/alexa/custom-skills/test-utterances-and-improve-your-interaction-model.html
    - Enable built-in intents: `AMAZON.CancelIntent`, `AMAZON.StopIntent`, `AMAZON.HelpIntent`, `AMAZON.FallbackIntent`, `AMAZON.NoIntent`
 
 3. Copy the skill ID and add it to your config:
