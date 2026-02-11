@@ -626,6 +626,7 @@ Read this file and summarize its contents."
         if [ -n "${CLAUDE_NOTIFIER_MESSAGES:-}" ]; then
             history_response="${CLAUDE_NOTIFIER_MESSAGES}"$'\n\n'"${response}"
         fi
+        history_response=$(printf '%s' "$history_response" | _sanitize_for_prompt)
         history_add "assistant" "$history_response"
 
         # Consolidate memories post-response (background — doesn't block further processing)

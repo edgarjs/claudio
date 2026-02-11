@@ -166,19 +166,7 @@ except (json.JSONDecodeError, KeyError):
     # Must happen before RETURN trap deletes the temp file.
     CLAUDE_NOTIFIER_MESSAGES=""
     if [ -s "$notifier_log" ]; then
-        CLAUDE_NOTIFIER_MESSAGES=$(python3 -c "
-import sys, json
-msgs = []
-for line in open(sys.argv[1]):
-    line = line.strip()
-    if line:
-        try:
-            msgs.append(json.loads(line))
-        except json.JSONDecodeError:
-            pass
-if msgs:
-    print('\n'.join(f'[Notification: {m}]' for m in msgs))
-" "$notifier_log" 2>/dev/null) || true
+        CLAUDE_NOTIFIER_MESSAGES=$(jq -r '"[Notification: \(.)]"' "$notifier_log" 2>/dev/null) || true
     fi
 
     printf '%s\n' "$response"
