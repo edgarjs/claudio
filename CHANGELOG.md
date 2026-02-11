@@ -5,7 +5,7 @@
 ### Added
 
 - Alexa voice integration via `/alexa` endpoint with request validation (#52)
-- Expanded health check with system monitoring: disk, memory, CPU, and temperature (#47)
+- Expanded health check with disk usage monitoring, log rotation, and backup status checks (#47)
 - Silent backup failure detection with retry alerts and unmounted drive detection (#54)
 - Typing indicator: `record_voice` action for voice messages, 4s refresh interval (#57)
 
