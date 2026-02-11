@@ -312,6 +312,136 @@ EOF
 }
 
 
+# --- Tests for log analysis ---
+
+# Helper: write log lines with timestamps relative to now
+write_recent_log() {
+    local offset_secs="${1:-0}"
+    shift
+    local ts
+    ts=$(date -d "-${offset_secs} seconds" '+%Y-%m-%d %H:%M:%S')
+    printf '[%s] %s\n' "$ts" "$*" >> "$CLAUDIO_PATH/claudio.log"
+}
+
+@test "log analysis detects ERROR lines in recent logs" {
+    create_env_file
+    create_mock_curl_healthy
+    export LOG_CHECK_WINDOW=300
+    export LOG_ALERT_COOLDOWN=0
+
+    write_recent_log 10 "[server] ERROR: Something went wrong"
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    # Alert should contain the error — check via the alert stamp being created
+    [ -f "$CLAUDIO_PATH/.last_log_alert" ]
+}
+
+@test "log analysis ignores old log entries" {
+    create_env_file
+    create_mock_curl_healthy
+    export LOG_CHECK_WINDOW=300
+    export LOG_ALERT_COOLDOWN=0
+
+    # Write an error line from 10 minutes ago (outside 5min window)
+    local old_ts
+    old_ts=$(date -d "-600 seconds" '+%Y-%m-%d %H:%M:%S')
+    printf '[%s] [server] ERROR: Old problem\n' "$old_ts" > "$CLAUDIO_PATH/claudio.log"
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    # No alert stamp should be created
+    [ ! -f "$CLAUDIO_PATH/.last_log_alert" ]
+}
+
+@test "log analysis detects rapid server restarts" {
+    create_env_file
+    create_mock_curl_healthy
+    export LOG_CHECK_WINDOW=300
+    export LOG_ALERT_COOLDOWN=0
+
+    write_recent_log 60 "[server] Starting Claudio server on port 8421..."
+    write_recent_log 50 "[server] Starting Claudio server on port 8421..."
+    write_recent_log 40 "[server] Starting Claudio server on port 8421..."
+    write_recent_log 30 "[server] Starting Claudio server on port 8421..."
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    [ -f "$CLAUDIO_PATH/.last_log_alert" ]
+}
+
+@test "log analysis ignores health-check connection errors" {
+    create_env_file
+    create_mock_curl_healthy
+    export LOG_CHECK_WINDOW=300
+    export LOG_ALERT_COOLDOWN=0
+
+    write_recent_log 10 "[health-check] ERROR: Could not connect to server on port 8421"
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    # Should NOT alert since we filter out "Could not connect"
+    [ ! -f "$CLAUDIO_PATH/.last_log_alert" ]
+}
+
+@test "log analysis respects cooldown" {
+    create_env_file
+    create_mock_curl_healthy
+    export LOG_CHECK_WINDOW=300
+    export LOG_ALERT_COOLDOWN=1800
+
+    # Simulate recent alert
+    printf '%s' "$(date +%s)" > "$CLAUDIO_PATH/.last_log_alert"
+
+    write_recent_log 10 "[server] ERROR: Something went wrong"
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    # The stamp should still have the original timestamp (not updated)
+    local stamp_before stamp_after
+    stamp_before=$(cat "$CLAUDIO_PATH/.last_log_alert")
+    # Re-run to confirm it stays throttled
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+    stamp_after=$(cat "$CLAUDIO_PATH/.last_log_alert")
+    [ "$stamp_before" = "$stamp_after" ]
+}
+
+@test "log analysis detects pre-flight warnings" {
+    create_env_file
+    create_mock_curl_healthy
+    export LOG_CHECK_WINDOW=300
+    export LOG_ALERT_COOLDOWN=0
+
+    write_recent_log 30 "[claude] Pre-flight check is taking longer than expected"
+    write_recent_log 25 "[claude] Pre-flight check is taking longer than expected"
+    write_recent_log 20 "[claude] Pre-flight check is taking longer than expected"
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    [ -f "$CLAUDIO_PATH/.last_log_alert" ]
+}
+
+@test "log analysis no alert when logs are clean" {
+    create_env_file
+    create_mock_curl_healthy
+    export LOG_CHECK_WINDOW=300
+    export LOG_ALERT_COOLDOWN=0
+
+    write_recent_log 10 "[telegram] Received message from chat_id=123"
+    write_recent_log 5 "[backup] Hourly backup created: /mnt/ssd/claudio-backups/hourly/2026-02-11_1400"
+
+    run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
+
+    [ "$status" -eq 0 ]
+    [ ! -f "$CLAUDIO_PATH/.last_log_alert" ]
+}
+
 @test "cron_install adds cron entry" {
     source "$BATS_TEST_DIRNAME/../lib/service.sh"
 

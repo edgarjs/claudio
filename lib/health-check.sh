@@ -9,6 +9,7 @@
 # - Disk usage alerts (configurable threshold, default 90%)
 # - Log rotation (configurable max size, default 10MB)
 # - Backup freshness (alerts if last backup is older than threshold)
+# - Recent log analysis (scans for errors, rapid restarts, API slowness)
 
 set -euo pipefail
 
@@ -27,6 +28,9 @@ DISK_USAGE_THRESHOLD="${DISK_USAGE_THRESHOLD:-90}"       # percentage
 LOG_MAX_SIZE="${LOG_MAX_SIZE:-10485760}"                  # 10MB in bytes
 BACKUP_MAX_AGE="${BACKUP_MAX_AGE:-7200}"                 # 2 hours in seconds
 BACKUP_DEST="${BACKUP_DEST:-/mnt/ssd}"
+LOG_CHECK_WINDOW="${LOG_CHECK_WINDOW:-300}"               # 5 minutes lookback
+LOG_ALERT_COOLDOWN="${LOG_ALERT_COOLDOWN:-1800}"          # 30 min between log alerts
+LOG_ALERT_STAMP="$CLAUDIO_PATH/.last_log_alert"
 
 # Safe env file loader: only accepts KEY=value or KEY="value" lines
 # where KEY matches [A-Z_][A-Z0-9_]*. Reverses _env_quote escaping
@@ -117,6 +121,89 @@ _get_stamp_time() {
 
 _clear_fail_state() {
     rm -f "$RESTART_STAMP" "$FAIL_COUNT_FILE"
+}
+
+# --- Recent log analysis ---
+# Scans claudio.log for error patterns within LOG_CHECK_WINDOW seconds.
+# Deduplicates: only alerts once per LOG_ALERT_COOLDOWN per issue category.
+# Outputs alert text to stdout (empty if nothing found).
+_check_recent_logs() {
+    local log_file="$CLAUDIO_LOG_FILE"
+    [[ -f "$log_file" ]] || return 0
+
+    # Throttle: skip if we alerted recently
+    if [[ -f "$LOG_ALERT_STAMP" ]]; then
+        local last_alert now
+        last_alert=$(cat "$LOG_ALERT_STAMP" 2>/dev/null) || last_alert=0
+        now=$(date +%s)
+        if [[ "$last_alert" =~ ^[0-9]+$ ]] && (( now - last_alert < LOG_ALERT_COOLDOWN )); then
+            return 0
+        fi
+    fi
+
+    local cutoff_time
+    cutoff_time=$(date -d "-${LOG_CHECK_WINDOW} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || return 0
+
+    # Extract recent lines (within time window)
+    local recent_lines
+    recent_lines=$(awk -v cutoff="$cutoff_time" '
+        match($0, /^\[([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\]/, m) {
+            if (m[1] >= cutoff) print
+        }
+    ' "$log_file")
+
+    [[ -z "$recent_lines" ]] && return 0
+
+    local issues=""
+
+    # 1. ERROR lines (excluding health-check's own "Could not connect" which is already handled)
+    local error_count
+    error_count=$(echo "$recent_lines" | grep -c 'ERROR:' 2>/dev/null || echo 0)
+    local filtered_errors
+    filtered_errors=$(echo "$recent_lines" | grep 'ERROR:' | grep -v 'Could not connect to server' | grep -v 'Cannot send alert' 2>/dev/null || true)
+    local real_error_count
+    real_error_count=$(echo "$filtered_errors" | grep -c '.' 2>/dev/null || echo 0)
+    if (( real_error_count > 0 )); then
+        local sample
+        sample=$(echo "$filtered_errors" | tail -1 | sed 's/^\[[^]]*\] //')
+        issues="${issues}${real_error_count} error(s): \`${sample}\`"$'\n'
+    fi
+
+    # 2. Rapid server restarts (multiple "Starting Claudio server" in window)
+    local restart_count
+    restart_count=$(echo "$recent_lines" | grep -c 'Starting Claudio server' 2>/dev/null || echo 0)
+    if (( restart_count >= 3 )); then
+        issues="${issues}Server restarted ${restart_count} times in ${LOG_CHECK_WINDOW}s"$'\n'
+    fi
+
+    # 3. Claude tool warnings (BashTool pre-flight)
+    local preflight_count
+    preflight_count=$(echo "$recent_lines" | grep -c 'Pre-flight check is taking longer' 2>/dev/null || echo 0)
+    if (( preflight_count >= 3 )); then
+        issues="${issues}Claude API slow (${preflight_count} pre-flight warnings)"$'\n'
+    fi
+
+    # 4. WARN lines (not already covered above)
+    local warn_lines
+    warn_lines=$(echo "$recent_lines" | grep 'WARN:' | grep -v 'Disk usage\|Backup stale\|not mounted' 2>/dev/null || true)
+    local warn_count
+    warn_count=$(echo "$warn_lines" | grep -c '.' 2>/dev/null || echo 0)
+    if (( warn_count > 0 )); then
+        local warn_sample
+        warn_sample=$(echo "$warn_lines" | tail -1 | sed 's/^\[[^]]*\] //')
+        issues="${issues}${warn_count} warning(s): \`${warn_sample}\`"$'\n'
+    fi
+
+    if [[ -n "$issues" ]]; then
+        # Record alert timestamp
+        local tmp
+        tmp=$(mktemp "${LOG_ALERT_STAMP}.XXXXXX") || true
+        if [[ -n "$tmp" ]]; then
+            printf '%s' "$(date +%s)" > "$tmp"
+            mv -f "$tmp" "$LOG_ALERT_STAMP"
+        fi
+        printf '%s' "$issues"
+    fi
 }
 
 # --- Disk usage check ---
@@ -253,6 +340,12 @@ if [ "$http_code" = "200" ]; then
         alerts="${alerts}Backup drive not mounted ($BACKUP_DEST). "
     elif (( backup_rc == 1 )); then
         alerts="${alerts}Backups are stale. "
+    fi
+
+    # Recent log analysis
+    log_issues=$(_check_recent_logs)
+    if [[ -n "$log_issues" ]]; then
+        alerts="${alerts}"$'\n'"Log issues detected:"$'\n'"${log_issues}"
     fi
 
     # Send combined alert if anything needs attention
