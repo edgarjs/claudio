@@ -31,7 +31,7 @@ claude_run() {
     local mcp_config
     mcp_config=$(mktemp)
     chmod 600 "$mcp_config"
-    printf '{"mcpServers":{"telegram-notifier":{"command":"bash","args":["%s/mcp_telegram.sh"]}}}' "$lib_dir" > "$mcp_config"
+    printf '{"mcpServers":{"telegram-notifier":{"command":"python3","args":["%s/mcp_telegram.py"],"env":{"TELEGRAM_BOT_TOKEN":"%s","TELEGRAM_CHAT_ID":"%s"}}}}' "$lib_dir" "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_CHAT_ID" > "$mcp_config"
 
     local -a claude_args=(
         --disable-slash-commands
