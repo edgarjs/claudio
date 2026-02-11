@@ -26,6 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install jq (macOS)
+        if: runner.os == 'macOS'
+        run: brew install jq
+
       - name: Setup BATS
         uses: bats-core/bats-action@3.0.1
 
