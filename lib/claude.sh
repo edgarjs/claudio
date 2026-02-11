@@ -25,14 +25,23 @@ claude_run() {
         full_prompt+="$prompt"
     fi
 
+    # Generate MCP config with resolved paths
+    local lib_dir
+    lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local mcp_config
+    mcp_config=$(mktemp)
+    chmod 600 "$mcp_config"
+    printf '{"mcpServers":{"telegram-notifier":{"command":"bash","args":["%s/mcp_telegram.sh"]}}}' "$lib_dir" > "$mcp_config"
+
     local -a claude_args=(
         --disable-slash-commands
         --model "$MODEL"
         --no-chrome
         --no-session-persistence
         --output-format json
+        --mcp-config "$mcp_config"
         --tools "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch,Task,TaskOutput,TaskStop,TodoWrite"
-        --allowedTools "Read" "Write" "Edit" "Bash" "Glob" "Grep" "WebFetch" "WebSearch" "Task" "TaskOutput" "TaskStop" "TodoWrite"
+        --allowedTools "Read" "Write" "Edit" "Bash" "Glob" "Grep" "WebFetch" "WebSearch" "Task" "TaskOutput" "TaskStop" "TodoWrite" "mcp__telegram-notifier__send_telegram_message"
         -p -
     )
 
@@ -58,7 +67,7 @@ claude_run() {
     chmod 600 "$out_file" "$prompt_file"
     printf '%s' "$full_prompt" > "$prompt_file"
     # Ensure temp files are cleaned up even on unexpected exit
-    trap 'rm -f "$stderr_output" "$out_file" "$prompt_file"' RETURN
+    trap 'rm -f "$stderr_output" "$out_file" "$prompt_file" "$mcp_config"' RETURN
 
     # Find claude command, trying multiple common locations
     # Note: Don't use 'command -v' as it's a bash builtin that doesn't work correctly
