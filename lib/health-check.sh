@@ -157,8 +157,6 @@ _check_recent_logs() {
     local issues=""
 
     # 1. ERROR lines (excluding health-check's own "Could not connect" which is already handled)
-    local error_count
-    error_count=$(echo "$recent_lines" | grep -c 'ERROR:' 2>/dev/null || echo 0)
     local filtered_errors
     filtered_errors=$(echo "$recent_lines" | grep 'ERROR:' | grep -v 'Could not connect to server' | grep -v 'Cannot send alert' 2>/dev/null || true)
     local real_error_count
