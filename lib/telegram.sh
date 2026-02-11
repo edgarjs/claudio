@@ -146,6 +146,18 @@ telegram_send_typing() {
         -d "action=${action}" > /dev/null 2>&1 || true
 }
 
+telegram_set_reaction() {
+    local chat_id="$1"
+    local message_id="$2"
+    local emoji="${3:-👀}"
+    # Fire-and-forget: don't retry reactions to avoid rate limit cascades
+    curl -s --connect-timeout 5 --max-time 10 \
+        --config <(printf 'url = "%s%s/setMessageReaction"\n' "$TELEGRAM_API" "$TELEGRAM_BOT_TOKEN") \
+        -H "Content-Type: application/json" \
+        -d "{\"chat_id\":${chat_id},\"message_id\":${message_id},\"reaction\":[{\"type\":\"emoji\",\"emoji\":\"${emoji}\"}]}" \
+        > /dev/null 2>&1 || true
+}
+
 
 telegram_parse_webhook() {
     local body="$1"
@@ -390,6 +402,9 @@ ${text}"
     fi
 
     log "telegram" "Received message from chat_id=$WEBHOOK_CHAT_ID"
+
+    # React with eyes to acknowledge we're working on it
+    telegram_set_reaction "$WEBHOOK_CHAT_ID" "$message_id"
 
     # Download image(s) if present (after command check to avoid unnecessary downloads)
     local image_file=""
