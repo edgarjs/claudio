@@ -16,10 +16,22 @@ import urllib.request
 TELEGRAM_API = "https://api.telegram.org/bot"
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+NOTIFIER_LOG_FILE = os.environ.get("NOTIFIER_LOG_FILE", "")
 
 # Validate token format to prevent SSRF via malicious env var
 if BOT_TOKEN and not re.match(r"^[0-9]+:[a-zA-Z0-9_-]+$", BOT_TOKEN):
     BOT_TOKEN = ""
+
+
+def _log_sent_message(text: str) -> None:
+    """Append sent message to log file so caller can include it in history."""
+    if not NOTIFIER_LOG_FILE:
+        return
+    try:
+        with open(NOTIFIER_LOG_FILE, "a") as f:
+            f.write(json.dumps(text) + "\n")
+    except OSError as e:
+        print(f"mcp_telegram: Failed to write to notifier log: {e}", file=sys.stderr)
 
 
 def send_telegram_message(text: str) -> dict:
@@ -42,6 +54,7 @@ def send_telegram_message(text: str) -> dict:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 result = json.loads(resp.read())
                 if result.get("ok"):
+                    _log_sent_message(text)
                     return {"status": "ok"}
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")

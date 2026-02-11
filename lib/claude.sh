@@ -26,15 +26,17 @@ claude_run() {
     fi
 
     # Generate MCP config with absolute paths (tempfile cleaned up on return)
-    local mcp_config
+    local mcp_config notifier_log
     mcp_config=$(mktemp)
-    chmod 600 "$mcp_config"
+    notifier_log=$(mktemp)
+    chmod 600 "$mcp_config" "$notifier_log"
     local lib_dir
     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     jq -n \
         --arg path "${lib_dir}/mcp_telegram.py" \
         --arg token "${TELEGRAM_BOT_TOKEN}" \
         --arg chat_id "${TELEGRAM_CHAT_ID}" \
+        --arg log_file "${notifier_log}" \
         '{
             mcpServers: {
                 "telegram-notifier": {
@@ -42,7 +44,8 @@ claude_run() {
                     args: [ $path ],
                     env: {
                         TELEGRAM_BOT_TOKEN: $token,
-                        TELEGRAM_CHAT_ID: $chat_id
+                        TELEGRAM_CHAT_ID: $chat_id,
+                        NOTIFIER_LOG_FILE: $log_file
                     }
                 }
             }
@@ -82,7 +85,7 @@ claude_run() {
     chmod 600 "$out_file" "$prompt_file"
     printf '%s' "$full_prompt" > "$prompt_file"
     # Ensure temp files are cleaned up even on unexpected exit
-    trap 'rm -f "$stderr_output" "$out_file" "$prompt_file" "$mcp_config"' RETURN
+    trap 'rm -f "$stderr_output" "$out_file" "$prompt_file" "$mcp_config" "$notifier_log"' RETURN
 
     # Find claude command, trying multiple common locations
     # Note: Don't use 'command -v' as it's a bash builtin that doesn't work correctly
@@ -114,6 +117,9 @@ claude_run() {
     # Prevent Claude from spawning background tasks that would outlive
     # this one-shot webhook invocation
     export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
+
+    # Export notifier log path so MCP server (and test stubs) can find it
+    export CLAUDIO_NOTIFIER_LOG="$notifier_log"
 
     # Run claude in its own session/process group to prevent its child
     # processes (bash tools) from killing the webhook handler via process
@@ -157,6 +163,16 @@ except (json.JSONDecodeError, KeyError):
 
         # Persist token usage in background
         _claude_persist_usage "$raw_output" &
+    fi
+
+    # Read notifier messages so caller can include them in conversation history.
+    # Must happen before RETURN trap deletes the temp file.
+    # shellcheck disable=SC2034  # Used by telegram.sh
+    CLAUDE_NOTIFIER_MESSAGES=""
+    if [ -s "$notifier_log" ]; then
+        # shellcheck disable=SC2034
+        # Strip surrounding quotes from each JSON string line and wrap as notification
+        CLAUDE_NOTIFIER_MESSAGES=$(sed 's/^"//; s/"$//; s/^/[Notification: /; s/$/]/' "$notifier_log" 2>/dev/null) || true
     fi
 
     printf '%s\n' "$response"

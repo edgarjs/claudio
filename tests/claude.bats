@@ -109,6 +109,35 @@ _claude_run_perl_fallback() {
     [[ "$output" == *"before signal"* ]]
 }
 
+@test "claude_run populates CLAUDE_NOTIFIER_MESSAGES from notifier log" {
+    # Create a claude stub that writes to the notifier log (simulating MCP messages)
+    cat > "$BATS_TEST_TMPDIR/.local/bin/claude" << 'STUB'
+#!/bin/sh
+# Use the env var exported by claude_run to find the notifier log
+if [ -n "$CLAUDIO_NOTIFIER_LOG" ]; then
+    printf '"working on it..."\n' >> "$CLAUDIO_NOTIFIER_LOG"
+    printf '"almost done"\n' >> "$CLAUDIO_NOTIFIER_LOG"
+fi
+echo "final response"
+STUB
+    chmod +x "$BATS_TEST_TMPDIR/.local/bin/claude"
+
+    # Use run + helper to avoid set -e/RETURN trap interactions on macOS bash
+    _run_and_get_notifier() {
+        claude_run "hello" >/dev/null
+        printf '%s' "$CLAUDE_NOTIFIER_MESSAGES"
+    }
+    run _run_and_get_notifier
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[Notification: working on it...]"* ]]
+    [[ "$output" == *"[Notification: almost done]"* ]]
+}
+
+@test "claude_run leaves CLAUDE_NOTIFIER_MESSAGES empty when no notifications" {
+    claude_run "hello"
+    [ -z "$CLAUDE_NOTIFIER_MESSAGES" ]
+}
+
 @test "claude_run uses setsid on Linux" {
     # Verify that setsid is available and would be used
     if ! command -v setsid > /dev/null 2>&1; then
