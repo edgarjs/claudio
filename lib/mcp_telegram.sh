@@ -30,8 +30,7 @@ _mcp_handle() {
     local line="$1"
 
     local method id
-    method=$(printf '%s' "$line" | jq -r '.method // empty')
-    id=$(printf '%s' "$line" | jq -r '.id // "null"')
+    IFS=$'\t' read -r method id < <(printf '%s' "$line" | jq -r '[.method // "", .id // "null"] | @tsv')
 
     case "$method" in
         initialize)
@@ -64,8 +63,7 @@ _mcp_handle() {
             ;;
         tools/call)
             local tool_name message
-            tool_name=$(printf '%s' "$line" | jq -r '.params.name // empty')
-            message=$(printf '%s' "$line" | jq -r '.params.arguments.message // empty')
+            IFS=$'\t' read -r tool_name message < <(printf '%s' "$line" | jq -r '[.params.name // "", .params.arguments.message // ""] | @tsv')
 
             if [ "$tool_name" != "send_telegram_message" ]; then
                 _mcp_error "$id" -32601 "Unknown tool: $tool_name"
@@ -83,10 +81,7 @@ _mcp_handle() {
             fi
 
             # Send via telegram.sh (inherits TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from env)
-            telegram_send_message "$TELEGRAM_CHAT_ID" "$message" "" >/dev/null 2>&1
-            local rc=$?
-
-            if [ $rc -eq 0 ]; then
+            if telegram_send_message "$TELEGRAM_CHAT_ID" "$message" "" >/dev/null; then
                 _mcp_respond "$id" '{"content":[{"type":"text","text":"Message sent successfully"}]}'
             else
                 _mcp_respond "$id" '{"content":[{"type":"text","text":"Failed to send message"}],"isError":true}'
