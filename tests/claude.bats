@@ -165,6 +165,36 @@ STUB
     [ -z "$CLAUDE_TOOL_SUMMARY" ]
 }
 
+@test "claude_run deduplicates repeated tool log lines" {
+    cat > "$BATS_TEST_TMPDIR/.local/bin/claude" << 'STUB'
+#!/bin/sh
+if [ -n "$CLAUDIO_TOOL_LOG" ]; then
+    printf 'Read server.py\n' >> "$CLAUDIO_TOOL_LOG"
+    printf 'Read server.py\n' >> "$CLAUDIO_TOOL_LOG"
+    printf 'Read server.py\n' >> "$CLAUDIO_TOOL_LOG"
+    printf 'Edit server.py\n' >> "$CLAUDIO_TOOL_LOG"
+    printf 'Read claude.sh\n' >> "$CLAUDIO_TOOL_LOG"
+fi
+echo "final response"
+STUB
+    chmod +x "$BATS_TEST_TMPDIR/.local/bin/claude"
+
+    _run_and_get_tool_summary() {
+        claude_run "hello" >/dev/null
+        printf '%s' "$CLAUDE_TOOL_SUMMARY"
+    }
+    run _run_and_get_tool_summary
+    [ "$status" -eq 0 ]
+    # Each unique line should appear exactly once
+    [[ "$output" == *'[Tool: Read server.py]'* ]]
+    [[ "$output" == *'[Tool: Edit server.py]'* ]]
+    [[ "$output" == *'[Tool: Read claude.sh]'* ]]
+    # Count occurrences of "Read server.py" — should be exactly 1
+    local count
+    count=$(echo "$output" | grep -c 'Read server.py' || true)
+    [ "$count" -eq 1 ]
+}
+
 @test "post-tool-use hook summarizes Read tool" {
     local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
     local log_file="$BATS_TEST_TMPDIR/tool.log"
@@ -198,7 +228,7 @@ JSON
     [ "$output" = 'Grep "function_name" in lib/' ]
 }
 
-@test "post-tool-use hook summarizes Task tool with subagent type" {
+@test "post-tool-use hook summarizes Task tool with subagent type and prompt" {
     local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
     local log_file="$BATS_TEST_TMPDIR/tool.log"
 
@@ -206,10 +236,10 @@ JSON
 {"tool_name": "Task", "tool_input": {"subagent_type": "Explore", "prompt": "find auth"}, "tool_output": "Found auth uses JWT tokens in lib/auth.py"}
 JSON
     run cat "$log_file"
-    [[ "$output" == 'Task(Explore): Found auth uses JWT tokens in lib/auth.py' ]]
+    [[ "$output" == 'Task(Explore) "find auth"' ]]
 }
 
-@test "post-tool-use hook summarizes WebSearch tool" {
+@test "post-tool-use hook summarizes WebSearch tool without output" {
     local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
     local log_file="$BATS_TEST_TMPDIR/tool.log"
 
@@ -217,10 +247,10 @@ JSON
 {"tool_name": "WebSearch", "tool_input": {"query": "python asyncio"}, "tool_output": "asyncio is a library for writing concurrent code"}
 JSON
     run cat "$log_file"
-    [[ "$output" == 'WebSearch "python asyncio": asyncio is a library for writing concurrent code' ]]
+    [[ "$output" == 'WebSearch "python asyncio"' ]]
 }
 
-@test "post-tool-use hook summarizes WebFetch tool" {
+@test "post-tool-use hook summarizes WebFetch tool without output" {
     local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
     local log_file="$BATS_TEST_TMPDIR/tool.log"
 
@@ -228,7 +258,7 @@ JSON
 {"tool_name": "WebFetch", "tool_input": {"url": "https://docs.python.org/3/library/asyncio.html"}, "tool_output": "asyncio docs content"}
 JSON
     run cat "$log_file"
-    [[ "$output" == 'WebFetch docs.python.org: asyncio docs content' ]]
+    [[ "$output" == 'WebFetch docs.python.org' ]]
 }
 
 @test "post-tool-use hook summarizes Edit tool" {
@@ -297,23 +327,23 @@ JSON
     [ "$status" -eq 0 ]
 }
 
-@test "post-tool-use hook truncates long Task output" {
+@test "post-tool-use hook truncates long Task prompt" {
     local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
     local log_file="$BATS_TEST_TMPDIR/tool.log"
 
-    # Generate output longer than 300 chars
-    local long_output
-    long_output=$(python3 -c "print('x' * 500)")
+    # Generate prompt longer than 80 chars
+    local long_prompt
+    long_prompt=$(python3 -c "print('x' * 120)")
 
     CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << JSON
-{"tool_name": "Task", "tool_input": {"subagent_type": "Explore"}, "tool_output": "$long_output"}
+{"tool_name": "Task", "tool_input": {"subagent_type": "Explore", "prompt": "$long_prompt"}, "tool_output": "some result"}
 JSON
     local content
     content=$(cat "$log_file")
     # Should be truncated with "..."
     [[ "$content" == *"..."* ]]
-    # Should not contain full 500 chars of output (line = prefix + 300 + "...")
-    [ ${#content} -lt 400 ]
+    # Should not contain full 120 chars of prompt (line = Task(Explore) " + 80 + ..." = ~100)
+    [ ${#content} -lt 110 ]
 }
 
 @test "claude_run uses setsid on Linux" {

@@ -61,14 +61,13 @@ def summarize(event):
 
     if tool == "Task":
         subtype = tool_input.get("subagent_type", "")
-        output = truncate(str(tool_output))
+        prompt = truncate(tool_input.get("prompt", ""), 80)
         label = f"Task({subtype})" if subtype else "Task"
-        return f"{label}: {output}" if output else label
+        return f'{label} "{prompt}"' if prompt else label
 
     if tool == "WebSearch":
         query = tool_input.get("query", "")
-        output = truncate(str(tool_output))
-        return f'WebSearch "{query}": {output}' if output else f'WebSearch "{query}"'
+        return f'WebSearch "{query}"'
 
     if tool == "WebFetch":
         url = tool_input.get("url", "")
@@ -76,8 +75,7 @@ def summarize(event):
             domain = urlparse(url).netloc or url
         except Exception:
             domain = url
-        output = truncate(str(tool_output))
-        return f"WebFetch {domain}: {output}" if output else f"WebFetch {domain}"
+        return f"WebFetch {domain}"
 
     # Other tools: just the tool name
     return tool

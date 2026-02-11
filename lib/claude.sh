@@ -184,7 +184,7 @@ except (json.JSONDecodeError, KeyError):
     CLAUDE_TOOL_SUMMARY=""
     if [ -s "$tool_log" ]; then
         # shellcheck disable=SC2034
-        CLAUDE_TOOL_SUMMARY=$(sed 's/^/[Tool: /; s/$/]/' "$tool_log" 2>/dev/null) || true
+        CLAUDE_TOOL_SUMMARY=$(awk '!seen[$0]++' "$tool_log" | sed 's/^/[Tool: /; s/$/]/' 2>/dev/null) || true
     fi
 
     printf '%s\n' "$response"
