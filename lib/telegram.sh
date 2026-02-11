@@ -168,7 +168,8 @@ telegram_parse_webhook() {
         (.message.document.mime_type // ""),
         (.message.document.file_name // ""),
         (.message.voice.file_id // ""),
-        (.message.voice.duration // "")
+        (.message.voice.duration // ""),
+        ((.message._extra_photos // []) | join(","))
     ] | join("\u001f")')
 
     # shellcheck disable=SC2034  # WEBHOOK_FROM_ID, WEBHOOK_DOC_*, WEBHOOK_VOICE_* available for use
@@ -177,7 +178,8 @@ telegram_parse_webhook() {
         WEBHOOK_FROM_ID WEBHOOK_REPLY_TO_TEXT WEBHOOK_REPLY_TO_FROM \
         WEBHOOK_PHOTO_FILE_ID WEBHOOK_CAPTION \
         WEBHOOK_DOC_FILE_ID WEBHOOK_DOC_MIME WEBHOOK_DOC_FILE_NAME \
-        WEBHOOK_VOICE_FILE_ID WEBHOOK_VOICE_DURATION <<< "$parsed" || true
+        WEBHOOK_VOICE_FILE_ID WEBHOOK_VOICE_DURATION \
+        WEBHOOK_EXTRA_PHOTOS <<< "$parsed" || true
 }
 
 telegram_get_image_info() {
@@ -389,8 +391,9 @@ ${text}"
 
     log "telegram" "Received message from chat_id=$WEBHOOK_CHAT_ID"
 
-    # Download image if present (after command check to avoid unnecessary downloads)
+    # Download image(s) if present (after command check to avoid unnecessary downloads)
     local image_file=""
+    local -a extra_image_files=()
     if [ "$has_image" = true ]; then
         local img_tmpdir="${CLAUDIO_PATH}/tmp"
         if ! mkdir -p "$img_tmpdir"; then
@@ -409,6 +412,25 @@ ${text}"
             return
         fi
         chmod 600 "$image_file"
+
+        # Download extra photos from media group (if any).
+        # _extra_photos is injected by _merge_media_group() in server.py.
+        if [ -n "$WEBHOOK_EXTRA_PHOTOS" ]; then
+            IFS=',' read -ra _extra_ids <<< "$WEBHOOK_EXTRA_PHOTOS"
+            for _fid in "${_extra_ids[@]}"; do
+                [ -z "$_fid" ] && continue
+                local _efile
+                _efile=$(mktemp "${img_tmpdir}/claudio-img-XXXXXX.jpg") || continue
+                if telegram_download_file "$_fid" "$_efile"; then
+                    chmod 600 "$_efile"
+                    extra_image_files+=("$_efile")
+                else
+                    rm -f "$_efile"
+                    log_error "telegram" "Failed to download extra photo from media group"
+                fi
+            done
+            log "telegram" "Downloaded $((${#extra_image_files[@]} + 1)) photos from media group"
+        fi
     fi
 
     # Download document if present (after command check to avoid unnecessary downloads)
@@ -491,16 +513,34 @@ ${text}"
         log "telegram" "Voice message transcribed: ${#transcription} chars"
     fi
 
-    # Build prompt with image reference
+    # Build prompt with image reference(s)
     if [ -n "$image_file" ]; then
-        if [ -n "$text" ]; then
-            text="[The user sent an image at ${image_file}]
+        local image_count=$(( 1 + ${#extra_image_files[@]} ))
+        if [ "$image_count" -eq 1 ]; then
+            if [ -n "$text" ]; then
+                text="[The user sent an image at ${image_file}]
 
 ${text}"
-        else
-            text="[The user sent an image at ${image_file}]
+            else
+                text="[The user sent an image at ${image_file}]
 
 Describe this image."
+            fi
+        else
+            local image_refs="[The user sent ${image_count} images at: ${image_file}"
+            for _ef in "${extra_image_files[@]}"; do
+                image_refs+=", ${_ef}"
+            done
+            image_refs+="]"
+            if [ -n "$text" ]; then
+                text="${image_refs}
+
+${text}"
+            else
+                text="${image_refs}
+
+Describe these images."
+            fi
         fi
     fi
 
@@ -527,7 +567,14 @@ Read this file and summarize its contents."
         history_text="[Sent a voice message: ${transcription}]"
     elif [ -n "$image_file" ]; then
         local caption="${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}"
-        if [ -n "$caption" ]; then
+        if [ ${#extra_image_files[@]} -gt 0 ]; then
+            local img_total=$(( 1 + ${#extra_image_files[@]} ))
+            if [ -n "$caption" ]; then
+                history_text="[Sent ${img_total} images with caption: ${caption}]"
+            else
+                history_text="[Sent ${img_total} images]"
+            fi
+        elif [ -n "$caption" ]; then
             history_text="[Sent an image with caption: ${caption}]"
         else
             history_text="[Sent an image]"
@@ -555,7 +602,7 @@ Read this file and summarize its contents."
     ) &
     local typing_pid=$!
     local tts_file=""
-    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null; rm -f "$image_file" "$doc_file" "$voice_file" "$tts_file"' RETURN
+    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null; rm -f "$image_file" "$doc_file" "$voice_file" "$tts_file" "${extra_image_files[@]}"' RETURN
 
     local response
     response=$(claude_run "$text")
@@ -566,7 +613,10 @@ Read this file and summarize its contents."
     # response to generate the summary.
     if [ -n "$response" ]; then
         if [ -z "${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}" ]; then
-            if [ -n "$image_file" ]; then
+            if [ -n "$image_file" ] && [ ${#extra_image_files[@]} -gt 0 ]; then
+                local img_total=$(( 1 + ${#extra_image_files[@]} ))
+                history_text="[Sent ${img_total} images: $(_summarize "$response")]"
+            elif [ -n "$image_file" ]; then
                 history_text="[Sent an image: $(_summarize "$response")]"
             elif [ -n "$doc_file" ]; then
                 history_text="[Sent a file \"${doc_name}\": $(_summarize "$response")]"

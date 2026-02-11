@@ -6,6 +6,7 @@
 
 - Alexa voice integration via `/alexa` endpoint with session buffering and localized responses (#52)
 - Health check system monitoring: disk usage alerts, automatic log rotation, and backup freshness checks (#47)
+- Media group (album) support: multiple photos sent together are buffered and passed to Claude as a single multi-image prompt
 
 ### Changed
 
