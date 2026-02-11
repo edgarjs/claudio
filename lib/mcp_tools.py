@@ -112,7 +112,17 @@ def restart_service(delay: int = DEFAULT_DELAY) -> dict:
 
 def update_service(delay: int = DEFAULT_DELAY) -> dict:
     """Git pull --ff-only then schedule a delayed service restart."""
+    delay = max(1, min(300, int(delay)))
+
     try:
+        # Capture HEAD before pull to detect changes (locale-independent)
+        head_before = subprocess.run(
+            ["git", "-C", PROJECT_DIR, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
         result = subprocess.run(
             ["git", "-C", PROJECT_DIR, "pull", "--ff-only", "origin", "main"],
             capture_output=True,
@@ -122,10 +132,19 @@ def update_service(delay: int = DEFAULT_DELAY) -> dict:
         if result.returncode != 0:
             return {"error": f"git pull failed: {result.stderr.strip()}"}
 
-        pull_output = result.stdout.strip()
+        head_after = subprocess.run(
+            ["git", "-C", PROJECT_DIR, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
 
-        # If already up to date, no restart needed
-        if "Already up to date" in pull_output:
+        # Compare HEAD hashes to detect changes
+        if (
+            head_before.returncode == 0
+            and head_after.returncode == 0
+            and head_before.stdout.strip() == head_after.stdout.strip()
+        ):
             return {
                 "status": "ok",
                 "message": "Already up to date",
@@ -142,7 +161,7 @@ def update_service(delay: int = DEFAULT_DELAY) -> dict:
         return {
             "status": "ok",
             "message": f"Updated and restart scheduled in {delay}s",
-            "pull_output": pull_output,
+            "pull_output": result.stdout.strip(),
             "restarting": True,
         }
     except subprocess.TimeoutExpired:
