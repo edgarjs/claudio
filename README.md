@@ -90,9 +90,9 @@ The setup wizard will confirm when it receives the message and finish. Once done
 
 > For security, only the `chat_id` captured during setup is authorized to send messages.
 
-> A cron job runs every 5 minutes to monitor the webhook endpoint. It verifies the webhook is registered and re-registers it if needed. If the server is unreachable, it auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After exhausting restart attempts without recovery, it sends a Telegram alert and stops retrying until the server responds with HTTP 200. The restart counter auto-clears when the health endpoint returns HTTP 200. You can also reset it manually by deleting `$HOME/.claudio/.last_restart_attempt` and `$HOME/.claudio/.restart_fail_count`.
+> A cron job runs every minute to monitor the webhook endpoint. It verifies the webhook is registered and re-registers it if needed. If the server is unreachable, it auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After exhausting restart attempts without recovery, it sends a Telegram alert and stops retrying until the server responds with HTTP 200. The restart counter auto-clears when the health endpoint returns HTTP 200. You can also reset it manually by deleting `$HOME/.claudio/.last_restart_attempt` and `$HOME/.claudio/.restart_fail_count`.
 >
-> The health check also monitors: disk usage (alerts above 90%), log file sizes (rotates files over 10MB), and backup freshness (alerts if the last backup is older than 2 hours). These thresholds are configurable via environment variables.
+> The health check also monitors: disk usage (alerts above 90%), log file sizes (rotates files over 10MB), backup freshness (alerts if the last backup is older than 2 hours), and recent log analysis (detects errors, restart loops, and slow API responses — sends Telegram alerts with a configurable cooldown). These thresholds are configurable via environment variables.
 
 ### Status
 
@@ -160,6 +160,7 @@ Claudio supports voice messages in both directions using ElevenLabs. Set `ELEVEN
 You can send photos or image files directly to Claudio. Include an optional caption to tell Claude what to do with the image, or send it without a caption and Claude will describe it.
 
 - **Supported formats:** JPEG, PNG, GIF, WebP
+- **Albums:** When you send multiple photos at once (media group), Claudio buffers them and passes all images to Claude as a single multi-image prompt
 - **Sending as photo:** Telegram compresses images automatically
 - **Sending as document:** Attach an image file for lossless quality
 - **Size limit:** 20 MB (Telegram bot API constraint)
@@ -345,6 +346,8 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `LOG_MAX_SIZE` — Maximum log file size in bytes before rotation. Default: `10485760` (10 MB).
 - `BACKUP_MAX_AGE` — Maximum backup age in seconds before alerting. Default: `7200` (2 hours).
 - `BACKUP_DEST` — Backup destination path for freshness checks. Default: `/mnt/ssd` (customize to your backup location).
+- `LOG_CHECK_WINDOW` — Seconds of recent log history to scan for errors and anomalies. Default: `300` (5 minutes).
+- `LOG_ALERT_COOLDOWN` — Minimum seconds between log-analysis alert notifications. Default: `1800` (30 minutes).
 
 **Tunnel**
 
@@ -394,6 +397,11 @@ bats tests/db.bats
 - [x] Cognitive memory system (ACT-R activation scoring, embedding-based retrieval)
 - [x] Automated backup system (hourly/daily rotating backups with rsync)
 - [x] Alexa skill integration (optional voice-to-Telegram relay)
+- [x] MCP tools for Telegram notifications and service restart
+- [x] Media group (album) support for multi-photo messages
+- [x] Tool usage capture in conversation history (PostToolUse hook)
+- [x] Health check log analysis (error detection, restart loops, API slowness)
+- [x] Claude code review for Pull Requests (GitHub Actions)
 
 **Future**
 
