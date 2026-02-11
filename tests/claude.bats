@@ -122,7 +122,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 if [ -n "$mcp_cfg" ]; then
-    log_file=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['mcpServers']['telegram-notifier']['env']['NOTIFIER_LOG_FILE'])" "$mcp_cfg" 2>/dev/null)
+    log_file=$(jq -r '.mcpServers."telegram-notifier".env.NOTIFIER_LOG_FILE' "$mcp_cfg" 2>/dev/null)
     if [ -n "$log_file" ]; then
         printf '"working on it..."\n' >> "$log_file"
         printf '"almost done"\n' >> "$log_file"

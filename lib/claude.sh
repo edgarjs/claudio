@@ -164,8 +164,10 @@ except (json.JSONDecodeError, KeyError):
 
     # Read notifier messages so caller can include them in conversation history.
     # Must happen before RETURN trap deletes the temp file.
+    # shellcheck disable=SC2034  # Used by telegram.sh
     CLAUDE_NOTIFIER_MESSAGES=""
     if [ -s "$notifier_log" ]; then
+        # shellcheck disable=SC2034
         CLAUDE_NOTIFIER_MESSAGES=$(jq -r '"[Notification: \(.)]"' "$notifier_log" 2>/dev/null) || true
     fi
 
