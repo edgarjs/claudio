@@ -92,11 +92,11 @@ telegram_send_message() {
 
         local result
         result=$(telegram_api "sendMessage" "${args[@]}")
-        # If markdown fails, retry without parse_mode
+        # If send fails, retry with progressively fewer options
         local ok
         ok=$(echo "$result" | jq -r '.ok // empty' 2>/dev/null)
         if [ "$ok" != "true" ]; then
-            # Rebuild args without parse_mode
+            # Retry without parse_mode (keeps reply_to)
             args=(-d "chat_id=${chat_id}" --data-urlencode "text=${chunk}")
             if [ "$should_reply" = true ]; then
                 args+=(-d "reply_to_message_id=${reply_to_message_id}")
@@ -104,7 +104,13 @@ telegram_send_message() {
             result=$(telegram_api "sendMessage" "${args[@]}") || true
             ok=$(echo "$result" | jq -r '.ok // empty' 2>/dev/null)
             if [ "$ok" != "true" ]; then
-                log_error "telegram" "Failed to send message after markdown fallback for chat $chat_id"
+                # Retry without reply_to (e.g. synthetic Alexa message_ids)
+                args=(-d "chat_id=${chat_id}" --data-urlencode "text=${chunk}")
+                result=$(telegram_api "sendMessage" "${args[@]}") || true
+                ok=$(echo "$result" | jq -r '.ok // empty' 2>/dev/null)
+                if [ "$ok" != "true" ]; then
+                    log_error "telegram" "Failed to send message after all fallbacks for chat $chat_id"
+                fi
             fi
         fi
     done

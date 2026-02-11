@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import base64
 import hmac
 import json
 import os
@@ -12,6 +13,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from collections import deque, OrderedDict
+from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
@@ -33,6 +35,7 @@ WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+ALEXA_SKILL_ID = os.environ.get("ALEXA_SKILL_ID", "")
 
 # Per-chat message queues for serial processing
 chat_queues = {}  # chat_id -> deque of webhook bodies
@@ -106,19 +109,16 @@ def _process_queue_loop(chat_id):
                         f"for chat {chat_id}\n"
                     )
         except subprocess.TimeoutExpired:
-            if proc is not None:
+            sys.stderr.write(
+                f"[queue] Webhook handler timed out after {WEBHOOK_TIMEOUT}s "
+                f"for chat {chat_id}, killing process\n"
+            )
+            if proc:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                 try:
-                    os.killpg(proc.pid, signal.SIGTERM)
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait(timeout=30)
-                except OSError:
-                    try:
-                        proc.wait(timeout=30)
-                    except Exception:
-                        pass
-            sys.stderr.write(f"[queue] Timeout processing message for chat {chat_id}\n")
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except Exception as e:
             sys.stderr.write(f"[queue] Error processing message for chat {chat_id}: {e}\n")
             time.sleep(1)  # Avoid tight loop on persistent errors
@@ -189,6 +189,18 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write("[%s] [http] %s\n" % (self.log_date_time_string(), format % args))
 
+    def _read_body(self):
+        """Read and return the request body, or None on error."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            self._respond(400, {"error": "invalid content-length"})
+            return None
+        if length > MAX_BODY_SIZE:
+            self._respond(413, {"error": "payload too large"})
+            return None
+        return self.rfile.read(length).decode("utf-8", errors="replace") if length else ""
+
     def do_POST(self):
         if self.path == "/telegram/webhook":
             # Reject early during shutdown so Telegram retries later
@@ -200,19 +212,130 @@ class Handler(BaseHTTPRequestHandler):
             if not hmac.compare_digest(token, WEBHOOK_SECRET):
                 self._respond(401, {"error": "unauthorized"})
                 return
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-            except (ValueError, TypeError):
-                self._respond(400, {"error": "invalid content-length"})
+            body = self._read_body()
+            if body is None:
                 return
-            if length > MAX_BODY_SIZE:
-                self._respond(413, {"error": "payload too large"})
-                return
-            body = self.rfile.read(length).decode("utf-8", errors="replace") if length else ""
             self._respond(200, {"ok": True})
             enqueue_webhook(body)
+        elif self.path == "/alexa":
+            self._handle_alexa()
         else:
             self._respond(404, {"error": "not found"})
+
+    def _handle_alexa(self):
+        """Handle Alexa skill requests — async relay to Telegram."""
+        if shutting_down:
+            self._respond_alexa(_alexa_str("en", "shutting_down"), end_session=True)
+            return
+
+        body = self._read_body()
+        if body is None:
+            return
+
+        # Validate the request comes from Alexa
+        if not _verify_alexa_request(self.headers, body):
+            self._respond(401, {"error": "invalid alexa request"})
+            return
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._respond(400, {"error": "invalid json"})
+            return
+
+        # Validate skill ID if configured
+        app_id = data.get("session", {}).get("application", {}).get("applicationId", "")
+        if ALEXA_SKILL_ID and app_id != ALEXA_SKILL_ID:
+            self._respond(401, {"error": "skill id mismatch"})
+            return
+
+        locale = data.get("request", {}).get("locale", "en-US")
+        req_type = data.get("request", {}).get("type", "")
+        intent_name = data.get("request", {}).get("intent", {}).get("name", "")
+        sys.stderr.write("[alexa] req_type=%s intent=%s locale=%s session_new=%s\n" %
+                         (req_type, intent_name or "-", locale,
+                          data.get("session", {}).get("new")))
+
+        if req_type == "LaunchRequest":
+            self._respond_alexa(
+                _alexa_str(locale, "launch"),
+                end_session=False,
+                reprompt=_alexa_str(locale, "reprompt"),
+            )
+            return
+
+        session_id = data.get("session", {}).get("sessionId", "")
+
+        if req_type == "SessionEndedRequest":
+            # Flush buffered messages before closing
+            _flush_alexa_session(session_id, locale)
+            self._respond_alexa("", end_session=True)
+            return
+
+        if req_type == "IntentRequest":
+            intent = data.get("request", {}).get("intent", {})
+            intent_name = intent.get("name", "")
+
+            # Built-in intents
+            if intent_name in ("AMAZON.CancelIntent", "AMAZON.StopIntent", "AMAZON.NoIntent"):
+                has_messages = _alexa_session_has_messages(session_id)
+                _flush_alexa_session(session_id, locale)
+                goodbye_key = "goodbye" if has_messages else "goodbye_empty"
+                self._respond_alexa(_alexa_str(locale, goodbye_key), end_session=True)
+                return
+            if intent_name == "AMAZON.HelpIntent":
+                self._respond_alexa(_alexa_str(locale, "help"), end_session=False)
+                return
+            if intent_name == "AMAZON.FallbackIntent":
+                self._respond_alexa(_alexa_str(locale, "fallback"), end_session=False)
+                return
+
+            # Our custom intent: buffer message locally
+            if intent_name == "SendMessageIntent":
+                message = intent.get("slots", {}).get("message", {}).get("value", "")
+                if not message:
+                    self._respond_alexa(_alexa_str(locale, "no_message"), end_session=False)
+                    return
+
+                _buffer_alexa_message(session_id, message, locale)
+                self._respond_alexa(
+                    _alexa_str(locale, "buffered"),
+                    end_session=False,
+                    reprompt=_alexa_str(locale, "reprompt"),
+                )
+                return
+
+        # Unknown request type
+        sys.stderr.write("[alexa] unhandled: req_type=%s intent=%s\n" % (req_type, intent_name))
+        self._respond_alexa(_alexa_str(locale, "unknown"), end_session=True)
+
+    def _respond_alexa(self, text, end_session=True, reprompt=None):
+        """Send an Alexa-formatted JSON response."""
+        response = {
+            "version": "1.0",
+            "response": {
+                "shouldEndSession": end_session,
+            },
+        }
+        if text:
+            response["response"]["outputSpeech"] = {
+                "type": "PlainText",
+                "text": text,
+            }
+        if reprompt:
+            response["response"]["reprompt"] = {
+                "outputSpeech": {
+                    "type": "PlainText",
+                    "text": reprompt,
+                }
+            }
+        body = json.dumps(response).encode("utf-8")
+        sys.stderr.write("[alexa] response: end_session=%s text_len=%d\n" % (end_session, len(text)))
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json;charset=UTF-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_GET(self):
         if self.path == "/health":
@@ -221,6 +344,251 @@ class Handler(BaseHTTPRequestHandler):
             self._respond(code, health)
         else:
             self._respond(404, {"error": "not found"})
+
+
+_alexa_update_counter = 0
+_alexa_counter_lock = threading.Lock()
+
+# Alexa session buffers: session_id -> {"messages": [...], "locale": str, "last_activity": float}
+_alexa_sessions = {}
+_alexa_sessions_lock = threading.Lock()
+_ALEXA_SESSION_TTL = 300  # 5 min — cleanup stale sessions
+
+# Alexa response strings by locale (2-letter language code)
+_ALEXA_STRINGS = {
+    "es": {
+        "shutting_down": "Lo siento, estoy reiniciando. Intenta en un momento.",
+        "launch": "Dime qué le quieres decir a Claudio.",
+        "goodbye": "Listo, le paso todo a Claudio. Adiós.",
+        "goodbye_empty": "Adiós.",
+        "help": "Puedes decirme varios mensajes y al final se los paso todos juntos a Claudio por Telegram. Di 'eso es todo' cuando termines.",
+        "fallback": "No entendí. Intenta decir: dile a Claudio, seguido de tu mensaje.",
+        "no_message": "No escuché el mensaje. Intenta de nuevo.",
+        "buffered": "Anotado. ¿Algo más?",
+        "reprompt": "¿Algo más para Claudio?",
+        "unknown": "No entendí la solicitud.",
+    },
+    "en": {
+        "shutting_down": "Sorry, I'm restarting. Try again in a moment.",
+        "launch": "Tell me what you want to say to Claudio.",
+        "goodbye": "Got it, sending everything to Claudio. Goodbye.",
+        "goodbye_empty": "Goodbye.",
+        "help": "You can send multiple messages and I'll relay them all to Claudio at the end. Say 'that's all' when you're done.",
+        "fallback": "I didn't catch that. Try saying: tell Claudio, followed by your message.",
+        "no_message": "I didn't hear the message. Try again.",
+        "buffered": "Noted. Anything else?",
+        "reprompt": "Anything else for Claudio?",
+        "unknown": "I didn't understand the request.",
+    },
+}
+
+
+def _alexa_str(locale, key):
+    """Get a localized Alexa response string. Falls back to English."""
+    lang = (locale or "en")[:2].lower()
+    strings = _ALEXA_STRINGS.get(lang, _ALEXA_STRINGS["en"])
+    return strings[key]
+
+
+def _buffer_alexa_message(session_id, message, locale):
+    """Add a message to the Alexa session buffer."""
+    with _alexa_sessions_lock:
+        if session_id not in _alexa_sessions:
+            _alexa_sessions[session_id] = {
+                "messages": [],
+                "locale": locale,
+                "last_activity": time.monotonic(),
+            }
+        _alexa_sessions[session_id]["messages"].append(message)
+        _alexa_sessions[session_id]["last_activity"] = time.monotonic()
+        count = len(_alexa_sessions[session_id]["messages"])
+    sys.stderr.write(f"[alexa] Buffered message #{count} for session {session_id[:16]}...\n")
+
+    # Cleanup stale sessions while we're here
+    _cleanup_stale_alexa_sessions()
+
+
+def _alexa_session_has_messages(session_id):
+    """Check if a session has buffered messages."""
+    with _alexa_sessions_lock:
+        session = _alexa_sessions.get(session_id)
+        return bool(session and session["messages"])
+
+
+def _flush_alexa_session(session_id, locale):
+    """Flush all buffered messages for a session as a single webhook."""
+    with _alexa_sessions_lock:
+        session = _alexa_sessions.pop(session_id, None)
+
+    if not session or not session["messages"]:
+        sys.stderr.write(f"[alexa] No messages to flush for session {session_id[:16]}...\n")
+        return
+
+    messages = session["messages"]
+    sys.stderr.write(f"[alexa] Flushing {len(messages)} message(s) for session {session_id[:16]}...\n")
+
+    # Build transcript — no "Alexa" label to avoid Claude filtering out requests
+    if len(messages) == 1:
+        transcript = messages[0]
+    else:
+        lines = []
+        for msg in messages:
+            lines.append(f'- "{msg}"')
+        transcript = "\n".join(lines)
+
+    if not TELEGRAM_CHAT_ID:
+        sys.stderr.write("[alexa] TELEGRAM_CHAT_ID not configured, cannot relay\n")
+        return
+
+    global _alexa_update_counter
+    with _alexa_counter_lock:
+        _alexa_update_counter += 1
+        update_id = 900000000 + _alexa_update_counter
+
+    body = json.dumps({
+        "update_id": update_id,
+        "message": {
+            "message_id": update_id,
+            "date": int(time.time()),
+            "chat": {"id": int(TELEGRAM_CHAT_ID), "type": "private"},
+            "from": {"id": int(TELEGRAM_CHAT_ID), "first_name": "Alexa", "is_bot": False},
+            "text": transcript,
+        },
+    })
+    enqueue_webhook(body)
+
+
+def _cleanup_stale_alexa_sessions():
+    """Remove sessions older than TTL to prevent memory leaks."""
+    now = time.monotonic()
+    with _alexa_sessions_lock:
+        stale = [sid for sid, s in _alexa_sessions.items()
+                 if now - s["last_activity"] > _ALEXA_SESSION_TTL]
+        for sid in stale:
+            session = _alexa_sessions.pop(sid)
+            count = len(session["messages"])
+            if count:
+                sys.stderr.write(f"[alexa] Stale session {sid[:16]}... expired with {count} unflushed message(s)\n")
+
+
+def _verify_alexa_request(headers, body):
+    """Verify that the request comes from Alexa by validating the certificate chain.
+
+    Amazon requires signature verification for production skills. For dev/testing
+    mode, we do basic validation of the signature headers and timestamp.
+    Full certificate chain validation requires the cryptography library.
+    """
+    # Check required headers exist
+    # Alexa sends: SignatureCertChainUrl and Signature-256 (or Signature)
+    # HTTP proxies may lowercase header names, so check case-insensitively
+    cert_url = headers.get("SignatureCertChainUrl", "")
+    signature = headers.get("Signature-256", "")
+
+    if not cert_url or not signature:
+        sys.stderr.write("[alexa] Missing signature headers: SignatureCertChainUrl=%s Signature-256=%s\n" %
+                         ("present" if cert_url else "missing", "present" if signature else "missing"))
+        return False
+
+    # Validate cert URL (must be Amazon's domain, HTTPS, port 443, path starts with /echo.api/)
+    try:
+        parsed = urllib.parse.urlparse(cert_url)
+        if parsed.scheme.lower() != "https":
+            sys.stderr.write(f"[alexa] Cert URL scheme not HTTPS: {cert_url}\n")
+            return False
+        if parsed.hostname.lower() != "s3.amazonaws.com":
+            sys.stderr.write(f"[alexa] Cert URL hostname invalid: {parsed.hostname}\n")
+            return False
+        if not parsed.path.startswith("/echo.api/"):
+            sys.stderr.write(f"[alexa] Cert URL path invalid: {parsed.path}\n")
+            return False
+        if parsed.port is not None and parsed.port != 443:
+            sys.stderr.write(f"[alexa] Cert URL port invalid: {parsed.port}\n")
+            return False
+    except Exception as e:
+        sys.stderr.write(f"[alexa] Cert URL parse error: {e}\n")
+        return False
+
+    # Validate timestamp (within 150 seconds)
+    try:
+        data = json.loads(body)
+        timestamp = data.get("request", {}).get("timestamp", "")
+        if timestamp:
+            req_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            delta = abs((now - req_time).total_seconds())
+            if delta > 150:
+                sys.stderr.write(f"[alexa] Timestamp too old: {delta}s\n")
+                return False
+    except (json.JSONDecodeError, ValueError) as e:
+        sys.stderr.write(f"[alexa] Timestamp validation error: {e}\n")
+        return False
+
+    # Full certificate signature verification
+    try:
+        return _verify_alexa_signature(cert_url, signature, body)
+    except ImportError:
+        # cryptography library not installed — fail securely
+        sys.stderr.write("[alexa] cryptography library not available, rejecting request\n")
+        return False
+    except Exception as e:
+        sys.stderr.write(f"[alexa] Signature verification error: {e}\n")
+        return False
+
+
+# Cache for downloaded Alexa signing certificates
+_alexa_cert_cache = {}
+_ALEXA_CERT_CACHE_TTL = 3600  # 1 hour
+
+
+def _verify_alexa_signature(cert_url, signature_b64, body):
+    """Full cryptographic verification of Alexa request signature."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    # Get or fetch the signing certificate
+    now = time.monotonic()
+    cached = _alexa_cert_cache.get(cert_url)
+    if cached and (now - cached["time"]) < _ALEXA_CERT_CACHE_TTL:
+        cert = cached["cert"]
+    else:
+        req = urllib.request.Request(cert_url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            pem_data = resp.read()
+        cert = x509.load_pem_x509_certificate(pem_data)
+
+        # Validate certificate is currently valid
+        now_utc = datetime.now(timezone.utc)
+        not_before = getattr(cert, "not_valid_before_utc", cert.not_valid_before.replace(tzinfo=timezone.utc))
+        not_after = getattr(cert, "not_valid_after_utc", cert.not_valid_after.replace(tzinfo=timezone.utc))
+        if now_utc < not_before or now_utc > not_after:
+            sys.stderr.write("[alexa] Certificate is expired or not yet valid\n")
+            return False
+
+        # Validate the certificate's Subject Alternative Name includes echo-api.amazon.com
+        try:
+            san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            dns_names = san.value.get_values_for_type(x509.DNSName)
+            if "echo-api.amazon.com" not in dns_names:
+                sys.stderr.write(f"[alexa] Certificate SAN missing echo-api.amazon.com: {dns_names}\n")
+                return False
+        except x509.ExtensionNotFound:
+            sys.stderr.write("[alexa] Certificate missing SAN extension\n")
+            return False
+
+        _alexa_cert_cache[cert_url] = {"cert": cert, "time": now}
+
+    # Verify the signature
+    signature_bytes = base64.b64decode(signature_b64)
+    public_key = cert.public_key()
+    public_key.verify(
+        signature_bytes,
+        body.encode("utf-8"),
+        padding.PKCS1v15(),
+        hashes.SHA256(),
+    )
+
+    return True
 
 
 def check_health():

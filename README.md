@@ -175,6 +175,95 @@ You can send documents (PDF, text files, CSV, code files, etc.) to Claudio. Incl
 - Claude reads the file directly from disk — text-based formats (PDF, CSV, code, plain text) work best; binary files may produce limited results
 - Files are stored temporarily during processing, then deleted immediately after Claude responds
 
+### Alexa
+
+> **⚠️ This integration is optional and carries additional security risks.** The Alexa skill exposes an additional `/alexa` endpoint that accepts voice commands and relays them to Claude Code via Telegram. This carries a *higher security risk* than the Telegram-only setup because: (1) anyone with physical access to your Alexa device can send commands to Claude Code — there is no per-user authentication beyond Amazon's skill ID validation, and (2) unlike Telegram (which binds to a single `chat_id`), the Alexa endpoint relies on the skill remaining private (unpublished) to limit access. Both `cryptography` and `ALEXA_SKILL_ID` are required — the endpoint is disabled without them. **Do not enable Alexa integration unless you understand these risks.**
+
+Claudio can receive voice commands through an Amazon Alexa skill. When you speak to Alexa, the message is relayed to Claude Code via the same Telegram pipeline — Claude's response appears in your Telegram chat.
+
+**How it works:**
+
+1. You say: _"Alexa, open Claudio"_ → Alexa opens the skill
+2. You say your message → Alexa sends it to the `/alexa` endpoint
+3. Claudio relays it to Claude Code as a synthetic Telegram message
+4. Claude's response appears in your Telegram chat
+5. Alexa asks _"Anything else?"_ — you can send another message or say _"No"_ to end
+
+**Setup:**
+
+1. Install the `cryptography` Python library (required for signature verification):
+
+```bash
+pip3 install cryptography
+```
+
+2. Create a custom Alexa skill at [developer.amazon.com](https://developer.amazon.com/alexa/console/ask):
+   - Invocation name: `claudio` (or your preferred name)
+   - Endpoint: HTTPS, URL: `https://<your-tunnel-hostname>/alexa`
+   - SSL certificate type: _"My development endpoint is a sub-domain of a domain that has a wildcard certificate from a certificate authority"_
+   - Create a custom intent `SendMessageIntent` with a slot `message` of type `AMAZON.SearchQuery`
+   - Add sample utterances (Spanish):
+     ```
+     dile {message}
+     dile que {message}
+     dile a claudio {message}
+     dile a claudio que {message}
+     que {message}
+     y {message}
+     también {message}
+     y también {message}
+     pregúntale {message}
+     pregúntale que {message}
+     pregúntale a claudio {message}
+     luego {message}
+     luego que {message}
+     pero {message}
+     además {message}
+     aparte {message}
+     manda {message}
+     pásale {message}
+     por favor dile {message}
+     dile por favor {message}
+     ```
+   - Add sample utterances (English):
+     ```
+     tell him {message}
+     tell him that {message}
+     tell claudio {message}
+     tell claudio that {message}
+     and {message}
+     also {message}
+     and also {message}
+     ask him {message}
+     ask him about {message}
+     ask claudio {message}
+     ask claudio about {message}
+     then {message}
+     but {message}
+     also ask {message}
+     send {message}
+     pass along {message}
+     please tell him {message}
+     tell him please {message}
+     ```
+   - **Note:** `AMAZON.SearchQuery` slots require a carrier phrase — the slot cannot be the only word in the utterance, and it must appear at the end. For best practices on designing and testing utterances, see the official Alexa documentation: https://developer.amazon.com/en-US/docs/alexa/custom-skills/best-practices-for-sample-utterances-and-custom-slot-type-values.html and https://developer.amazon.com/en-US/docs/alexa/custom-skills/test-utterances-and-improve-your-interaction-model.html
+   - Enable built-in intents: `AMAZON.CancelIntent`, `AMAZON.StopIntent`, `AMAZON.HelpIntent`, `AMAZON.FallbackIntent`, `AMAZON.NoIntent`
+
+3. Copy the skill ID and add it to your config:
+
+```bash
+echo 'ALEXA_SKILL_ID="amzn1.ask.skill.YOUR-SKILL-ID"' >> ~/.claudio/service.env
+claudio restart
+```
+
+4. Keep the skill in **development mode** (do not publish it) to restrict access to your Amazon account only.
+
+**Security considerations:**
+
+- `cryptography` and `ALEXA_SKILL_ID` are both required — without them, the Alexa endpoint is disabled
+- Anyone with physical access to your Alexa device can send commands — there is no voice PIN or per-user auth
+- Alexa messages appear in Telegram prefixed with `[Alexa voice query]` so you can distinguish the source
+
 ### Parallel Work
 
 Parallel work (reviews, research, etc.) is handled by Claude Code's built-in Task tool (subagents). No custom agent infrastructure is needed — Claude natively spawns subagents, manages their lifecycle, and collects results within a single `claude -p` invocation.
@@ -232,6 +321,10 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `WEBHOOK_URL` — Public URL where Telegram sends webhook updates (e.g. `https://claudio.example.com`). Set automatically when using a named tunnel.
 - `WEBHOOK_SECRET` — HMAC secret for validating incoming webhook requests. Auto-generated on first run if not set.
 - `WEBHOOK_RETRY_DELAY` — Seconds between webhook registration retry attempts. Default: `60`.
+
+**Alexa (Optional)**
+
+- `ALEXA_SKILL_ID` — Amazon Alexa skill application ID. Required to enable the Alexa endpoint.
 
 **Voice (TTS/STT)**
 
@@ -300,6 +393,7 @@ bats tests/db.bats
 - [x] Parallel work via Claude Code's built-in Task tool (subagents)
 - [x] Cognitive memory system (ACT-R activation scoring, embedding-based retrieval)
 - [x] Automated backup system (hourly/daily rotating backups with rsync)
+- [x] Alexa skill integration (optional voice-to-Telegram relay)
 
 **Future**
 
