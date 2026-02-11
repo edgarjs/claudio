@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # Add lib/ to path so we can import the module
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
@@ -108,15 +108,15 @@ class TestToolDefinitions(unittest.TestCase):
             resp["result"]["serverInfo"]["name"], "claudio-tools"
         )
 
-    def test_tools_list_returns_three_tools(self):
+    def test_tools_list_returns_two_tools(self):
         resp = self.mod.handle_request(
             {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
         )
         tools = resp["result"]["tools"]
         names = [t["name"] for t in tools]
+        self.assertEqual(len(tools), 2)
         self.assertIn("send_telegram_message", names)
         self.assertIn("restart_service", names)
-        self.assertIn("update_service", names)
 
     def test_unknown_tool_returns_error(self):
         resp = self.mod.handle_request(
@@ -257,140 +257,6 @@ class TestRestartService(unittest.TestCase):
         result = self.mod.restart_service()
         self.assertIn("error", result)
         self.assertIn("mock failure", result["error"])
-
-
-class TestUpdateService(unittest.TestCase):
-    """Test update_service runs git pull and schedules restart."""
-
-    def setUp(self):
-        if MODULE_NAME in sys.modules:
-            del sys.modules[MODULE_NAME]
-        import mcp_tools
-
-        self.mod = mcp_tools
-
-    def tearDown(self):
-        if MODULE_NAME in sys.modules:
-            del sys.modules[MODULE_NAME]
-
-    def _rev_parse(self, sha):
-        """Helper: mock result for git rev-parse HEAD."""
-        return MagicMock(returncode=0, stdout=f"{sha}\n", stderr="")
-
-    @patch("mcp_tools.os.path.isdir", return_value=False)
-    def test_update_not_a_git_repo(self, mock_isdir):
-        result = self.mod.update_service()
-        self.assertIn("error", result)
-        self.assertIn("Not a git repository", result["error"])
-
-    @patch("mcp_tools._schedule_restart")
-    @patch("mcp_tools.subprocess.run")
-    def test_update_already_up_to_date(self, mock_run, mock_restart):
-        mock_run.side_effect = [
-            self._rev_parse("abc1234"),  # HEAD before
-            MagicMock(returncode=0, stdout="Already up to date.\n", stderr=""),
-            self._rev_parse("abc1234"),  # HEAD after (same)
-        ]
-        result = self.mod.update_service()
-        self.assertEqual(result["status"], "ok")
-        self.assertFalse(result["restarting"])
-        self.assertIn("Already up to date", result["message"])
-        mock_restart.assert_not_called()
-
-    @patch("mcp_tools._schedule_restart", return_value={"status": "ok", "message": "Restart scheduled in 5s"})
-    @patch("mcp_tools.subprocess.run")
-    def test_update_with_changes_triggers_restart(self, mock_run, mock_restart):
-        mock_run.side_effect = [
-            self._rev_parse("abc1234"),  # HEAD before
-            MagicMock(returncode=0, stdout="Updating abc1234..def5678\nFast-forward\n", stderr=""),
-            self._rev_parse("def5678"),  # HEAD after (changed)
-        ]
-        result = self.mod.update_service(delay=7)
-        self.assertEqual(result["status"], "ok")
-        self.assertTrue(result["restarting"])
-        self.assertIn("7s", result["message"])
-        mock_restart.assert_called_once_with(7)
-
-    @patch("mcp_tools._schedule_restart")
-    @patch("mcp_tools.subprocess.run")
-    def test_update_pull_failure(self, mock_run, mock_restart):
-        mock_run.side_effect = [
-            self._rev_parse("abc1234"),  # HEAD before
-            MagicMock(returncode=1, stdout="", stderr="fatal: Not possible to fast-forward, aborting.\n"),
-        ]
-        result = self.mod.update_service()
-        self.assertIn("error", result)
-        self.assertIn("git pull failed", result["error"])
-        mock_restart.assert_not_called()
-
-    @patch("mcp_tools._schedule_restart")
-    @patch("mcp_tools.subprocess.run")
-    def test_update_timeout(self, mock_run, mock_restart):
-        mock_run.side_effect = [
-            self._rev_parse("abc1234"),  # HEAD before
-            subprocess.TimeoutExpired("git", 60),  # pull times out
-        ]
-        result = self.mod.update_service()
-        self.assertIn("error", result)
-        self.assertIn("timed out", result["error"])
-        mock_restart.assert_not_called()
-
-    @patch("mcp_tools._schedule_restart")
-    @patch("mcp_tools.subprocess.run", side_effect=OSError("git not found"))
-    def test_update_git_not_found(self, mock_run, mock_restart):
-        result = self.mod.update_service()
-        self.assertIn("error", result)
-        self.assertIn("git not found", result["error"])
-        mock_restart.assert_not_called()
-
-    @patch("mcp_tools._schedule_restart", return_value={"error": "spawn failed"})
-    @patch("mcp_tools.subprocess.run")
-    def test_update_restart_failure(self, mock_run, mock_restart):
-        mock_run.side_effect = [
-            self._rev_parse("abc1234"),  # HEAD before
-            MagicMock(returncode=0, stdout="Updating abc1234..def5678\nFast-forward\n", stderr=""),
-            self._rev_parse("def5678"),  # HEAD after (changed)
-        ]
-        result = self.mod.update_service()
-        self.assertIn("error", result)
-        self.assertIn("Updated but restart failed", result["error"])
-
-    @patch("mcp_tools._schedule_restart", return_value={"status": "ok", "message": "Restart scheduled in 5s"})
-    @patch("mcp_tools.subprocess.run")
-    def test_update_via_mcp(self, mock_run, mock_restart):
-        mock_run.side_effect = [
-            self._rev_parse("abc1234"),
-            MagicMock(returncode=0, stdout="Updating abc..def\nFast-forward\n", stderr=""),
-            self._rev_parse("def5678"),
-        ]
-        resp = self.mod.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {
-                    "name": "update_service",
-                    "arguments": {"delay_seconds": 10},
-                },
-            }
-        )
-        result = json.loads(resp["result"]["content"][0]["text"])
-        self.assertEqual(result["status"], "ok")
-        self.assertTrue(result["restarting"])
-        mock_restart.assert_called_once_with(10)
-
-    @patch("mcp_tools._schedule_restart", return_value={"status": "ok", "message": "Restart scheduled in 300s"})
-    @patch("mcp_tools.subprocess.run")
-    def test_update_clamps_delay_in_message(self, mock_run, mock_restart):
-        mock_run.side_effect = [
-            self._rev_parse("abc1234"),
-            MagicMock(returncode=0, stdout="Updating abc..def\nFast-forward\n", stderr=""),
-            self._rev_parse("def5678"),
-        ]
-        result = self.mod.update_service(delay=999)
-        self.assertIn("300s", result["message"])
-        self.assertNotIn("999s", result["message"])
-        mock_restart.assert_called_once_with(300)
 
 
 if __name__ == "__main__":
