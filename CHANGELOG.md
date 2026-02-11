@@ -4,7 +4,7 @@
 
 ### Added
 
-- Alexa skill integration for voice commands via AWS Lambda (#52)
+- Alexa voice integration via `/alexa` endpoint with request validation (#52)
 - Expanded health check with system monitoring: disk, memory, CPU, and temperature (#47)
 - Silent backup failure detection with retry alerts and unmounted drive detection (#54)
 - Typing indicator: `record_voice` action for voice messages, 4s refresh interval (#57)
