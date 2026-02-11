@@ -118,6 +118,9 @@ claude_run() {
     # this one-shot webhook invocation
     export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
 
+    # Export notifier log path so MCP server (and test stubs) can find it
+    export CLAUDIO_NOTIFIER_LOG="$notifier_log"
+
     # Run claude in its own session/process group to prevent its child
     # processes (bash tools) from killing the webhook handler via process
     # group signals (e.g., kill 0). Output goes to a temp file so we can
