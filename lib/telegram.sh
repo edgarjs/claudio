@@ -138,11 +138,12 @@ telegram_send_voice() {
 
 telegram_send_typing() {
     local chat_id="$1"
+    local action="${2:-typing}"
     # Fire-and-forget: don't retry typing indicators to avoid rate limit cascades
     curl -s \
         --config <(printf 'url = "%s%s/sendChatAction"\n' "$TELEGRAM_API" "$TELEGRAM_BOT_TOKEN") \
         -d "chat_id=${chat_id}" \
-        -d "action=typing" > /dev/null 2>&1 || true
+        -d "action=${action}" > /dev/null 2>&1 || true
 }
 
 
@@ -543,12 +544,14 @@ Read this file and summarize its contents."
     # Telegram typing status lasts ~5s; we resend every 15s (gap is acceptable to avoid 429 rate limits)
     # The subshell monitors its parent PID to self-terminate if the parent
     # is killed (e.g., SIGKILL), which would prevent the RETURN trap from firing
+    local typing_action="typing"
+    [ "$has_voice" = true ] && typing_action="record_voice"
     (
         parent_pid=$$
         max_iterations=60  # Cap at 15 minutes (60 * 15s)
         i=0
         while kill -0 "$parent_pid" 2>/dev/null && [ "$i" -lt "$max_iterations" ]; do
-            telegram_send_typing "$WEBHOOK_CHAT_ID"
+            telegram_send_typing "$WEBHOOK_CHAT_ID" "$typing_action"
             sleep 15
             i=$((i + 1))
         done
