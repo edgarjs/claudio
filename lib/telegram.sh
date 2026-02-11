@@ -622,7 +622,11 @@ Read this file and summarize its contents."
     history_add "user" "$history_text"
 
     if [ -n "$response" ]; then
-        history_add "assistant" "$response"
+        local history_response="$response"
+        if [ -n "${CLAUDE_NOTIFIER_MESSAGES:-}" ]; then
+            history_response="${CLAUDE_NOTIFIER_MESSAGES}"$'\n\n'"${response}"
+        fi
+        history_add "assistant" "$history_response"
 
         # Consolidate memories post-response (background — doesn't block further processing)
         if type memory_consolidate &>/dev/null; then

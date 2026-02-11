@@ -109,6 +109,41 @@ _claude_run_perl_fallback() {
     [[ "$output" == *"before signal"* ]]
 }
 
+@test "claude_run populates CLAUDE_NOTIFIER_MESSAGES from notifier log" {
+    # Create a claude stub that writes to the notifier log (simulating MCP messages)
+    cat > "$BATS_TEST_TMPDIR/.local/bin/claude" << 'STUB'
+#!/bin/sh
+# Extract notifier log path from MCP config
+mcp_cfg=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --mcp-config) mcp_cfg="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+if [ -n "$mcp_cfg" ]; then
+    log_file=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['mcpServers']['telegram-notifier']['env']['NOTIFIER_LOG_FILE'])" "$mcp_cfg" 2>/dev/null)
+    if [ -n "$log_file" ]; then
+        printf '"working on it..."\n' >> "$log_file"
+        printf '"almost done"\n' >> "$log_file"
+    fi
+fi
+echo "final response"
+STUB
+    chmod +x "$BATS_TEST_TMPDIR/.local/bin/claude"
+
+    claude_run "hello"
+    # stdout should only contain the final response (no notifications)
+    # CLAUDE_NOTIFIER_MESSAGES should contain both notification messages
+    [[ "$CLAUDE_NOTIFIER_MESSAGES" == *"[Notification: working on it...]"* ]]
+    [[ "$CLAUDE_NOTIFIER_MESSAGES" == *"[Notification: almost done]"* ]]
+}
+
+@test "claude_run leaves CLAUDE_NOTIFIER_MESSAGES empty when no notifications" {
+    claude_run "hello"
+    [ -z "$CLAUDE_NOTIFIER_MESSAGES" ]
+}
+
 @test "claude_run uses setsid on Linux" {
     # Verify that setsid is available and would be used
     if ! command -v setsid > /dev/null 2>&1; then
