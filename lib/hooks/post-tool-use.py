@@ -38,17 +38,9 @@ def summarize(event):
     if tool.startswith("mcp__"):
         return None
 
-    if tool == "Read":
+    if tool in ("Read", "Edit", "Write"):
         name = extract_path_basename(tool_input)
-        return f"Read {name}" if name else "Read"
-
-    if tool == "Edit":
-        name = extract_path_basename(tool_input)
-        return f"Edit {name}" if name else "Edit"
-
-    if tool == "Write":
-        name = extract_path_basename(tool_input)
-        return f"Write {name}" if name else "Write"
+        return f"{tool} {name}" if name else tool
 
     if tool == "Bash":
         cmd = tool_input.get("command", "")
@@ -103,7 +95,8 @@ def main():
 
     try:
         line = summarize(event)
-    except Exception:
+    except Exception as e:
+        print(f"post-tool-use: Error summarizing event: {e}", file=sys.stderr)
         return
     if not line:
         return
@@ -114,8 +107,8 @@ def main():
     try:
         with open(log_file, "a") as f:
             f.write(line + "\n")
-    except OSError:
-        pass
+    except OSError as e:
+        print(f"post-tool-use: Error writing to tool log: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
