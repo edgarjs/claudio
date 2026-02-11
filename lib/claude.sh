@@ -59,8 +59,8 @@ claude_run() {
         --no-chrome
         --no-session-persistence
         --output-format json
-        --tools "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch,Task,TaskOutput,TaskStop,TodoWrite,mcp__claudio-tools__send_telegram_message,mcp__claudio-tools__restart_service,mcp__claudio-tools__update_service"
-        --allowedTools "Read" "Write" "Edit" "Bash" "Glob" "Grep" "WebFetch" "WebSearch" "Task" "TaskOutput" "TaskStop" "TodoWrite" "mcp__claudio-tools__send_telegram_message" "mcp__claudio-tools__restart_service" "mcp__claudio-tools__update_service"
+        --tools "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch,Task,TaskOutput,TaskStop,TodoWrite,mcp__claudio-tools__send_telegram_message,mcp__claudio-tools__restart_service"
+        --allowedTools "Read" "Write" "Edit" "Bash" "Glob" "Grep" "WebFetch" "WebSearch" "Task" "TaskOutput" "TaskStop" "TodoWrite" "mcp__claudio-tools__send_telegram_message" "mcp__claudio-tools__restart_service"
         -p -
     )
 

@@ -4,7 +4,6 @@
 Tools:
   - send_telegram_message: async Telegram notifications
   - restart_service: schedule a delayed service restart
-  - update_service: git pull + delayed service restart
 
 Uses only Python stdlib — no external dependencies.
 Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from environment.
@@ -28,9 +27,6 @@ NOTIFIER_LOG_FILE = os.environ.get("NOTIFIER_LOG_FILE", "")
 # Validate token format to prevent SSRF via malicious env var
 if BOT_TOKEN and not re.match(r"^[0-9]+:[a-zA-Z0-9_-]+$", BOT_TOKEN):
     BOT_TOKEN = ""
-
-# Project root (parent of lib/)
-PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 DEFAULT_DELAY = 5
 
@@ -120,71 +116,6 @@ def restart_service(delay: int = DEFAULT_DELAY) -> dict:
     return _schedule_restart(delay)
 
 
-def update_service(delay: int = DEFAULT_DELAY) -> dict:
-    """Git pull --ff-only then schedule a delayed service restart."""
-    if not os.path.isdir(os.path.join(PROJECT_DIR, ".git")):
-        return {"error": f"Not a git repository: {PROJECT_DIR}"}
-
-    delay, err = _validate_delay(delay)
-    if err:
-        return err
-
-    try:
-        # Capture HEAD before pull to detect changes (locale-independent)
-        head_before = subprocess.run(
-            ["git", "-C", PROJECT_DIR, "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        result = subprocess.run(
-            ["git", "-C", PROJECT_DIR, "pull", "--ff-only", "origin", "main"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if result.returncode != 0:
-            return {"error": f"git pull failed: {result.stderr.strip()}"}
-
-        head_after = subprocess.run(
-            ["git", "-C", PROJECT_DIR, "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        # Compare HEAD hashes to detect changes
-        if (
-            head_before.returncode == 0
-            and head_after.returncode == 0
-            and head_before.stdout.strip() == head_after.stdout.strip()
-        ):
-            return {
-                "status": "ok",
-                "message": "Already up to date",
-                "restarting": False,
-            }
-
-        # Schedule restart after successful pull
-        restart_result = _schedule_restart(delay)
-        if "error" in restart_result:
-            return {
-                "error": f"Updated but restart failed: {restart_result['error']}"
-            }
-
-        return {
-            "status": "ok",
-            "message": f"Updated and restart scheduled in {delay}s",
-            "pull_output": result.stdout.strip(),
-            "restarting": True,
-        }
-    except subprocess.TimeoutExpired:
-        return {"error": "git pull timed out after 60s"}
-    except OSError as e:
-        return {"error": f"Failed to run git pull: {e}"}
-
-
 # --- MCP protocol handling ---
 
 TOOL_DEFINITIONS = [
@@ -234,31 +165,6 @@ TOOL_DEFINITIONS = [
             "required": [],
         },
     },
-    {
-        "name": "update_service",
-        "description": (
-            "Update Claudio by pulling the latest code from git, "
-            "then schedule a delayed service restart. "
-            "Performs git pull --ff-only origin main. "
-            "If already up to date, skips the restart. "
-            "Use this instead of manually running git pull + restart."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "delay_seconds": {
-                    "type": "integer",
-                    "description": (
-                        "Seconds to wait before restarting (default 5)"
-                    ),
-                    "default": 5,
-                    "minimum": 1,
-                    "maximum": 300,
-                },
-            },
-            "required": [],
-        },
-    },
 ]
 
 TOOL_HANDLERS = {
@@ -268,9 +174,6 @@ TOOL_HANDLERS = {
         else {"error": "empty message"}
     ),
     "restart_service": lambda args: restart_service(
-        delay=args.get("delay_seconds", DEFAULT_DELAY)
-    ),
-    "update_service": lambda args: update_service(
         delay=args.get("delay_seconds", DEFAULT_DELAY)
     ),
 }

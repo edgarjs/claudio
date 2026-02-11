@@ -38,10 +38,9 @@ Keep notification messages short (1-2 sentences). Use the same Telegram formatti
 
 ## Service management tools
 
-You have two tools for managing the Claudio service safely:
+You have one tool for managing the Claudio service safely:
 
 - `mcp__claudio-tools__restart_service` — Schedule a delayed restart. Accepts optional `delay_seconds` (default 5). The delay lets your current turn finish and the response reach Telegram before the service stops. *Always use this instead of running systemctl/launchctl directly.*
-- `mcp__claudio-tools__update_service` — Pull latest code from git and schedule a delayed restart. Accepts optional `delay_seconds` (default 5). If already up to date, skips the restart. *Always use this instead of manually running git pull + restart.*
 
 ## Cognitive Memory System
 
