@@ -138,6 +138,184 @@ STUB
     [ -z "$CLAUDE_NOTIFIER_MESSAGES" ]
 }
 
+@test "claude_run populates CLAUDE_TOOL_SUMMARY from tool log" {
+    # Create a claude stub that writes to the tool log (simulating PostToolUse hook)
+    cat > "$BATS_TEST_TMPDIR/.local/bin/claude" << 'STUB'
+#!/bin/sh
+if [ -n "$CLAUDIO_TOOL_LOG" ]; then
+    printf 'Read server.py\n' >> "$CLAUDIO_TOOL_LOG"
+    printf 'Bash "bats tests/"\n' >> "$CLAUDIO_TOOL_LOG"
+fi
+echo "final response"
+STUB
+    chmod +x "$BATS_TEST_TMPDIR/.local/bin/claude"
+
+    _run_and_get_tool_summary() {
+        claude_run "hello" >/dev/null
+        printf '%s' "$CLAUDE_TOOL_SUMMARY"
+    }
+    run _run_and_get_tool_summary
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'[Tool: Read server.py]'* ]]
+    [[ "$output" == *'[Tool: Bash "bats tests/"]'* ]]
+}
+
+@test "claude_run leaves CLAUDE_TOOL_SUMMARY empty when no tools used" {
+    claude_run "hello"
+    [ -z "$CLAUDE_TOOL_SUMMARY" ]
+}
+
+@test "post-tool-use hook summarizes Read tool" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "Read", "tool_input": {"file_path": "/home/pi/claudio/lib/server.py"}, "tool_output": "file contents..."}
+JSON
+    run cat "$log_file"
+    [ "$output" = "Read server.py" ]
+}
+
+@test "post-tool-use hook summarizes Bash tool" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "Bash", "tool_input": {"command": "git status"}, "tool_output": "On branch main"}
+JSON
+    run cat "$log_file"
+    [ "$output" = 'Bash "git status"' ]
+}
+
+@test "post-tool-use hook summarizes Grep tool" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "Grep", "tool_input": {"pattern": "function_name", "path": "lib/"}, "tool_output": "matches"}
+JSON
+    run cat "$log_file"
+    [ "$output" = 'Grep "function_name" in lib/' ]
+}
+
+@test "post-tool-use hook summarizes Task tool with subagent type" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "Task", "tool_input": {"subagent_type": "Explore", "prompt": "find auth"}, "tool_output": "Found auth uses JWT tokens in lib/auth.py"}
+JSON
+    run cat "$log_file"
+    [[ "$output" == 'Task(Explore): Found auth uses JWT tokens in lib/auth.py' ]]
+}
+
+@test "post-tool-use hook summarizes WebSearch tool" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "WebSearch", "tool_input": {"query": "python asyncio"}, "tool_output": "asyncio is a library for writing concurrent code"}
+JSON
+    run cat "$log_file"
+    [[ "$output" == 'WebSearch "python asyncio": asyncio is a library for writing concurrent code' ]]
+}
+
+@test "post-tool-use hook summarizes WebFetch tool" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "WebFetch", "tool_input": {"url": "https://docs.python.org/3/library/asyncio.html"}, "tool_output": "asyncio docs content"}
+JSON
+    run cat "$log_file"
+    [[ "$output" == 'WebFetch docs.python.org: asyncio docs content' ]]
+}
+
+@test "post-tool-use hook summarizes Edit tool" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "Edit", "tool_input": {"file_path": "/home/pi/claudio/lib/claude.sh"}, "tool_output": "ok"}
+JSON
+    run cat "$log_file"
+    [ "$output" = "Edit claude.sh" ]
+}
+
+@test "post-tool-use hook summarizes Write tool" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "Write", "tool_input": {"file_path": "/home/pi/claudio/lib/hooks/post-tool-use.py"}, "tool_output": "ok"}
+JSON
+    run cat "$log_file"
+    [ "$output" = "Write post-tool-use.py" ]
+}
+
+@test "post-tool-use hook summarizes Glob tool" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "Glob", "tool_input": {"pattern": "**/*.sh"}, "tool_output": "lib/claude.sh\nlib/telegram.sh"}
+JSON
+    run cat "$log_file"
+    [ "$output" = 'Glob "**/*.sh"' ]
+}
+
+@test "post-tool-use hook returns tool name for unknown tools" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "TodoWrite", "tool_input": {}, "tool_output": "ok"}
+JSON
+    run cat "$log_file"
+    [ "$output" = "TodoWrite" ]
+}
+
+@test "post-tool-use hook skips MCP tools" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << 'JSON'
+{"tool_name": "mcp__claudio-tools__send_telegram_message", "tool_input": {}, "tool_output": "sent"}
+JSON
+    # File should not exist or be empty
+    [ ! -s "$log_file" ]
+}
+
+@test "post-tool-use hook is no-op without CLAUDIO_TOOL_LOG" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+
+    # Ensure env var is unset
+    unset CLAUDIO_TOOL_LOG
+    run python3 "$hook" << 'JSON'
+{"tool_name": "Read", "tool_input": {"file_path": "/tmp/test.py"}, "tool_output": "content"}
+JSON
+    [ "$status" -eq 0 ]
+}
+
+@test "post-tool-use hook truncates long Task output" {
+    local hook="$BATS_TEST_DIRNAME/../lib/hooks/post-tool-use.py"
+    local log_file="$BATS_TEST_TMPDIR/tool.log"
+
+    # Generate output longer than 300 chars
+    local long_output
+    long_output=$(python3 -c "print('x' * 500)")
+
+    CLAUDIO_TOOL_LOG="$log_file" python3 "$hook" << JSON
+{"tool_name": "Task", "tool_input": {"subagent_type": "Explore"}, "tool_output": "$long_output"}
+JSON
+    local content
+    content=$(cat "$log_file")
+    # Should be truncated with "..."
+    [[ "$content" == *"..."* ]]
+    # Should not contain full 500 chars of output (line = prefix + 300 + "...")
+    [ ${#content} -lt 400 ]
+}
+
 @test "claude_run uses setsid on Linux" {
     # Verify that setsid is available and would be used
     if ! command -v setsid > /dev/null 2>&1; then

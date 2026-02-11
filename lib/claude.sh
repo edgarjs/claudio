@@ -26,10 +26,11 @@ claude_run() {
     fi
 
     # Generate MCP config with absolute paths (tempfile cleaned up on return)
-    local mcp_config notifier_log
+    local mcp_config notifier_log tool_log
     mcp_config=$(mktemp)
     notifier_log=$(mktemp)
-    chmod 600 "$mcp_config" "$notifier_log"
+    tool_log=$(mktemp)
+    chmod 600 "$mcp_config" "$notifier_log" "$tool_log"
     local lib_dir
     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     jq -n \
@@ -85,7 +86,7 @@ claude_run() {
     chmod 600 "$out_file" "$prompt_file"
     printf '%s' "$full_prompt" > "$prompt_file"
     # Ensure temp files are cleaned up even on unexpected exit
-    trap 'rm -f "$stderr_output" "$out_file" "$prompt_file" "$mcp_config" "$notifier_log"' RETURN
+    trap 'rm -f "$stderr_output" "$out_file" "$prompt_file" "$mcp_config" "$notifier_log" "$tool_log"' RETURN
 
     # Find claude command, trying multiple common locations
     # Note: Don't use 'command -v' as it's a bash builtin that doesn't work correctly
@@ -120,6 +121,9 @@ claude_run() {
 
     # Export notifier log path so MCP server (and test stubs) can find it
     export CLAUDIO_NOTIFIER_LOG="$notifier_log"
+
+    # Export tool log path so PostToolUse hook can append summaries
+    export CLAUDIO_TOOL_LOG="$tool_log"
 
     # Run claude in its own session/process group to prevent its child
     # processes (bash tools) from killing the webhook handler via process
@@ -173,6 +177,14 @@ except (json.JSONDecodeError, KeyError):
         # shellcheck disable=SC2034
         # Strip surrounding quotes from each JSON string line and wrap as notification
         CLAUDE_NOTIFIER_MESSAGES=$(sed 's/^"//; s/"$//; s/^/[Notification: /; s/$/]/' "$notifier_log" 2>/dev/null) || true
+    fi
+
+    # Read tool usage summaries from PostToolUse hook log.
+    # shellcheck disable=SC2034  # Used by telegram.sh
+    CLAUDE_TOOL_SUMMARY=""
+    if [ -s "$tool_log" ]; then
+        # shellcheck disable=SC2034
+        CLAUDE_TOOL_SUMMARY=$(sed 's/^/[Tool: /; s/$/]/' "$tool_log" 2>/dev/null) || true
     fi
 
     printf '%s\n' "$response"
