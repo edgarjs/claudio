@@ -22,6 +22,9 @@ MAX_QUEUE_SIZE = 5  # Max queued messages per chat
 WEBHOOK_TIMEOUT = 600  # 10 minutes max per Claude invocation
 HEALTH_CACHE_TTL = 30  # seconds between health check API calls
 QUEUE_WARNING_RATIO = 0.8  # Warn when queue reaches this fraction of max
+MEDIA_GROUP_WAIT = 1.5  # seconds to wait for all photos in a media group
+MAX_MEDIA_GROUPS = 10  # Max concurrent media groups being buffered
+MAX_PHOTOS_PER_GROUP = 10  # Max photos allowed in a single media group
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,19 +49,25 @@ seen_updates = OrderedDict()  # Track processed update_ids to prevent duplicates
 MAX_SEEN_UPDATES = 1000
 shutting_down = False  # Set to True on SIGTERM to reject new webhooks
 
+# Media group buffering: group_id -> {"bodies": [str], "chat_id": str, "timer": Timer}
+media_groups = {}
+media_group_lock = threading.Lock()
+
 # Health check cache
 _health_cache = {"result": None, "time": 0}
 
 
 def parse_webhook(body):
-    """Extract update_id and chat_id from webhook body."""
+    """Extract update_id, chat_id, and media_group_id from webhook body."""
     try:
         data = json.loads(body)
         update_id = data.get("update_id")
-        chat_id = str(data.get("message", {}).get("chat", {}).get("id", ""))
-        return update_id, chat_id
+        msg = data.get("message", {})
+        chat_id = str(msg.get("chat", {}).get("id", ""))
+        media_group_id = msg.get("media_group_id", "")
+        return update_id, chat_id, media_group_id
     except (json.JSONDecodeError, AttributeError):
-        return None, ""
+        return None, "", ""
 
 
 def process_queue(chat_id):
@@ -124,9 +133,63 @@ def _process_queue_loop(chat_id):
             time.sleep(1)  # Avoid tight loop on persistent errors
 
 
+def _merge_media_group(group_id):
+    """Merge buffered media group messages into a single webhook body and enqueue it.
+
+    Called by the Timer after MEDIA_GROUP_WAIT seconds of inactivity. Takes the
+    first message as the base webhook and injects an '_extra_photos' field with
+    file_ids from subsequent messages. telegram.sh reads this field to download
+    and pass all images to Claude in a single invocation.
+
+    On merge failure, falls back to enqueueing only the first photo (others are
+    lost) to avoid blocking the queue entirely.
+    """
+    with media_group_lock:
+        group = media_groups.pop(group_id, None)
+    if not group or not group["bodies"]:
+        return
+
+    bodies = group["bodies"]
+    if len(bodies) == 1:
+        # Single photo, enqueue as-is
+        _enqueue_single(bodies[0], group["chat_id"])
+        return
+
+    # Merge: use the first message as base, collect all photo file_ids
+    try:
+        base = json.loads(bodies[0])
+        extra_photos = []
+        for b in bodies[1:]:
+            data = json.loads(b)
+            msg = data.get("message", {})
+            photo = msg.get("photo", [])
+            if photo:
+                extra_photos.append(photo[-1]["file_id"])
+            elif msg.get("document", {}).get("mime_type", "").startswith("image/"):
+                extra_photos.append(msg["document"]["file_id"])
+
+        # Inject extra photo file_ids into the base message as a custom field
+        if extra_photos:
+            base["message"]["_extra_photos"] = extra_photos
+            sys.stderr.write(
+                f"[media-group] Merged {len(bodies)} photos into one webhook "
+                f"(group {group_id})\n"
+            )
+
+        _enqueue_single(json.dumps(base), group["chat_id"])
+    except (json.JSONDecodeError, KeyError) as e:
+        sys.stderr.write(f"[media-group] Error merging group {group_id}: {e}\n")
+        # Fallback: enqueue just the first message
+        _enqueue_single(bodies[0], group["chat_id"])
+
+
 def enqueue_webhook(body):
-    """Add webhook to per-chat queue and start processor if needed."""
-    update_id, chat_id = parse_webhook(body)
+    """Add webhook to per-chat queue and start processor if needed.
+
+    Media group messages (multiple photos sent together) are buffered briefly
+    and merged into a single webhook before processing.
+    """
+    update_id, chat_id, media_group_id = parse_webhook(body)
     if not chat_id:
         return  # Invalid webhook, skip
 
@@ -148,6 +211,42 @@ def enqueue_webhook(body):
             while len(seen_updates) > MAX_SEEN_UPDATES:
                 seen_updates.popitem(last=False)
 
+    # Buffer media group messages, then merge after a short delay
+    if media_group_id:
+        with media_group_lock:
+            if media_group_id in media_groups:
+                if len(media_groups[media_group_id]["bodies"]) >= MAX_PHOTOS_PER_GROUP:
+                    sys.stderr.write(
+                        f"[media-group] Dropping photo — group {media_group_id} "
+                        f"reached {MAX_PHOTOS_PER_GROUP} photo limit\n"
+                    )
+                    return
+                media_groups[media_group_id]["bodies"].append(body)
+                # Reset timer — extend window for late-arriving photos
+                media_groups[media_group_id]["timer"].cancel()
+            else:
+                if len(media_groups) >= MAX_MEDIA_GROUPS:
+                    sys.stderr.write(
+                        f"[media-group] Dropping group {media_group_id} — "
+                        f"reached {MAX_MEDIA_GROUPS} concurrent group limit\n"
+                    )
+                    return
+                media_groups[media_group_id] = {
+                    "bodies": [body],
+                    "chat_id": chat_id,
+                    "timer": None,
+                }
+            timer = threading.Timer(MEDIA_GROUP_WAIT, _merge_media_group, [media_group_id])
+            media_groups[media_group_id]["timer"] = timer
+            timer.start()
+        return
+
+    _enqueue_single(body, chat_id)
+
+
+def _enqueue_single(body, chat_id):
+    """Enqueue a single (possibly merged) webhook body for processing."""
+    with queue_lock:
         # Initialize queue for this chat if needed
         if chat_id not in chat_queues:
             chat_queues[chat_id] = deque()
@@ -700,6 +799,16 @@ def _graceful_shutdown(server, shutdown_event):
     with queue_lock:
         shutting_down = True
     sys.stderr.write("[shutdown] SIGTERM received, draining active handlers...\n")
+
+    # Flush pending media groups immediately (cancel timers, enqueue merged results)
+    with media_group_lock:
+        pending_ids = list(media_groups.keys())
+        for gid in pending_ids:
+            group = media_groups.get(gid)
+            if group and group["timer"]:
+                group["timer"].cancel()
+    for gid in pending_ids:
+        _merge_media_group(gid)
 
     # Stop accepting new HTTP requests
     server.shutdown()
