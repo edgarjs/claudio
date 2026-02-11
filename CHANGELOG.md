@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.3.0] - 2026-02-10
+
+### Added
+
+- Alexa skill integration for voice commands via AWS Lambda (#52)
+- Expanded health check with system monitoring: disk, memory, CPU, and temperature (#47)
+- Silent backup failure detection with retry alerts and unmounted drive detection (#54)
+- Typing indicator: `record_voice` action for voice messages, 4s refresh interval (#57)
+
+### Changed
+
+- Inject system prompt via `--append-system-prompt` at runtime (#50)
+- Export env vars needed by subprocesses (#49)
+- Preserve unmanaged env vars across `claudio_save_env` calls (#53)
+- Remove orphan process detection from health check (#55)
+
+### Fixed
+
+- README inaccuracies and missing feature documentation (#48)
+- Sync README and config.sh with actual code (#46)
+
 ## [1.2.2] - 2026-02-08
 
 ### Fixed
