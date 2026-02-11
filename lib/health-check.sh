@@ -142,7 +142,11 @@ _check_recent_logs() {
     fi
 
     local cutoff_time
-    cutoff_time=$(date -d "-${LOG_CHECK_WINDOW} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || return 0
+    if [[ "$(uname)" == "Darwin" ]]; then
+        cutoff_time=$(date -v-"${LOG_CHECK_WINDOW}"S '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || return 0
+    else
+        cutoff_time=$(date -d "-${LOG_CHECK_WINDOW} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || return 0
+    fi
 
     # Extract recent lines (within time window)
     local recent_lines

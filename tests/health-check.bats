@@ -319,7 +319,11 @@ write_recent_log() {
     local offset_secs="${1:-0}"
     shift
     local ts
-    ts=$(date -d "-${offset_secs} seconds" '+%Y-%m-%d %H:%M:%S')
+    if [[ "$(uname)" == "Darwin" ]]; then
+        ts=$(date -v-"${offset_secs}"S '+%Y-%m-%d %H:%M:%S')
+    else
+        ts=$(date -d "-${offset_secs} seconds" '+%Y-%m-%d %H:%M:%S')
+    fi
     printf '[%s] %s\n' "$ts" "$*" >> "$CLAUDIO_PATH/claudio.log"
 }
 
@@ -345,9 +349,8 @@ write_recent_log() {
     export LOG_ALERT_COOLDOWN=0
 
     # Write an error line from 10 minutes ago (outside 5min window)
-    local old_ts
-    old_ts=$(date -d "-600 seconds" '+%Y-%m-%d %H:%M:%S')
-    printf '[%s] [server] ERROR: Old problem\n' "$old_ts" > "$CLAUDIO_PATH/claudio.log"
+    : > "$CLAUDIO_PATH/claudio.log"
+    write_recent_log 600 "[server] ERROR: Old problem"
 
     run "$BATS_TEST_DIRNAME/../lib/health-check.sh"
 
