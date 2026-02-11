@@ -247,6 +247,11 @@ class TestRestartService(unittest.TestCase):
         self.assertIn("3s", result["message"])
         mock_popen.assert_called_once()
 
+    def test_restart_rejects_non_numeric_delay(self):
+        result = self.mod.restart_service(delay="abc")
+        self.assertIn("error", result)
+        self.assertIn("Invalid delay", result["error"])
+
     @patch("mcp_tools.subprocess.Popen", side_effect=OSError("mock failure"))
     def test_restart_popen_failure(self, mock_popen):
         result = self.mod.restart_service()

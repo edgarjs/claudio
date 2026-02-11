@@ -80,9 +80,19 @@ def send_telegram_message(text: str) -> dict:
     return {"error": "Failed to send message after all attempts"}
 
 
+def _validate_delay(delay) -> tuple:
+    """Validate and clamp delay to [1, 300]. Returns (value, error_dict)."""
+    try:
+        return max(1, min(300, int(delay))), None
+    except (ValueError, TypeError):
+        return None, {"error": f"Invalid delay: {delay!r}"}
+
+
 def _schedule_restart(delay: int) -> dict:
     """Spawn a detached process that sleeps then restarts the service."""
-    delay = max(1, min(300, int(delay)))
+    delay, err = _validate_delay(delay)
+    if err:
+        return err
 
     if platform.system() == "Darwin":
         cmd = (
@@ -115,7 +125,9 @@ def update_service(delay: int = DEFAULT_DELAY) -> dict:
     if not os.path.isdir(os.path.join(PROJECT_DIR, ".git")):
         return {"error": f"Not a git repository: {PROJECT_DIR}"}
 
-    delay = max(1, min(300, int(delay)))
+    delay, err = _validate_delay(delay)
+    if err:
+        return err
 
     try:
         # Capture HEAD before pull to detect changes (locale-independent)
