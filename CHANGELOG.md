@@ -6,10 +6,10 @@
 
 - Alexa voice integration via `/alexa` endpoint with session buffering and localized responses (#52)
 - Health check system monitoring: disk usage alerts, automatic log rotation, and backup freshness checks (#47)
-- System prompt injection via `--append-system-prompt` at runtime instead of copying to `~/.claudio/` (#50)
 
 ### Changed
 
+- System prompt injection via `--append-system-prompt` at runtime instead of copying to `~/.claudio/` (#50)
 - Typing indicator uses `record_voice` action for voice messages and refreshes every 4s (was 15s) (#57)
 - Typing indicator loop no longer caps at 15 minutes — runs while parent process lives (#57)
 - Preserve unmanaged env vars (e.g. `HASS_TOKEN`, `ALEXA_SKILL_ID`) across `claudio_save_env` calls (#53)
