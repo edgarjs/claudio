@@ -359,7 +359,7 @@ JSON
 
     # Verify the hook was added
     run jq -r '.hooks.PostToolUse[0].hooks[0].command' "$HOME/.claude/settings.json"
-    [ "$output" = "python3 /opt/claudio/lib/hooks/post-tool-use.py" ]
+    [ "$output" = 'python3 "/opt/claudio/lib/hooks/post-tool-use.py"' ]
 }
 
 @test "claude_hooks_install preserves existing settings" {
@@ -382,7 +382,7 @@ JSON
 
     # Hook added
     run jq -r '.hooks.PostToolUse[0].hooks[0].command' "$HOME/.claude/settings.json"
-    [ "$output" = "python3 /opt/claudio/lib/hooks/post-tool-use.py" ]
+    [ "$output" = 'python3 "/opt/claudio/lib/hooks/post-tool-use.py"' ]
 }
 
 @test "claude_hooks_install is idempotent" {
@@ -417,7 +417,7 @@ JSON
 
     # New hook added
     run jq -r '.hooks.PostToolUse[0].hooks[0].command' "$HOME/.claude/settings.json"
-    [ "$output" = "python3 /opt/claudio/lib/hooks/post-tool-use.py" ]
+    [ "$output" = 'python3 "/opt/claudio/lib/hooks/post-tool-use.py"' ]
 }
 
 @test "claude_run uses setsid on Linux" {

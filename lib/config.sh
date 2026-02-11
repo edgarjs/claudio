@@ -21,7 +21,7 @@ ELEVENLABS_STT_MODEL="${ELEVENLABS_STT_MODEL:-scribe_v1}"
 export MEMORY_ENABLED="${MEMORY_ENABLED:-1}"
 MEMORY_EMBEDDING_MODEL="${MEMORY_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
 MEMORY_CONSOLIDATION_MODEL="${MEMORY_CONSOLIDATION_MODEL:-haiku}"
-MAX_HISTORY_LINES="${MAX_HISTORY_LINES:-20}"
+MAX_HISTORY_LINES="${MAX_HISTORY_LINES:-100}"
 
 # Safe env file loader: only accepts KEY=value or KEY="value" lines
 # where KEY matches [A-Z_][A-Z0-9_]*. Reverses _env_quote escaping
@@ -83,7 +83,7 @@ _env_quote() {
 claude_hooks_install() {
     local settings_file="$HOME/.claude/settings.json"
     local project_dir="${1:?Usage: claude_hooks_install <project_dir>}"
-    local hook_cmd="python3 ${project_dir}/lib/hooks/post-tool-use.py"
+    local hook_cmd="python3 \"${project_dir}/lib/hooks/post-tool-use.py\""
 
     mkdir -p "$HOME/.claude"
 
