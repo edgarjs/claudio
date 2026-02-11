@@ -624,7 +624,10 @@ Read this file and summarize its contents."
     if [ -n "$response" ]; then
         local history_response="$response"
         if [ -n "${CLAUDE_NOTIFIER_MESSAGES:-}" ]; then
-            history_response="${CLAUDE_NOTIFIER_MESSAGES}"$'\n\n'"${response}"
+            history_response="${CLAUDE_NOTIFIER_MESSAGES}"$'\n\n'"${history_response}"
+        fi
+        if [ -n "${CLAUDE_TOOL_SUMMARY:-}" ]; then
+            history_response="${CLAUDE_TOOL_SUMMARY}"$'\n\n'"${history_response}"
         fi
         history_response=$(printf '%s' "$history_response" | _sanitize_for_prompt)
         history_add "assistant" "$history_response"
