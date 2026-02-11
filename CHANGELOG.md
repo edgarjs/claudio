@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.3.0] - 2026-02-10
+
+### Added
+
+- Alexa voice integration via `/alexa` endpoint with session buffering and localized responses (#52)
+- Health check system monitoring: disk usage alerts, automatic log rotation, and backup freshness checks (#47)
+- System prompt injection via `--append-system-prompt` at runtime instead of copying to `~/.claudio/` (#50)
+
+### Changed
+
+- Typing indicator uses `record_voice` action for voice messages and refreshes every 4s (was 15s) (#57)
+- Typing indicator loop no longer caps at 15 minutes — runs while parent process lives (#57)
+- Preserve unmanaged env vars (e.g. `HASS_TOKEN`, `ALEXA_SKILL_ID`) across `claudio_save_env` calls (#53)
+- Export `CLAUDIO_DB_FILE`, `CLAUDIO_PATH`, and `MEMORY_ENABLED` for subprocess access (#49)
+- Telegram message sending retries without `reply_to_message_id` when reply fails (#52)
+
+### Removed
+
+- Orphan process detection from health check — no longer needed with native Claude Task tools and `KillMode=mixed` (#55)
+
+### Fixed
+
+- Silent backup failures: detect unmounted drives before rsync and in health check freshness monitoring (#54)
+- Webhook handler timeout (600s) restored — accidentally removed, causing potential indefinite thread blocking (#52)
+- Typing indicator curl calls now have `--connect-timeout 5 --max-time 10` to prevent hung background processes (#57)
+- Token usage not persisted to SQLite because `CLAUDIO_DB_FILE` was not exported (#49)
+- `ELEVENLABS_MODEL` and `MAX_HISTORY_LINES` not persisted across restarts (#46)
+
+### Security
+
+- Alexa request authentication: X.509 certificate chain validation, SHA-256 signature verification, 150s timestamp replay window, skill ID check (#52)
+- Alexa endpoint fails closed when `cryptography` library is unavailable (#52)
+
 ## [1.2.2] - 2026-02-08
 
 ### Fixed
