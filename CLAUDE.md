@@ -17,12 +17,13 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 - `lib/history.sh` — Conversation history wrapper, delegates to `lib/db.sh` for SQLite storage.
 - `lib/db.sh` — SQLite database layer for conversation storage.
 - `lib/log.sh` — Centralized logging with module prefix and file output.
-- `lib/health-check.sh` — Cron health-check script (runs every minute) that calls `/health` endpoint. Auto-restarts the service if unreachable (throttled to once per 3 minutes, max 3 attempts). Sends Telegram alert after exhausting retries. State: `.last_restart_attempt`, `.restart_fail_count` in `$HOME/.claudio/`.
+- `lib/health-check.sh` — Cron health-check script (runs every minute) that calls `/health` endpoint. Auto-restarts the service if unreachable (throttled to once per 3 minutes, max 3 attempts). Sends Telegram alert after exhausting retries. Additional checks when healthy: disk usage alerts, log rotation, backup freshness, and recent log analysis (errors, restart loops, slow API — configurable via `LOG_CHECK_WINDOW` and `LOG_ALERT_COOLDOWN`). State: `.last_restart_attempt`, `.restart_fail_count`, `.last_log_alert` in `$HOME/.claudio/`.
 - `lib/tts.sh` — ElevenLabs text-to-speech integration for generating voice responses.
 - `lib/stt.sh` — ElevenLabs speech-to-text integration for transcribing incoming voice messages.
 - `lib/backup.sh` — Automated backup management: rsync-based hourly/daily rotating backups of `$HOME/.claudio/` with cron scheduling. Subcommands: `backup <dest>`, `backup status <dest>`, `backup cron install/uninstall`.
 - `lib/memory.sh` — Cognitive memory system (bash glue). Invokes `lib/memory.py` for embedding-based retrieval and ACT-R activation scoring. Consolidates conversation history into long-term memories. Degrades gracefully if fastembed is not installed.
 - `lib/mcp_tools.py` — MCP stdio server exposing Claudio tools: Telegram notifications (`send_telegram_message`) and delayed service restart (`restart_service`). Pure stdlib, no external dependencies.
+- `lib/hooks/post-tool-use.py` — PostToolUse hook that appends compact tool usage summaries to `$CLAUDIO_TOOL_LOG`. Captures Read, Write, Edit, Bash, Glob, Grep, Task, WebSearch, WebFetch usage. Skips MCP tools (already tracked by the notifier system). Active only when `CLAUDIO_TOOL_LOG` is set.
 - `lib/memory.py` — Python backend for cognitive memory: embedding generation (fastembed), SQLite-backed storage, ACT-R activation scoring for retrieval, and memory consolidation via Claude.
 - `lib/db.py` — Python SQLite helper providing parameterized queries to eliminate SQL injection risk. Used by `db.sh`.
 - `lib/service.sh` — systemd (Linux) and launchd (macOS) service management. Also handles cloudflared installation and named tunnel setup during `claudio install`. Enables loginctl linger on install/update (so the user service survives logout) and disables it on uninstall if no other user services remain.

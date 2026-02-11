@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Webhook health check script - calls /health endpoint which verifies and fixes webhook
-# Intended to be run periodically via cron (every 5 minutes)
+# Intended to be run periodically via cron (every minute)
 # Auto-restarts the service if it's unreachable (throttled to once per 3 minutes)
 # Sends a Telegram alert after 3 restart attempts if the service never recovers
 #
