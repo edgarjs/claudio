@@ -122,11 +122,15 @@ echo "final response"
 STUB
     chmod +x "$BATS_TEST_TMPDIR/.local/bin/claude"
 
-    claude_run "hello"
-    # stdout should only contain the final response (no notifications)
-    # CLAUDE_NOTIFIER_MESSAGES should contain both notification messages
-    [[ "$CLAUDE_NOTIFIER_MESSAGES" == *"[Notification: working on it...]"* ]]
-    [[ "$CLAUDE_NOTIFIER_MESSAGES" == *"[Notification: almost done]"* ]]
+    # Use run + helper to avoid set -e/RETURN trap interactions on macOS bash
+    _run_and_get_notifier() {
+        claude_run "hello" >/dev/null
+        printf '%s' "$CLAUDE_NOTIFIER_MESSAGES"
+    }
+    run _run_and_get_notifier
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[Notification: working on it...]"* ]]
+    [[ "$output" == *"[Notification: almost done]"* ]]
 }
 
 @test "claude_run leaves CLAUDE_NOTIFIER_MESSAGES empty when no notifications" {
