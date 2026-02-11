@@ -346,6 +346,80 @@ JSON
     [ ${#content} -lt 110 ]
 }
 
+@test "claude_hooks_install creates settings.json with hook" {
+    source "$BATS_TEST_DIRNAME/../lib/config.sh"
+
+    # Ensure no prior settings file
+    rm -f "$HOME/.claude/settings.json"
+    mkdir -p "$HOME/.claude"
+
+    run claude_hooks_install "/opt/claudio"
+    [ "$status" -eq 0 ]
+    [ -f "$HOME/.claude/settings.json" ]
+
+    # Verify the hook was added
+    run jq -r '.hooks.PostToolUse[0].hooks[0].command' "$HOME/.claude/settings.json"
+    [ "$output" = "python3 /opt/claudio/lib/hooks/post-tool-use.py" ]
+}
+
+@test "claude_hooks_install preserves existing settings" {
+    source "$BATS_TEST_DIRNAME/../lib/config.sh"
+    mkdir -p "$HOME/.claude"
+
+    # Pre-existing settings
+    cat > "$HOME/.claude/settings.json" << 'JSON'
+{"model": "opus", "env": {"FOO": "bar"}}
+JSON
+
+    run claude_hooks_install "/opt/claudio"
+    [ "$status" -eq 0 ]
+
+    # Original settings preserved
+    run jq -r '.model' "$HOME/.claude/settings.json"
+    [ "$output" = "opus" ]
+    run jq -r '.env.FOO' "$HOME/.claude/settings.json"
+    [ "$output" = "bar" ]
+
+    # Hook added
+    run jq -r '.hooks.PostToolUse[0].hooks[0].command' "$HOME/.claude/settings.json"
+    [ "$output" = "python3 /opt/claudio/lib/hooks/post-tool-use.py" ]
+}
+
+@test "claude_hooks_install is idempotent" {
+    source "$BATS_TEST_DIRNAME/../lib/config.sh"
+    mkdir -p "$HOME/.claude"
+    echo '{}' > "$HOME/.claude/settings.json"
+
+    # Install twice
+    claude_hooks_install "/opt/claudio"
+    claude_hooks_install "/opt/claudio"
+
+    # Should have exactly one PostToolUse entry, not two
+    run jq '.hooks.PostToolUse | length' "$HOME/.claude/settings.json"
+    [ "$output" = "1" ]
+}
+
+@test "claude_hooks_install preserves existing hooks" {
+    source "$BATS_TEST_DIRNAME/../lib/config.sh"
+    mkdir -p "$HOME/.claude"
+
+    # Pre-existing hook for a different event
+    cat > "$HOME/.claude/settings.json" << 'JSON'
+{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "echo pre"}]}]}}
+JSON
+
+    run claude_hooks_install "/opt/claudio"
+    [ "$status" -eq 0 ]
+
+    # Original hook preserved
+    run jq -r '.hooks.PreToolUse[0].hooks[0].command' "$HOME/.claude/settings.json"
+    [ "$output" = "echo pre" ]
+
+    # New hook added
+    run jq -r '.hooks.PostToolUse[0].hooks[0].command' "$HOME/.claude/settings.json"
+    [ "$output" = "python3 /opt/claudio/lib/hooks/post-tool-use.py" ]
+}
+
 @test "claude_run uses setsid on Linux" {
     # Verify that setsid is available and would be used
     if ! command -v setsid > /dev/null 2>&1; then

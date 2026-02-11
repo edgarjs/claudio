@@ -166,6 +166,7 @@ service_install() {
     fi
 
     cron_install
+    claude_hooks_install "$(cd "$CLAUDIO_LIB/.." && pwd)"
 
     echo ""
     print_success "Claudio service installed and started."
@@ -490,6 +491,8 @@ service_update() {
     fi
 
     print_success "Claudio updated successfully."
+
+    claude_hooks_install "$project_dir"
 
     # Ensure linger is enabled for existing installs upgrading to this version
     if [[ "$(uname)" != "Darwin" ]]; then

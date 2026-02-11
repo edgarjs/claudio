@@ -80,6 +80,40 @@ _env_quote() {
     printf '%s' "$val"
 }
 
+claude_hooks_install() {
+    local settings_file="$HOME/.claude/settings.json"
+    local project_dir="${1:?Usage: claude_hooks_install <project_dir>}"
+    local hook_cmd="python3 ${project_dir}/lib/hooks/post-tool-use.py"
+
+    mkdir -p "$HOME/.claude"
+
+    # Create settings file if it doesn't exist
+    if [ ! -f "$settings_file" ]; then
+        echo '{}' > "$settings_file"
+    fi
+
+    # Check if hook already registered (exact command match)
+    if jq -e --arg cmd "$hook_cmd" '
+        .hooks.PostToolUse[]?.hooks[]? | select(.command == $cmd)
+    ' "$settings_file" > /dev/null 2>&1; then
+        return 0
+    fi
+
+    # Add the hook, preserving existing settings
+    local hook_entry
+    hook_entry=$(jq -n --arg cmd "$hook_cmd" '{
+        hooks: [{ type: "command", command: $cmd }]
+    }')
+
+    local tmp
+    tmp=$(mktemp)
+    jq --argjson entry "$hook_entry" '
+        .hooks.PostToolUse = ((.hooks.PostToolUse // []) + [$entry])
+    ' "$settings_file" > "$tmp" && mv "$tmp" "$settings_file"
+
+    echo "Registered PostToolUse hook in $settings_file"
+}
+
 claudio_save_env() {
     # Managed variables (written by this function)
     local -a managed_keys=(
