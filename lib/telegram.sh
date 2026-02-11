@@ -140,7 +140,7 @@ telegram_send_typing() {
     local chat_id="$1"
     local action="${2:-typing}"
     # Fire-and-forget: don't retry typing indicators to avoid rate limit cascades
-    curl -s \
+    curl -s --connect-timeout 5 --max-time 10 \
         --config <(printf 'url = "%s%s/sendChatAction"\n' "$TELEGRAM_API" "$TELEGRAM_BOT_TOKEN") \
         -d "chat_id=${chat_id}" \
         -d "action=${action}" > /dev/null 2>&1 || true
@@ -548,12 +548,9 @@ Read this file and summarize its contents."
     [ "$has_voice" = true ] && typing_action="record_voice"
     (
         parent_pid=$$
-        max_iterations=225  # Cap at 15 minutes (225 * 4s)
-        i=0
-        while kill -0 "$parent_pid" 2>/dev/null && [ "$i" -lt "$max_iterations" ]; do
+        while kill -0 "$parent_pid" 2>/dev/null; do
             telegram_send_typing "$WEBHOOK_CHAT_ID" "$typing_action"
             sleep 4
-            i=$((i + 1))
         done
     ) &
     local typing_pid=$!
