@@ -272,6 +272,12 @@ class TestUpdateService(unittest.TestCase):
         """Helper: mock result for git rev-parse HEAD."""
         return MagicMock(returncode=0, stdout=f"{sha}\n", stderr="")
 
+    @patch("mcp_tools.os.path.isdir", return_value=False)
+    def test_update_not_a_git_repo(self, mock_isdir):
+        result = self.mod.update_service()
+        self.assertIn("error", result)
+        self.assertIn("Not a git repository", result["error"])
+
     @patch("mcp_tools._schedule_restart")
     @patch("mcp_tools.subprocess.run")
     def test_update_already_up_to_date(self, mock_run, mock_restart):

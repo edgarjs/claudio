@@ -112,6 +112,9 @@ def restart_service(delay: int = DEFAULT_DELAY) -> dict:
 
 def update_service(delay: int = DEFAULT_DELAY) -> dict:
     """Git pull --ff-only then schedule a delayed service restart."""
+    if not os.path.isdir(os.path.join(PROJECT_DIR, ".git")):
+        return {"error": f"Not a git repository: {PROJECT_DIR}"}
+
     delay = max(1, min(300, int(delay)))
 
     try:
