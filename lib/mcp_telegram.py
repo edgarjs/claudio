@@ -30,8 +30,8 @@ def _log_sent_message(text: str) -> None:
     try:
         with open(NOTIFIER_LOG_FILE, "a") as f:
             f.write(json.dumps(text) + "\n")
-    except OSError:
-        pass
+    except OSError as e:
+        print(f"mcp_telegram: Failed to write to notifier log: {e}", file=sys.stderr)
 
 
 def send_telegram_message(text: str) -> dict:
