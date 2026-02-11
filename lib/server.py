@@ -802,12 +802,12 @@ def _graceful_shutdown(server, shutdown_event):
 
     # Flush pending media groups immediately (cancel timers, enqueue merged results)
     with media_group_lock:
-        pending_groups = list(media_groups.keys())
-    for gid in pending_groups:
-        with media_group_lock:
+        pending_ids = list(media_groups.keys())
+        for gid in pending_ids:
             group = media_groups.get(gid)
             if group and group["timer"]:
                 group["timer"].cancel()
+    for gid in pending_ids:
         _merge_media_group(gid)
 
     # Stop accepting new HTTP requests

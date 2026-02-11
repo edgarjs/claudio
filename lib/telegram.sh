@@ -607,18 +607,13 @@ Read this file and summarize its contents."
     local response
     response=$(claude_run "$text")
 
-    # Enrich no-caption image/document history with summary from Claude's response.
-    # This runs after claude_run because: (1) the current message is already passed as the
-    # prompt, so it doesn't need to be in history for this request, and (2) we need Claude's
-    # response to generate the summary.
+    # Enrich no-caption document history with summary from Claude's response.
+    # Images are intentionally excluded: including image descriptions in history
+    # biases future invocations into "recognizing" the same content instead of
+    # actually looking at the new images passed to them.
     if [ -n "$response" ]; then
         if [ -z "${WEBHOOK_CAPTION:-$WEBHOOK_TEXT}" ]; then
-            if [ -n "$image_file" ] && [ ${#extra_image_files[@]} -gt 0 ]; then
-                local img_total=$(( 1 + ${#extra_image_files[@]} ))
-                history_text="[Sent ${img_total} images: $(_summarize "$response")]"
-            elif [ -n "$image_file" ]; then
-                history_text="[Sent an image: $(_summarize "$response")]"
-            elif [ -n "$doc_file" ]; then
+            if [ -n "$doc_file" ]; then
                 history_text="[Sent a file \"${doc_name}\": $(_summarize "$response")]"
             fi
         fi
