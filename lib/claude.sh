@@ -171,7 +171,8 @@ except (json.JSONDecodeError, KeyError):
     CLAUDE_NOTIFIER_MESSAGES=""
     if [ -s "$notifier_log" ]; then
         # shellcheck disable=SC2034
-        CLAUDE_NOTIFIER_MESSAGES=$(jq -r '"[Notification: \(.)]"' "$notifier_log" 2>/dev/null) || true
+        # Strip surrounding quotes from each JSON string line and wrap as notification
+        CLAUDE_NOTIFIER_MESSAGES=$(sed 's/^"//; s/"$//; s/^/[Notification: /; s/$/]/' "$notifier_log" 2>/dev/null) || true
     fi
 
     printf '%s\n' "$response"
