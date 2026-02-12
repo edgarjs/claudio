@@ -17,7 +17,6 @@ import threading
 from collections import namedtuple
 
 from .util import log, log_error
-from .config import BotConfig
 
 # -- Constants --
 

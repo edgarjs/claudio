@@ -8,7 +8,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 # Ensure project root is on sys.path so `lib.*` imports resolve.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

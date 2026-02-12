@@ -6,7 +6,6 @@ Lazy imports per command for fast startup.
 """
 
 import os
-import subprocess
 import sys
 
 

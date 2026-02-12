@@ -12,11 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install ShellCheck
-        run: sudo apt-get install -y shellcheck
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Run ShellCheck
-        run: shellcheck --severity=warning claudio lib/*.sh
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff check
+        run: ruff check lib/ tests/
 
   test:
     strategy:
@@ -26,8 +31,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup BATS
-        uses: bats-core/bats-action@3.0.1
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: pip install pytest
 
       - name: Run tests
-        run: bats tests/
+        run: python3 -m pytest tests/ -v

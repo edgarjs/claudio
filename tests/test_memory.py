@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Tests for lib/memory.py — schema, activation, scoring, storage, retrieval."""
 
-import math
 import os
 import sqlite3
-import struct
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # Add parent dir to path so we can import lib/memory.py
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

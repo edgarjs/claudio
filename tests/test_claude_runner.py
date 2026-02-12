@@ -7,7 +7,6 @@ import sqlite3
 import subprocess
 import sys
 import unittest
-from collections import namedtuple
 from unittest.mock import MagicMock, patch
 
 # Ensure project root is on sys.path so `lib.*` imports resolve.
@@ -15,7 +14,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from lib.claude_runner import (
     ClaudeResult,
-    WEBHOOK_TIMEOUT,
     _build_full_prompt,
     _load_system_prompt,
     _persist_usage,

@@ -15,7 +15,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from lib.config import ClaudioConfig, BotConfig, parse_env_file, save_bot_env, _env_quote
 from lib.util import print_error, print_success, print_warning
 
 LAUNCHD_PLIST = os.path.expanduser(
@@ -400,7 +399,7 @@ def _disable_linger():
             capture_output=True, text=True)
         if result.returncode == 0:
             remaining = len(
-                [l for l in result.stdout.strip().split('\n') if l.strip()])
+                [x for x in result.stdout.strip().split('\n') if x.strip()])
             if remaining == 0:
                 subprocess.run(
                     ["loginctl", "disable-linger",
@@ -454,7 +453,6 @@ def claude_hooks_install(project_dir):
 def cron_install(config):
     """Install health-check cron job (runs every minute)."""
     health_script = os.path.join(_project_dir(), "lib", "health_check.py")
-    env_file = config.env_file
     claudio_path = config.claudio_path
     home = os.path.expanduser("~")
 
@@ -469,7 +467,7 @@ def cron_install(config):
         ["crontab", "-l"], capture_output=True, text=True)
     lines = existing.stdout.strip().split(
         '\n') if existing.returncode == 0 else []
-    lines = [l for l in lines if CRON_MARKER not in l]
+    lines = [x for x in lines if CRON_MARKER not in x]
     lines.append(cron_entry)
 
     proc = subprocess.run(
@@ -491,8 +489,8 @@ def cron_uninstall():
     if CRON_MARKER not in existing.stdout:
         return
 
-    lines = [l for l in existing.stdout.strip().split(
-        '\n') if CRON_MARKER not in l]
+    lines = [x for x in existing.stdout.strip().split(
+        '\n') if CRON_MARKER not in x]
     subprocess.run(
         ["crontab", "-"], input='\n'.join(lines) + '\n' if lines else '',
         text=True, capture_output=True)

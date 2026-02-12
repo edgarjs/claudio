@@ -783,7 +783,7 @@ class TestClaudioConfigListBots:
             d = os.path.join(bots_dir, name)
             os.makedirs(d)
             with open(os.path.join(d, "bot.env"), "w") as f:
-                f.write(f'MODEL="haiku"\n')
+                f.write('MODEL="haiku"\n')
         cfg = ClaudioConfig(claudio_path=claudio_path)
         assert cfg.list_bots() == ["alpha", "beta", "gamma"]
 

@@ -9,12 +9,11 @@ import urllib.error
 import urllib.request
 from unittest.mock import MagicMock, call, patch
 
-import pytest
 
 # Ensure project root is on sys.path so `from lib.util import ...` resolves.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from lib.whatsapp_api import WhatsAppClient, _MAX_MEDIA_SIZE, _MAX_MESSAGE_LEN
+from lib.whatsapp_api import WhatsAppClient, _MAX_MEDIA_SIZE
 
 
 # ---------------------------------------------------------------------------

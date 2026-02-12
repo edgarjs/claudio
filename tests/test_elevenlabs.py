@@ -9,7 +9,6 @@ import urllib.error
 import urllib.request
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 # Ensure project root is on sys.path so `from lib.util import ...` resolves.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

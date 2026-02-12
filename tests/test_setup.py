@@ -16,8 +16,6 @@ from lib.setup import (
     SetupError,
     _build_bot_env_fields,
     _poll_for_start,
-    _save_telegram_config,
-    _save_whatsapp_config,
     _telegram_api_call,
     _validate_bot_id,
     _whatsapp_api_call,

@@ -4,7 +4,6 @@ Functions ported from the duplicated code in telegram.sh and whatsapp.sh.
 Stdlib only — no external dependencies.
 """
 
-import io
 import os
 import re
 import sys

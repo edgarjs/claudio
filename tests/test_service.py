@@ -3,22 +3,20 @@
 
 import json
 import os
-import subprocess
 import sys
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from lib.config import ClaudioConfig, parse_env_file
+from lib.config import ClaudioConfig
 from lib.service import (
-    CRON_MARKER, SYSTEMD_UNIT,
-    _claudio_bin, _is_darwin, _project_dir,
+    CRON_MARKER, _claudio_bin, _project_dir,
     claude_hooks_install, cron_install, cron_uninstall,
     register_webhook, register_all_webhooks,
     service_install_systemd, service_status, service_uninstall,
-    symlink_install, symlink_uninstall,
+    symlink_uninstall,
 )
 
 

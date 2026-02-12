@@ -74,7 +74,7 @@ class TestGracefulShutdown(unittest.TestCase):
         time.sleep(0.1)
 
         with server.queue_lock:
-            threads = list(server.active_threads)
+            _ = list(server.active_threads)  # verify threads are tracked
 
         # Thread should exist and be non-daemon
         # (it may have already finished since mock returns immediately)

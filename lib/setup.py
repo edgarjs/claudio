@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
-from lib.config import ClaudioConfig, BotConfig, parse_env_file, save_bot_env, _env_quote
+from lib.config import parse_env_file, save_bot_env
 from lib.util import print_error, print_success, print_warning
 
 TELEGRAM_API = "https://api.telegram.org/bot"

@@ -3,9 +3,8 @@
 
 import os
 import sys
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 # Add parent dir to path so we can import lib/backup.py
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -515,7 +514,7 @@ class TestBackupCronInstall:
         # Should have the other job plus the new entry
         assert len(written_lines) == 2
         assert '30 * * * * /bin/other-job' in written_lines
-        marker_entries = [l for l in written_lines if backup.BACKUP_CRON_MARKER in l]
+        marker_entries = [x for x in written_lines if backup.BACKUP_CRON_MARKER in x]
         assert len(marker_entries) == 1
 
     def test_empty_dest_returns_error(self, capsys):

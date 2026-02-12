@@ -1032,7 +1032,7 @@ _ALEXA_CERT_CACHE_TTL = 3600  # 1 hour
 def _verify_alexa_signature(cert_url, signature_b64, body):
     """Full cryptographic verification of Alexa request signature."""
     from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
 
     # Get or fetch the signing certificate

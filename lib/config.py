@@ -5,8 +5,6 @@ Provides BotConfig (per-bot) and ClaudioConfig (global installation).
 
 import os
 import re
-import secrets
-import shutil
 import sys
 
 # Only allow alphanumeric keys with underscores (standard env var names)
