@@ -797,16 +797,31 @@ telegram_setup() {
         mkdir -p "$bot_dir"
         chmod 700 "$bot_dir"
 
-        # Generate per-bot webhook secret
-        export WEBHOOK_SECRET
-        WEBHOOK_SECRET=$(openssl rand -hex 32) || {
-            print_error "Failed to generate WEBHOOK_SECRET"
-            exit 1
-        }
-
+        # Load existing config to preserve other platform's credentials
         export CLAUDIO_BOT_ID="$bot_id"
         export CLAUDIO_BOT_DIR="$bot_dir"
         export CLAUDIO_DB_FILE="$bot_dir/history.db"
+        # Unset OTHER platform's credentials to prevent stale values from leaking
+        # (Don't unset Telegram vars - they were just set above!)
+        unset WEBHOOK_SECRET WHATSAPP_PHONE_NUMBER_ID WHATSAPP_ACCESS_TOKEN \
+            WHATSAPP_APP_SECRET WHATSAPP_VERIFY_TOKEN WHATSAPP_PHONE_NUMBER
+        if [ -f "$bot_dir/bot.env" ]; then
+            # shellcheck source=/dev/null
+            source "$bot_dir/bot.env" 2>/dev/null || true
+        fi
+
+        # Re-apply new Telegram credentials (source may have overwritten them during re-configuration)
+        export TELEGRAM_BOT_TOKEN="$token"
+        export TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
+
+        # Generate per-bot webhook secret (only if not already set)
+        if [ -z "${WEBHOOK_SECRET:-}" ]; then
+            export WEBHOOK_SECRET
+            WEBHOOK_SECRET=$(openssl rand -hex 32) || {
+                print_error "Failed to generate WEBHOOK_SECRET"
+                exit 1
+            }
+        fi
 
         claudio_save_bot_env
 

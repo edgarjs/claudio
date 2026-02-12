@@ -9,6 +9,11 @@ PORT="${PORT:-8421}"
 MODEL="${MODEL:-haiku}"
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+WHATSAPP_PHONE_NUMBER_ID="${WHATSAPP_PHONE_NUMBER_ID:-}"
+WHATSAPP_ACCESS_TOKEN="${WHATSAPP_ACCESS_TOKEN:-}"
+WHATSAPP_APP_SECRET="${WHATSAPP_APP_SECRET:-}"
+WHATSAPP_VERIFY_TOKEN="${WHATSAPP_VERIFY_TOKEN:-}"
+WHATSAPP_PHONE_NUMBER="${WHATSAPP_PHONE_NUMBER:-}"
 WEBHOOK_URL="${WEBHOOK_URL:-}"
 TUNNEL_NAME="${TUNNEL_NAME:-}"
 TUNNEL_HOSTNAME="${TUNNEL_HOSTNAME:-}"
@@ -161,9 +166,21 @@ claudio_save_bot_env() {
     (
         umask 077
         {
-            printf 'TELEGRAM_BOT_TOKEN="%s"\n' "$(_env_quote "$TELEGRAM_BOT_TOKEN")"
-            printf 'TELEGRAM_CHAT_ID="%s"\n' "$(_env_quote "$TELEGRAM_CHAT_ID")"
-            printf 'WEBHOOK_SECRET="%s"\n' "$(_env_quote "$WEBHOOK_SECRET")"
+            # Telegram bot fields
+            if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+                printf 'TELEGRAM_BOT_TOKEN="%s"\n' "$(_env_quote "$TELEGRAM_BOT_TOKEN")"
+                printf 'TELEGRAM_CHAT_ID="%s"\n' "$(_env_quote "$TELEGRAM_CHAT_ID")"
+                printf 'WEBHOOK_SECRET="%s"\n' "$(_env_quote "$WEBHOOK_SECRET")"
+            fi
+            # WhatsApp bot fields
+            if [ -n "$WHATSAPP_PHONE_NUMBER_ID" ]; then
+                printf 'WHATSAPP_PHONE_NUMBER_ID="%s"\n' "$(_env_quote "$WHATSAPP_PHONE_NUMBER_ID")"
+                printf 'WHATSAPP_ACCESS_TOKEN="%s"\n' "$(_env_quote "$WHATSAPP_ACCESS_TOKEN")"
+                printf 'WHATSAPP_APP_SECRET="%s"\n' "$(_env_quote "$WHATSAPP_APP_SECRET")"
+                printf 'WHATSAPP_VERIFY_TOKEN="%s"\n' "$(_env_quote "$WHATSAPP_VERIFY_TOKEN")"
+                printf 'WHATSAPP_PHONE_NUMBER="%s"\n' "$(_env_quote "$WHATSAPP_PHONE_NUMBER")"
+            fi
+            # Common fields
             printf 'MODEL="%s"\n' "$(_env_quote "$MODEL")"
             printf 'MAX_HISTORY_LINES="%s"\n' "$(_env_quote "$MAX_HISTORY_LINES")"
         } > "$CLAUDIO_BOT_DIR/bot.env"

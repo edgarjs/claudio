@@ -23,6 +23,8 @@ source "$LIB_DIR/history.sh"
 source "$LIB_DIR/claude.sh"
 # shellcheck source=lib/telegram.sh
 source "$LIB_DIR/telegram.sh"
+# shellcheck source=lib/whatsapp.sh
+source "$LIB_DIR/whatsapp.sh"
 # shellcheck source=lib/server.sh
 source "$LIB_DIR/server.sh"
 # shellcheck source=lib/service.sh
@@ -51,6 +53,7 @@ Commands:
   update             Update to the latest release
   restart            Restart the service
   telegram setup     Set up Telegram bot and webhook
+  whatsapp setup     Set up WhatsApp Business API webhook
   log [-f] [-n N]    Show logs (-f to follow, -n for line count)
   backup <dest>      Run backup (--hours N, --days N for retention)
   backup status <dest> Show backup status
@@ -98,7 +101,15 @@ case "${1:-}" in
         history_init
         memory_init
         body=$(cat)
-        telegram_handle_webhook "$body"
+        # Call appropriate handler based on platform passed from server.py
+        platform="${2:-}"
+        if [ "$platform" = "whatsapp" ]; then
+            whatsapp_handle_webhook "$body"
+        elif [ "$platform" = "telegram" ]; then
+            telegram_handle_webhook "$body"
+        else
+            log_error "webhook" "Unknown platform '$platform' for bot $CLAUDIO_BOT_ID"
+        fi
         ;;
     status)
         service_status
@@ -202,6 +213,17 @@ case "${1:-}" in
                 ;;
             *)
                 echo "Usage: claudio telegram setup"
+                exit 1
+                ;;
+        esac
+        ;;
+    whatsapp)
+        case "${2:-}" in
+            setup)
+                whatsapp_setup
+                ;;
+            *)
+                echo "Usage: claudio whatsapp setup"
                 exit 1
                 ;;
         esac

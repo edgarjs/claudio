@@ -2,15 +2,16 @@
 
 ![](header.png)
 
-Claudio is an adapter for Claude Code CLI and Telegram. It makes a tunnel between a private network and Telegram's API. So that users can chat with Claude Code remotely, in a safe way.
+Claudio is an adapter for Claude Code CLI and messaging platforms (Telegram and WhatsApp Business API). It makes a tunnel between a private network and messaging APIs, allowing users to chat with Claude Code remotely in a safe way.
 
 ```
                        +---------------------------------------------+
                        |              Remote Machine                 |
                        |                                             |
-                       |                                             |
   +----------+         |    +---------+       +-----------------+    |
-  | Telegram |<--------+--->| Claudio |<----->| Claude Code CLI |    |
+  | Telegram |<--------+--->|         |       |                 |    |
+  +----------+         |    | Claudio |<----->| Claude Code CLI |    |
+  | WhatsApp |<--------+--->|         |       |                 |    |
   +----------+         |    +---------+       +-----------------+    |
                        +---------------------------------------------+
 ```
@@ -21,9 +22,9 @@ Claudio is an adapter for Claude Code CLI and Telegram. It makes a tunnel betwee
 
 ## Overview
 
-Claudio starts a local HTTP server that listens on port 8421, and creates a tunnel using [cloudflared](https://github.com/cloudflare/cloudflared). When a user sends a message from Telegram, it's sent to `<cloudflare-tunnel-url>/telegram/webhook` and forwarded to the Claude Code CLI.
+Claudio starts a local HTTP server that listens on port 8421, and creates a tunnel using [cloudflared](https://github.com/cloudflare/cloudflared). When a user sends a message from Telegram or WhatsApp, it's sent to `<cloudflare-tunnel-url>/telegram/webhook` or `<cloudflare-tunnel-url>/whatsapp/webhook` and forwarded to the Claude Code CLI.
 
-Claudio supports **multiple bots**: each bot has its own Telegram token, chat ID, webhook secret, conversation history, and configuration. Incoming webhooks are matched to bots via HMAC secret-token header matching, and each bot maintains independent conversation context.
+Claudio supports **multiple bots** and **dual-platform bots**: each bot can have Telegram credentials, WhatsApp credentials, or both. Bots maintain their own conversation history and configuration. Incoming webhooks are matched to bots via HMAC secret-token header matching (Telegram) or signature verification (WhatsApp), and each bot maintains independent conversation context. Dual-platform bots share the same conversation history across both platforms.
 
 User messages are passed as one-shot prompts, along with conversation context to maintain continuity. All messages are stored in a per-bot SQLite database, with the last 100 used as conversation context (configurable via `MAX_HISTORY_LINES`).
 
@@ -81,23 +82,54 @@ This will:
 
 > **Multi-bot support:** To configure additional bots, run `claudio install <bot_id>` with a unique bot identifier (alphanumeric, hyphens, and underscores only). Each bot will have its own Telegram credentials, conversation history, and configuration stored in `~/.claudio/bots/<bot_id>/`.
 
-2. Set up Telegram bot credentials
+2. Set up messaging platform credentials
 
-The install wizard will guide you through Telegram bot setup. If you skipped it or need to reconfigure, in Telegram, message `@BotFather` with `/newbot` and follow instructions to create a bot. At the end, you'll be given a secret token.
+The install wizard will guide you through bot setup and ask which platform(s) you want to configure:
+- **Telegram only**: Traditional bot setup via @BotFather
+- **WhatsApp Business API only**: Requires Meta Business account and WhatsApp Business API credentials
+- **Both platforms**: Configure both in sequence for a dual-platform bot
 
-For the default bot (or when reconfiguring an existing bot), run:
+#### Telegram Setup
+
+In Telegram, message `@BotFather` with `/newbot` and follow instructions to create a bot. At the end, you'll be given a secret token.
+
+For the default bot or when reconfiguring, run:
 
 ```bash
 claudio telegram setup
 ```
 
-For additional bots, use `claudio install <bot_id>` which will interactively configure the new bot's Telegram credentials.
-
 Paste your Telegram token when asked, and press Enter. Then, send a `/start` message to your bot from the Telegram account that you'll use to communicate with Claude Code.
 
-The setup wizard will confirm when it receives the message and finish. Once done, the service restarts automatically, and you can start chatting with Claude Code.
+The setup wizard will confirm when it receives the message and finish.
 
 > For security, only the `chat_id` captured during setup is authorized to send messages.
+
+#### WhatsApp Setup
+
+For WhatsApp Business API, you'll need:
+- Phone Number ID (from Meta Business Suite)
+- Access Token (permanent token from Meta for Developers)
+- App Secret (from your Meta app settings)
+- Authorized phone number (your WhatsApp number for testing)
+
+Run:
+
+```bash
+claudio whatsapp setup
+```
+
+The wizard will validate credentials and provide webhook configuration details for Meta for Developers.
+
+> For security, only the authorized phone number configured during setup can send messages.
+
+#### Dual-Platform Bots
+
+A single bot can serve both platforms, sharing conversation history across Telegram and WhatsApp. During `claudio install <bot_id>`, choose option 3 to configure both, or add a platform later using the platform-specific setup commands.
+
+See [DUAL_PLATFORM_SETUP.md](DUAL_PLATFORM_SETUP.md) for detailed dual-platform configuration.
+
+Once setup is done, the service restarts automatically, and you can start chatting with Claude Code from either platform.
 
 > A cron job runs every minute to monitor the webhook endpoint. It verifies the webhook is registered and re-registers it if needed. If the server is unreachable, it auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After exhausting restart attempts without recovery, it sends a Telegram alert and stops retrying until the server responds with HTTP 200. The restart counter auto-clears when the health endpoint returns HTTP 200. You can also reset it manually by deleting `$HOME/.claudio/.last_restart_attempt` and `$HOME/.claudio/.restart_fail_count`.
 >
@@ -371,11 +403,19 @@ claudio restart
 
 - `TELEGRAM_BOT_TOKEN` — Telegram Bot API token. Set automatically during `claudio telegram setup`.
 - `TELEGRAM_CHAT_ID` — Authorized Telegram chat ID. Only messages from this chat are processed. Set automatically during `claudio telegram setup`.
-- `WEBHOOK_SECRET` — HMAC secret for validating incoming webhook requests. Auto-generated during bot setup.
+- `WEBHOOK_SECRET` — HMAC secret for validating incoming Telegram webhook requests. Auto-generated during bot setup.
+
+**WhatsApp**
+
+- `WHATSAPP_PHONE_NUMBER_ID` — WhatsApp Phone Number ID from Meta Business Suite. Set automatically during `claudio whatsapp setup`.
+- `WHATSAPP_ACCESS_TOKEN` — WhatsApp Access Token (permanent token from Meta for Developers). Set automatically during `claudio whatsapp setup`.
+- `WHATSAPP_APP_SECRET` — App Secret from Meta app settings, used for webhook signature verification. Set automatically during `claudio whatsapp setup`.
+- `WHATSAPP_VERIFY_TOKEN` — Verify token for webhook registration challenge. Auto-generated during `claudio whatsapp setup`.
+- `WHATSAPP_PHONE_NUMBER` — Authorized WhatsApp phone number. Only messages from this number are processed. Set automatically during `claudio whatsapp setup`.
 
 **Claude**
 
-- `MODEL` — Claude model to use for this bot. Accepts `haiku`, `sonnet`, or `opus`. Default: `haiku`. Can also be changed at runtime via Telegram commands `/haiku`, `/sonnet`, `/opus`.
+- `MODEL` — Claude model to use for this bot. Accepts `haiku`, `sonnet`, or `opus`. Default: `haiku`. Can also be changed at runtime via commands `/haiku`, `/sonnet`, `/opus` (works on both platforms).
 - `MAX_HISTORY_LINES` — Number of recent messages used as conversation context for this bot. Default: `100`.
 
 ---
@@ -428,6 +468,7 @@ bats tests/db.bats
 - [x] Tool usage capture in conversation history (PostToolUse hook)
 - [x] Health check log analysis (error detection, restart loops, API slowness)
 - [x] Claude code review for Pull Requests (GitHub Actions)
+- [x] WhatsApp Business API integration with dual-platform support (single bot serving both Telegram and WhatsApp)
 
 **Future**
 

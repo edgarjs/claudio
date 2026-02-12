@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import base64
+import hashlib
 import hmac
 import json
 import os
@@ -40,13 +41,17 @@ MANAGEMENT_SECRET = os.environ.get("MANAGEMENT_SECRET", "")
 
 # Multi-bot registry: loaded from ~/.claudio/bots/*/bot.env
 # bots: dict of bot_id -> {"token": str, "chat_id": str, "secret": str, ...}
-# bots_by_secret: list of (secret, bot_id) for dispatch
+# bots_by_secret: list of (secret, bot_id) for Telegram dispatch
+# whatsapp_bots: dict of bot_id -> {"phone_number_id": str, "app_secret": str, ...}
+# whatsapp_bots_by_verify: list of (verify_token, bot_id) for WhatsApp verification
 bots = {}
 bots_by_secret = []
+whatsapp_bots = {}
+whatsapp_bots_by_verify = []
 bots_lock = threading.Lock()
 
 # Per-chat message queues for serial processing
-chat_queues = {}  # queue_key -> deque of (webhook_body, bot_id)
+chat_queues = {}  # queue_key -> deque of (webhook_body, bot_id, platform)
 chat_active = {}  # queue_key -> bool, True if a processor thread is running
 active_threads = []  # Non-daemon processor threads to wait on during shutdown
 queue_lock = threading.Lock()
@@ -105,16 +110,20 @@ def is_valid_bot_id(bot_id):
 
 
 def load_bots():
-    """Scan ~/.claudio/bots/*/bot.env and build bot registry."""
-    global bots, bots_by_secret
+    """Scan ~/.claudio/bots/*/bot.env and build bot registry (Telegram and WhatsApp)."""
+    global bots, bots_by_secret, whatsapp_bots, whatsapp_bots_by_verify
     bots_dir = os.path.join(CLAUDIO_PATH, "bots")
     new_bots = {}
     new_by_secret = []
+    new_whatsapp_bots = {}
+    new_whatsapp_by_verify = []
 
     if not os.path.isdir(bots_dir):
         with bots_lock:
             bots = new_bots
             bots_by_secret = new_by_secret
+            whatsapp_bots = new_whatsapp_bots
+            whatsapp_bots_by_verify = new_whatsapp_by_verify
         return
 
     bots_dir_real = os.path.realpath(bots_dir)
@@ -140,27 +149,66 @@ def load_bots():
         if not os.path.isfile(bot_env):
             continue
         cfg = parse_env_file(bot_env)
+
+        bot_dir_path = os.path.join(bots_dir, entry)
+        model = cfg.get("MODEL", "haiku")
+        max_history = cfg.get("MAX_HISTORY_LINES", "100")
+        loaded_any = False
+
+        # Try loading Telegram credentials
         token = cfg.get("TELEGRAM_BOT_TOKEN", "")
         chat_id = cfg.get("TELEGRAM_CHAT_ID", "")
         secret = cfg.get("WEBHOOK_SECRET", "")
-        if not token or not secret:
-            sys.stderr.write(f"[bots] Skipping bot '{entry}': missing token or secret\n")
-            continue
-        new_bots[entry] = {
-            "token": token,
-            "chat_id": chat_id,
-            "secret": secret,
-            "model": cfg.get("MODEL", "haiku"),
-            "max_history_lines": cfg.get("MAX_HISTORY_LINES", "100"),
-            "bot_dir": os.path.join(bots_dir, entry),
-        }
-        new_by_secret.append((secret, entry))
+        if token and secret:
+            new_bots[entry] = {
+                "token": token,
+                "chat_id": chat_id,
+                "secret": secret,
+                "model": model,
+                "max_history_lines": max_history,
+                "bot_dir": bot_dir_path,
+                "type": "telegram",
+            }
+            new_by_secret.append((secret, entry))
+            loaded_any = True
+
+        # Try loading WhatsApp credentials (can coexist with Telegram)
+        phone_id = cfg.get("WHATSAPP_PHONE_NUMBER_ID", "")
+        access_token = cfg.get("WHATSAPP_ACCESS_TOKEN", "")
+        app_secret = cfg.get("WHATSAPP_APP_SECRET", "")
+        verify_token = cfg.get("WHATSAPP_VERIFY_TOKEN", "")
+        phone_number = cfg.get("WHATSAPP_PHONE_NUMBER", "")
+
+        if phone_id and access_token and app_secret and verify_token:
+            new_whatsapp_bots[entry] = {
+                "phone_number_id": phone_id,
+                "access_token": access_token,
+                "app_secret": app_secret,
+                "verify_token": verify_token,
+                "phone_number": phone_number,
+                "model": model,
+                "max_history_lines": max_history,
+                "bot_dir": bot_dir_path,
+                "type": "whatsapp",
+            }
+            new_whatsapp_by_verify.append((verify_token, entry))
+            loaded_any = True
+
+        if not loaded_any:
+            sys.stderr.write(f"[bots] Skipping bot '{entry}': no valid credentials found\n")
 
     with bots_lock:
         bots = new_bots
         bots_by_secret = new_by_secret
+        whatsapp_bots = new_whatsapp_bots
+        whatsapp_bots_by_verify = new_whatsapp_by_verify
 
-    sys.stderr.write(f"[bots] Loaded {len(new_bots)} bot(s): {', '.join(new_bots.keys())}\n")
+    # Count unique bot_ids (a bot can have both platforms)
+    all_bot_ids = set(new_bots.keys()) | set(new_whatsapp_bots.keys())
+    sys.stderr.write(
+        f"[bots] Loaded {len(all_bot_ids)} bot(s): "
+        f"{len(new_bots)} Telegram endpoint(s), {len(new_whatsapp_bots)} WhatsApp endpoint(s)\n"
+    )
 
 
 def match_bot_by_secret(token_header):
@@ -171,6 +219,37 @@ def match_bot_by_secret(token_header):
         for secret, bot_id in bots_by_secret:
             if hmac.compare_digest(token_header, secret):
                 return bot_id, bots[bot_id]
+    return None, None
+
+
+def match_whatsapp_bot_by_verify_token(verify_token):
+    """Find WhatsApp bot matching the verify token. Returns (bot_id, bot_config) or (None, None)."""
+    if not verify_token:
+        return None, None
+    with bots_lock:
+        for token, bot_id in whatsapp_bots_by_verify:
+            if hmac.compare_digest(verify_token, token):
+                return bot_id, whatsapp_bots[bot_id]
+    return None, None
+
+
+def match_whatsapp_bot_by_signature(body, signature):
+    """Find WhatsApp bot by verifying HMAC signature. Returns (bot_id, bot_config) or (None, None)."""
+    if not signature:
+        return None, None
+    with bots_lock:
+        for bot_id, bot_config in whatsapp_bots.items():
+            app_secret = bot_config.get("app_secret", "")
+            if not app_secret:
+                continue
+            # Compute HMAC-SHA256
+            expected = hmac.new(
+                app_secret.encode("utf-8"),
+                body.encode("utf-8"),
+                hashlib.sha256
+            ).hexdigest()
+            if hmac.compare_digest(signature, expected):
+                return bot_id, bot_config
     return None, None
 
 
@@ -208,7 +287,7 @@ def _process_queue_loop(queue_key):
                     del chat_queues[queue_key]
                 chat_active.pop(queue_key, None)
                 return
-            body, bot_id = chat_queues[queue_key].popleft()
+            body, bot_id, platform = chat_queues[queue_key].popleft()
 
         proc = None
         try:
@@ -224,7 +303,7 @@ def _process_queue_loop(queue_key):
                 env["CLAUDIO_BOT_ID"] = bot_id
 
                 proc = subprocess.Popen(
-                    [CLAUDIO_BIN, "_webhook"],
+                    [CLAUDIO_BIN, "_webhook", platform],
                     stdin=subprocess.PIPE,
                     stdout=log_fh,
                     stderr=log_fh,
@@ -373,10 +452,10 @@ def enqueue_webhook(body, bot_id, bot_config):
             timer.start()
         return
 
-    _enqueue_single(body, chat_id, bot_id)
+    _enqueue_single(body, chat_id, bot_id, "telegram")
 
 
-def _enqueue_single(body, chat_id, bot_id):
+def _enqueue_single(body, chat_id, bot_id, platform):
     """Enqueue a single (possibly merged) webhook body for processing."""
     queue_key = f"{bot_id}:{chat_id}"
     with queue_lock:
@@ -400,7 +479,7 @@ def _enqueue_single(body, chat_id, bot_id):
                 bot_id
             ))
 
-        chat_queues[queue_key].append((body, bot_id))
+        chat_queues[queue_key].append((body, bot_id, platform))
 
         if not chat_active.get(queue_key):
             chat_active[queue_key] = True
@@ -411,6 +490,81 @@ def _enqueue_single(body, chat_id, bot_id):
             )
             active_threads.append(thread)
             thread.start()
+
+
+def enqueue_whatsapp_webhook(body, bot_id, bot_config):
+    """Add WhatsApp webhook to per-chat queue and start processor if needed."""
+    try:
+        data = json.loads(body)
+        # Extract phone number from first message
+        phone_number = ""
+        for entry in data.get("entry", []):
+            for change in entry.get("changes", []):
+                messages = change.get("value", {}).get("messages", [])
+                if messages:
+                    phone_number = messages[0].get("from", "")
+                    break
+            if phone_number:
+                break
+
+        if not phone_number:
+            return  # No message found
+
+        # Validate phone number against authorized number (defense in depth)
+        # Fail closed: reject if no phone number configured
+        bot_phone = bot_config.get("phone_number", "")
+        if not bot_phone:
+            sys.stderr.write(log_msg(
+                "whatsapp",
+                "Bot has no authorized phone number configured, rejecting message",
+                bot_id
+            ))
+            return
+
+        if phone_number != bot_phone:
+            sys.stderr.write(log_msg(
+                "whatsapp",
+                f"Rejected message from unauthorized number: {phone_number}",
+                bot_id
+            ))
+            return
+
+        # Use phone number as chat_id for queue isolation
+        queue_key = f"{bot_id}:{phone_number}"
+
+        with queue_lock:
+            if shutting_down:
+                sys.stderr.write(log_msg("queue", f"Rejecting webhook during shutdown for {queue_key}", bot_id))
+                return
+
+            # Initialize queue if needed
+            if queue_key not in chat_queues:
+                chat_queues[queue_key] = deque()
+
+            # Prevent unbounded queue growth
+            queue_size = len(chat_queues[queue_key])
+            if queue_size >= MAX_QUEUE_SIZE:
+                sys.stderr.write(log_msg(
+                    "queue",
+                    f"Queue full for {queue_key} ({queue_size}/{MAX_QUEUE_SIZE}), dropping message",
+                    bot_id
+                ))
+                return
+
+            chat_queues[queue_key].append((body, bot_id, "whatsapp"))
+
+            if not chat_active.get(queue_key):
+                chat_active[queue_key] = True
+                thread = threading.Thread(
+                    target=process_queue,
+                    args=(queue_key,),
+                    daemon=False,
+                )
+                active_threads.append(thread)
+                thread.start()
+
+    except (json.JSONDecodeError, KeyError, IndexError) as e:
+        sys.stderr.write(log_msg("whatsapp", f"Error parsing webhook: {e}", bot_id))
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -458,6 +612,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._respond(200, {"ok": True})
             enqueue_webhook(body, bot_id, bot_config)
+        elif self.path == "/whatsapp/webhook":
+            self._handle_whatsapp()
         elif self.path == "/alexa":
             self._handle_alexa()
         else:
@@ -578,11 +734,89 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _handle_whatsapp_verify(self):
+        """Handle WhatsApp webhook verification challenge."""
+        # Parse query parameters
+        parsed_url = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed_url.query)
+
+        mode = params.get("hub.mode", [""])[0]
+        token = params.get("hub.verify_token", [""])[0]
+        challenge = params.get("hub.challenge", [""])[0]
+
+        sys.stderr.write(f"[whatsapp] Verification request: mode={mode} token={'***' if token else 'empty'}\n")
+
+        # Find bot with matching verify token
+        bot_id, bot_config = match_whatsapp_bot_by_verify_token(token)
+
+        if mode == "subscribe" and bot_id is not None and challenge:
+            sys.stderr.write(f"[whatsapp] Verification successful for bot {bot_id}\n")
+            # Respond with the challenge token to complete verification
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(challenge)))
+            self.end_headers()
+            self.wfile.write(challenge.encode("utf-8"))
+        else:
+            sys.stderr.write("[whatsapp] Verification failed: invalid token or missing parameters\n")
+            self._respond(403, {"error": "verification failed"})
+
+    def _handle_whatsapp(self):
+        """Handle WhatsApp webhook messages with signature verification."""
+        if shutting_down:
+            self._respond(503, {"error": "shutting down"})
+            return
+
+        body = self._read_body()
+        if body is None:
+            return
+
+        # Verify signature - ensure constant-time operations throughout
+        signature = self.headers.get("X-Hub-Signature-256", "")
+        # Always perform same operations regardless of prefix validity
+        if signature.startswith("sha256="):
+            signature = signature[7:]  # Remove "sha256=" prefix
+        else:
+            signature = ""  # Invalid but continue to timing-consistent path
+
+        # Find bot by verifying signature against all WhatsApp bots
+        bot_id, bot_config = match_whatsapp_bot_by_signature(body, signature)
+        if bot_id is None:
+            # Same error for all failure modes to prevent timing attacks
+            self._respond(401, {"error": "authentication failed"})
+            return
+
+        # Check if this is a message or status update
+        try:
+            data = json.loads(body)
+            # WhatsApp sends status updates and messages in the same webhook
+            # Only process if there are actual messages
+            has_messages = False
+            if data.get("entry", []):
+                for entry in data["entry"]:
+                    for change in entry.get("changes", []):
+                        if change.get("value", {}).get("messages"):
+                            has_messages = True
+                            break
+
+            if not has_messages:
+                # Status update or other notification, acknowledge but don't process
+                self._respond(200, {"status": "ok"})
+                return
+        except json.JSONDecodeError:
+            self._respond(400, {"error": "invalid json"})
+            return
+
+        self._respond(200, {"status": "ok"})
+        enqueue_whatsapp_webhook(body, bot_id, bot_config)
+
     def do_GET(self):
         if self.path == "/health":
             health = check_health()
             code = 200 if health["status"] == "healthy" else 503
             self._respond(code, health)
+        elif self.path.startswith("/whatsapp/webhook"):
+            self._handle_whatsapp_verify()
         elif self.path == "/reload":
             # Require MANAGEMENT_SECRET to access this endpoint
             if not MANAGEMENT_SECRET:
