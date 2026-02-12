@@ -17,7 +17,7 @@ Contributions are welcome! Bug reports, feature requests, documentation fixes, a
 
 ## Development Setup
 
-Claudio is a shell/Python project with no build system. [ShellCheck](https://www.shellcheck.net/) is used for linting and runs automatically via a pre-commit hook.
+Claudio is a pure-Python project (stdlib only, no external dependencies except optional `fastembed`). No build system required.
 
 Run locally with:
 
@@ -29,28 +29,24 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 
 ## Project Structure
 
-- `claudio` — Main CLI entry point, dispatches subcommands
-- `lib/config.sh` — Multi-bot config management: global (`service.env`) and per-bot (`bots/<bot_id>/bot.env`) configuration, migration, loading, saving, listing, bot_id validation for security
-- `lib/server.sh` — Starts the Python HTTP server and cloudflared tunnel, multi-bot webhook registration
+- `claudio` — Python CLI entry point, dispatches subcommands via `lib/cli.py`
+- `lib/cli.py` — CLI dispatch logic with lazy imports per command for fast startup
+- `lib/config.py` — `ClaudioConfig` class for global config, `BotConfig` for per-bot config, env file parsing, bot_id validation
 - `lib/server.py` — Python HTTP server (stdlib `http.server`, port 8421), multi-bot dispatch via secret-token matching, SIGHUP hot-reload, `/reload` endpoint
 - `lib/handlers.py` — Webhook orchestrator: unified pipeline for Telegram and WhatsApp
-- `lib/telegram.sh` — Telegram Bot API: `telegram_api()`, `telegram_send_message()` (used by setup wizard + health-check alerts), and `telegram_setup()`
-- `lib/whatsapp.sh` — WhatsApp Business API: `whatsapp_api()`, `whatsapp_send_message()`, and `whatsapp_setup()`
-- `lib/telegram_api.py` — Python Telegram Bot API client with retry logic
-- `lib/whatsapp_api.py` — Python WhatsApp Business API client with retry logic
-- `lib/elevenlabs.py` — Python ElevenLabs TTS/STT integration
-- `lib/claude_runner.py` — Python Claude CLI runner with JSON parsing
-- `lib/config.py` — Python BotConfig class for typed bot configuration
-- `lib/util.py` — Shared Python utilities (sanitization, validation, multipart encoding, logging)
-- `lib/history.sh` — Conversation history management, delegates to `lib/db.sh`, per-bot history database
-- `lib/db.sh` — SQLite database layer for conversation storage
-- `lib/log.sh` — Centralized logging
-- `lib/health-check.sh` — Cron health-check script (every minute) for webhook monitoring; auto-restarts service if unreachable (throttled to once per 3 minutes, max 3 attempts), sends Telegram alert on failure
-- `lib/backup.sh` — Automated backup management: rsync-based hourly/daily rotating backups with cron scheduling
-- `lib/memory.sh` — Cognitive memory system (bash glue), invokes `lib/memory.py`
-- `lib/memory.py` — Python memory backend: embeddings, retrieval, consolidation
-- `lib/db.py` — Python SQLite helper with parameterized queries
-- `lib/service.sh` — systemd/launchd service management, cloudflared setup, `bot_setup()` wizard, per-bot uninstall
+- `lib/telegram_api.py` — `TelegramClient` class with retry logic (send, download, typing, reactions)
+- `lib/whatsapp_api.py` — `WhatsAppClient` class with retry logic (send, download, mark read)
+- `lib/elevenlabs.py` — ElevenLabs TTS/STT integration
+- `lib/claude_runner.py` — Claude CLI runner with JSON parsing
+- `lib/setup.py` — Interactive setup wizards for Telegram, WhatsApp, and multi-platform bots
+- `lib/service.py` — Service management: systemd/launchd, cloudflared tunnel, webhook registration, cron, hooks
+- `lib/backup.py` — Automated backup management: rsync-based hourly/daily rotating backups with cron scheduling
+- `lib/health_check.py` — Cron health-check script: auto-restart, disk/log/backup monitoring, Telegram alerts
+- `lib/util.py` — Shared utilities (sanitization, validation, multipart encoding, logging, CLI output)
+- `lib/db.py` — SQLite helper with parameterized queries and retry logic
+- `lib/memory.py` — Cognitive memory system: embeddings, retrieval, consolidation (optional fastembed)
+- `lib/mcp_tools.py` — MCP stdio server for Telegram notifications and service restart
+- `lib/hooks/post-tool-use.py` — PostToolUse hook for tool usage tracking
 
 **Multi-bot directory structure:**
 - `~/.claudio/service.env` — Global configuration
@@ -60,59 +56,40 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 
 ## Running Tests
 
-Claudio uses [BATS](https://github.com/bats-core/bats-core) for Bash tests and [pytest](https://docs.pytest.org/) for Python tests.
+Claudio uses [pytest](https://docs.pytest.org/) for testing.
 
 ```bash
-# Install BATS (macOS)
-brew install bats-core
-
-# Install BATS (Linux/Debian/Ubuntu)
-sudo apt-get install bats
-
-# Run Bash tests
-bats tests/
-
-# Run Python tests
+# Run all tests
 python3 -m pytest tests/ -v
 
 # Run a specific test file
-bats tests/db.bats
 python3 -m pytest tests/test_handlers.py -v
+
+# Run tests matching a pattern
+python3 -m pytest tests/ -k "test_webhook" -v
 ```
 
-Tests are located in the `tests/` directory. Key test suites:
+Tests are located in the `tests/` directory:
 
-**Bash (BATS):**
-- `tests/multibot.bats` — Multi-bot config: migration, loading, saving, listing (19 tests)
-- `tests/db.bats` — SQLite conversation storage
-- `tests/telegram.bats` — Telegram API integration
-- `tests/health-check.bats` — Health check and monitoring
-- `tests/memory.bats` — Cognitive memory system
-
-**Python (pytest):**
+- `tests/test_config.py` — Config management, multi-bot migration, env file I/O
 - `tests/test_util.py` — Shared utilities (sanitization, validation, multipart encoder)
-- `tests/test_config.py` — BotConfig and env file parsing
+- `tests/test_setup.py` — Setup wizards (Telegram, WhatsApp, bot selection)
+- `tests/test_service.py` — Service management (systemd, cron, webhooks, symlinks)
+- `tests/test_backup.py` — Backup operations (rsync, rotation, cron scheduling)
+- `tests/test_health_check.py` — Health check (restart throttling, disk/log/backup monitoring)
+- `tests/test_cli.py` — CLI dispatch, version, usage, argument parsing
+- `tests/test_server.py` — HTTP server routing and webhook dispatch
+- `tests/test_handlers.py` — Webhook orchestrator (integration tests)
 - `tests/test_telegram_api.py` — TelegramClient API calls
 - `tests/test_whatsapp_api.py` — WhatsAppClient API calls
 - `tests/test_elevenlabs.py` — ElevenLabs TTS/STT
 - `tests/test_claude_runner.py` — Claude CLI runner
-- `tests/test_handlers.py` — Webhook orchestrator (integration tests)
 
 When contributing, please:
 
 - Run existing tests before submitting changes
 - Add tests for new functionality when possible (especially multi-bot behavior)
 - Ensure all tests pass
-
-## Git Hooks
-
-The project includes a pre-commit hook that runs ShellCheck and tests before each commit. To enable it:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-This ensures tests pass before any commit is allowed.
 
 ## Making Changes
 

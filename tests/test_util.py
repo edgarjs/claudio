@@ -580,3 +580,26 @@ class TestStripMarkdown:
     def test_indented_list_markers(self):
         result = util.strip_markdown("  - nested item")
         assert result == "  nested item"
+
+
+# -- print_error, print_success, print_warning --
+
+
+class TestPrintHelpers:
+    def test_print_error(self, capsys):
+        util.print_error("something failed")
+        captured = capsys.readouterr()
+        assert "Error: something failed" in captured.err
+        assert captured.out == ""
+
+    def test_print_success(self, capsys):
+        util.print_success("it worked")
+        captured = capsys.readouterr()
+        assert "it worked" in captured.out
+        assert captured.err == ""
+
+    def test_print_warning(self, capsys):
+        util.print_warning("be careful")
+        captured = capsys.readouterr()
+        assert "Warning: be careful" in captured.out
+        assert captured.err == ""

@@ -1,10 +1,12 @@
-"""Bot configuration management for Claudio webhook handlers.
+"""Configuration management for Claudio.
 
-Provides a BotConfig dataclass that loads from bot.env + service.env.
+Provides BotConfig (per-bot) and ClaudioConfig (global installation).
 """
 
 import os
 import re
+import secrets
+import shutil
 import sys
 
 # Only allow alphanumeric keys with underscores (standard env var names)
@@ -247,3 +249,192 @@ def _env_quote(val):
     val = val.replace('`', '\\`')
     val = val.replace('\n', '\\n')
     return val
+
+
+def save_bot_env(bot_dir, fields):
+    """Write bot.env with proper escaping.
+
+    Args:
+        bot_dir: Path to the bot directory.
+        fields: Dict of KEY -> value to write.
+    """
+    os.makedirs(bot_dir, mode=0o700, exist_ok=True)
+    bot_env = os.path.join(bot_dir, 'bot.env')
+    old_umask = os.umask(0o077)
+    try:
+        with open(bot_env, 'w') as f:
+            for key, val in fields.items():
+                f.write(f'{key}="{_env_quote(val)}"\n')
+    finally:
+        os.umask(old_umask)
+
+
+class ClaudioConfig:
+    """Manages the Claudio installation directory and service configuration.
+
+    Ports claudio_init(), claudio_save_env(), claudio_list_bots(),
+    claudio_load_bot(), and _migrate_to_multi_bot() from config.sh.
+    """
+
+    # Keys managed in service.env (global, not per-bot)
+    _MANAGED_KEYS = [
+        'PORT', 'WEBHOOK_URL', 'TUNNEL_NAME', 'TUNNEL_HOSTNAME',
+        'WEBHOOK_RETRY_DELAY', 'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
+        'ELEVENLABS_MODEL', 'ELEVENLABS_STT_MODEL', 'MEMORY_ENABLED',
+        'MEMORY_EMBEDDING_MODEL', 'MEMORY_CONSOLIDATION_MODEL',
+    ]
+
+    # Legacy per-bot keys to strip during migration
+    _LEGACY_KEYS = [
+        'MODEL', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
+        'WEBHOOK_SECRET', 'MAX_HISTORY_LINES',
+    ]
+
+    # Default values for managed keys
+    _DEFAULTS = {
+        'PORT': '8421',
+        'WEBHOOK_URL': '',
+        'TUNNEL_NAME': '',
+        'TUNNEL_HOSTNAME': '',
+        'WEBHOOK_RETRY_DELAY': '60',
+        'ELEVENLABS_API_KEY': '',
+        'ELEVENLABS_VOICE_ID': 'iP95p4xoKVk53GoZ742B',
+        'ELEVENLABS_MODEL': 'eleven_multilingual_v2',
+        'ELEVENLABS_STT_MODEL': 'scribe_v1',
+        'MEMORY_ENABLED': '1',
+        'MEMORY_EMBEDDING_MODEL': 'sentence-transformers/all-MiniLM-L6-v2',
+        'MEMORY_CONSOLIDATION_MODEL': 'haiku',
+    }
+
+    def __init__(self, claudio_path=None):
+        self.claudio_path = claudio_path or os.path.join(
+            os.path.expanduser('~'), '.claudio')
+        self.env_file = os.path.join(self.claudio_path, 'service.env')
+        self.log_file = os.path.join(self.claudio_path, 'claudio.log')
+        self.env = {}  # Service env values
+
+    def init(self):
+        """Initialize Claudio directory structure and load config.
+
+        Creates ~/.claudio/ if needed, loads service.env, and auto-migrates
+        single-bot layouts to the multi-bot directory structure.
+        """
+        os.makedirs(self.claudio_path, mode=0o700, exist_ok=True)
+        self.env = parse_env_file(self.env_file)
+        self._migrate_to_multi_bot()
+
+    @property
+    def port(self):
+        return int(self.env.get('PORT', '8421'))
+
+    @property
+    def webhook_url(self):
+        return self.env.get('WEBHOOK_URL', '')
+
+    @webhook_url.setter
+    def webhook_url(self, value):
+        self.env['WEBHOOK_URL'] = value
+
+    @property
+    def tunnel_name(self):
+        return self.env.get('TUNNEL_NAME', '')
+
+    @tunnel_name.setter
+    def tunnel_name(self, value):
+        self.env['TUNNEL_NAME'] = value
+
+    @property
+    def tunnel_hostname(self):
+        return self.env.get('TUNNEL_HOSTNAME', '')
+
+    @tunnel_hostname.setter
+    def tunnel_hostname(self, value):
+        self.env['TUNNEL_HOSTNAME'] = value
+
+    def _migrate_to_multi_bot(self):
+        """Migrate single-bot config to bots/ directory layout.
+
+        Idempotent: skips if bots/ already exists or no token is configured.
+        """
+        bots_dir = os.path.join(self.claudio_path, 'bots')
+        if os.path.isdir(bots_dir):
+            return
+
+        token = self.env.get('TELEGRAM_BOT_TOKEN', '')
+        if not token:
+            return  # Fresh install, nothing to migrate
+
+        bot_dir = os.path.join(bots_dir, 'claudio')
+        os.makedirs(bot_dir, mode=0o700, exist_ok=True)
+
+        # Write per-bot env
+        fields = {
+            'TELEGRAM_BOT_TOKEN': token,
+            'TELEGRAM_CHAT_ID': self.env.get('TELEGRAM_CHAT_ID', ''),
+            'WEBHOOK_SECRET': self.env.get('WEBHOOK_SECRET', ''),
+            'MODEL': self.env.get('MODEL', 'haiku'),
+            'MAX_HISTORY_LINES': self.env.get('MAX_HISTORY_LINES', '100'),
+        }
+        save_bot_env(bot_dir, fields)
+
+        # Move history.db and WAL/SHM files to per-bot dir
+        for suffix in ('', '-wal', '-shm'):
+            src = os.path.join(self.claudio_path, f'history.db{suffix}')
+            if os.path.exists(src):
+                os.rename(src, os.path.join(bot_dir, f'history.db{suffix}'))
+
+        # Move CLAUDE.md to per-bot dir
+        claude_md = os.path.join(self.claudio_path, 'CLAUDE.md')
+        if os.path.isfile(claude_md):
+            os.rename(claude_md, os.path.join(bot_dir, 'CLAUDE.md'))
+
+        # Re-save service.env without per-bot keys
+        self.save_service_env()
+        sys.stderr.write(f"Migrated single-bot config to {bot_dir}\n")
+
+    def save_service_env(self):
+        """Write managed keys to service.env, preserving unmanaged keys.
+
+        Unmanaged keys (e.g. HASS_TOKEN) are kept as-is. Legacy per-bot
+        keys are stripped during migration.
+        """
+        all_keys = set(self._MANAGED_KEYS + self._LEGACY_KEYS)
+
+        # Collect unmanaged lines from existing file
+        extra_lines = []
+        if os.path.isfile(self.env_file):
+            with open(self.env_file) as f:
+                for line in f:
+                    line = line.rstrip('\n')
+                    # Extract key from KEY=... lines
+                    eq = line.find('=')
+                    key = line[:eq] if eq > 0 else ''
+                    if key not in all_keys:
+                        extra_lines.append(line)
+
+        old_umask = os.umask(0o077)
+        try:
+            with open(self.env_file, 'w') as f:
+                for key in self._MANAGED_KEYS:
+                    val = self.env.get(key, self._DEFAULTS.get(key, ''))
+                    f.write(f'{key}="{_env_quote(val)}"\n')
+                for line in extra_lines:
+                    f.write(line + '\n')
+        finally:
+            os.umask(old_umask)
+
+    def list_bots(self):
+        """List all configured bot IDs (sorted)."""
+        bots_dir = os.path.join(self.claudio_path, 'bots')
+        if not os.path.isdir(bots_dir):
+            return []
+        result = []
+        for name in sorted(os.listdir(bots_dir)):
+            bot_env = os.path.join(bots_dir, name, 'bot.env')
+            if os.path.isfile(bot_env):
+                result.append(name)
+        return result
+
+    def load_bot(self, bot_id):
+        """Load a bot's config as a BotConfig."""
+        return BotConfig.from_env_files(bot_id, claudio_path=self.claudio_path)

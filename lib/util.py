@@ -270,6 +270,21 @@ def make_tmp_dir(claudio_path):
 
 # -- Markdown stripping for TTS --
 
+def print_error(msg):
+    """Print an error message to stderr."""
+    print(f"\u203c\ufe0f Error: {msg}", file=sys.stderr)
+
+
+def print_success(msg):
+    """Print a success message to stdout."""
+    print(f"\u2705 {msg}")
+
+
+def print_warning(msg):
+    """Print a warning message to stdout."""
+    print(f"\u26a0\ufe0f  Warning: {msg}")
+
+
 def strip_markdown(text):
     """Strip markdown formatting for cleaner TTS output.
 

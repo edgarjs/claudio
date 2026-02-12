@@ -9,7 +9,7 @@ import pytest
 # Add parent dir to path so we can import lib/config.py
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from lib.config import BotConfig, _env_quote, parse_env_file
+from lib.config import BotConfig, ClaudioConfig, _env_quote, parse_env_file, save_bot_env
 
 
 # -- parse_env_file --
@@ -529,3 +529,316 @@ class TestBotConfigSaveModel:
         mode = os.stat(bot_env_path).st_mode & 0o777
         # umask 0o077 means file should be 0o600 (rw-------)
         assert mode == 0o600
+
+
+# -- save_bot_env --
+
+
+class TestSaveBotEnv:
+    def test_writes_fields(self, tmp_path):
+        bot_dir = str(tmp_path / "bot")
+        save_bot_env(bot_dir, {"KEY1": "val1", "KEY2": "val2"})
+        result = parse_env_file(os.path.join(bot_dir, "bot.env"))
+        assert result == {"KEY1": "val1", "KEY2": "val2"}
+
+    def test_creates_dir_if_missing(self, tmp_path):
+        bot_dir = str(tmp_path / "new" / "bot")
+        save_bot_env(bot_dir, {"X": "1"})
+        assert os.path.isdir(bot_dir)
+        assert os.path.isfile(os.path.join(bot_dir, "bot.env"))
+
+    def test_escapes_special_chars(self, tmp_path):
+        bot_dir = str(tmp_path / "bot")
+        save_bot_env(bot_dir, {"TOKEN": 'has"quotes$and`stuff'})
+        result = parse_env_file(os.path.join(bot_dir, "bot.env"))
+        assert result["TOKEN"] == 'has"quotes$and`stuff'
+
+    def test_file_permissions(self, tmp_path):
+        bot_dir = str(tmp_path / "bot")
+        save_bot_env(bot_dir, {"A": "1"})
+        mode = os.stat(os.path.join(bot_dir, "bot.env")).st_mode & 0o777
+        assert mode == 0o600
+
+    def test_overwrites_existing(self, tmp_path):
+        bot_dir = str(tmp_path / "bot")
+        save_bot_env(bot_dir, {"OLD": "1"})
+        save_bot_env(bot_dir, {"NEW": "2"})
+        result = parse_env_file(os.path.join(bot_dir, "bot.env"))
+        assert result == {"NEW": "2"}
+
+    def test_empty_fields(self, tmp_path):
+        bot_dir = str(tmp_path / "bot")
+        save_bot_env(bot_dir, {})
+        content = open(os.path.join(bot_dir, "bot.env")).read()
+        assert content == ""
+
+    def test_telegram_and_whatsapp_fields(self, tmp_path):
+        """Roundtrip typical bot.env fields."""
+        bot_dir = str(tmp_path / "bot")
+        fields = {
+            "TELEGRAM_BOT_TOKEN": "123:ABC",
+            "TELEGRAM_CHAT_ID": "456",
+            "WEBHOOK_SECRET": "sec789",
+            "WHATSAPP_PHONE_NUMBER_ID": "pn111",
+            "WHATSAPP_ACCESS_TOKEN": "wa_tok",
+            "WHATSAPP_APP_SECRET": "wa_sec",
+            "WHATSAPP_VERIFY_TOKEN": "wa_ver",
+            "WHATSAPP_PHONE_NUMBER": "+15551234",
+            "MODEL": "sonnet",
+            "MAX_HISTORY_LINES": "50",
+        }
+        save_bot_env(bot_dir, fields)
+        result = parse_env_file(os.path.join(bot_dir, "bot.env"))
+        assert result == fields
+
+
+# -- ClaudioConfig --
+
+
+class TestClaudioConfigInit:
+    def test_creates_claudio_dir(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        cfg.init()
+        assert os.path.isdir(cfg.claudio_path)
+
+    def test_dir_permissions(self, tmp_path):
+        claudio_path = str(tmp_path / "claudio")
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        mode = os.stat(claudio_path).st_mode & 0o777
+        assert mode == 0o700
+
+    def test_loads_service_env(self, tmp_path):
+        claudio_path = str(tmp_path / "claudio")
+        os.makedirs(claudio_path)
+        with open(os.path.join(claudio_path, "service.env"), "w") as f:
+            f.write('PORT="9999"\n')
+            f.write('TUNNEL_NAME="mytunnel"\n')
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        assert cfg.port == 9999
+        assert cfg.tunnel_name == "mytunnel"
+
+    def test_default_port(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        cfg.init()
+        assert cfg.port == 8421
+
+    def test_idempotent(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        cfg.init()
+        cfg.init()  # Second call should not fail
+        assert os.path.isdir(cfg.claudio_path)
+
+
+class TestClaudioConfigMigrate:
+    def _setup_single_bot(self, tmp_path):
+        """Create a pre-migration single-bot layout."""
+        claudio_path = str(tmp_path / "claudio")
+        os.makedirs(claudio_path, mode=0o700)
+        with open(os.path.join(claudio_path, "service.env"), "w") as f:
+            f.write('PORT="8421"\n')
+            f.write('TUNNEL_NAME="test"\n')
+            f.write('TUNNEL_HOSTNAME="test.example.com"\n')
+            f.write('WEBHOOK_URL="https://test.example.com"\n')
+            f.write('TELEGRAM_BOT_TOKEN="tok123"\n')
+            f.write('TELEGRAM_CHAT_ID="chat456"\n')
+            f.write('WEBHOOK_SECRET="sec789"\n')
+            f.write('MODEL="sonnet"\n')
+            f.write('MAX_HISTORY_LINES="75"\n')
+            f.write('HASS_TOKEN="keep_me"\n')
+        # Create history.db
+        with open(os.path.join(claudio_path, "history.db"), "w") as f:
+            f.write("fake_db")
+        # Create CLAUDE.md
+        with open(os.path.join(claudio_path, "CLAUDE.md"), "w") as f:
+            f.write("# Bot prompt")
+        return claudio_path
+
+    def test_migrates_to_multi_bot(self, tmp_path):
+        claudio_path = self._setup_single_bot(tmp_path)
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        bot_dir = os.path.join(claudio_path, "bots", "claudio")
+        assert os.path.isdir(bot_dir)
+        bot_env = parse_env_file(os.path.join(bot_dir, "bot.env"))
+        assert bot_env["TELEGRAM_BOT_TOKEN"] == "tok123"
+        assert bot_env["TELEGRAM_CHAT_ID"] == "chat456"
+        assert bot_env["WEBHOOK_SECRET"] == "sec789"
+        assert bot_env["MODEL"] == "sonnet"
+
+    def test_moves_history_db(self, tmp_path):
+        claudio_path = self._setup_single_bot(tmp_path)
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        bot_dir = os.path.join(claudio_path, "bots", "claudio")
+        assert os.path.isfile(os.path.join(bot_dir, "history.db"))
+        assert not os.path.exists(os.path.join(claudio_path, "history.db"))
+
+    def test_moves_claude_md(self, tmp_path):
+        claudio_path = self._setup_single_bot(tmp_path)
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        bot_dir = os.path.join(claudio_path, "bots", "claudio")
+        assert os.path.isfile(os.path.join(bot_dir, "CLAUDE.md"))
+        assert not os.path.exists(os.path.join(claudio_path, "CLAUDE.md"))
+
+    def test_preserves_unmanaged_keys(self, tmp_path):
+        claudio_path = self._setup_single_bot(tmp_path)
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        svc = parse_env_file(cfg.env_file)
+        assert svc.get("HASS_TOKEN") == "keep_me"
+
+    def test_strips_legacy_keys(self, tmp_path):
+        claudio_path = self._setup_single_bot(tmp_path)
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        svc = parse_env_file(cfg.env_file)
+        assert "TELEGRAM_BOT_TOKEN" not in svc
+        assert "TELEGRAM_CHAT_ID" not in svc
+        assert "WEBHOOK_SECRET" not in svc
+        assert "MODEL" not in svc
+
+    def test_idempotent_skip(self, tmp_path):
+        claudio_path = self._setup_single_bot(tmp_path)
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        # Second init should not re-migrate
+        cfg2 = ClaudioConfig(claudio_path=claudio_path)
+        cfg2.init()
+        assert os.path.isdir(os.path.join(claudio_path, "bots", "claudio"))
+
+    def test_skips_fresh_install(self, tmp_path):
+        """No migration when there's no TELEGRAM_BOT_TOKEN."""
+        claudio_path = str(tmp_path / "claudio")
+        os.makedirs(claudio_path, mode=0o700)
+        with open(os.path.join(claudio_path, "service.env"), "w") as f:
+            f.write('PORT="8421"\n')
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        assert not os.path.isdir(os.path.join(claudio_path, "bots"))
+
+
+class TestClaudioConfigSaveServiceEnv:
+    def test_writes_managed_keys(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        cfg.init()
+        cfg.env['PORT'] = '9999'
+        cfg.env['TUNNEL_NAME'] = 'mytunnel'
+        cfg.save_service_env()
+        result = parse_env_file(cfg.env_file)
+        assert result['PORT'] == '9999'
+        assert result['TUNNEL_NAME'] == 'mytunnel'
+
+    def test_preserves_unmanaged_keys(self, tmp_path):
+        claudio_path = str(tmp_path / "claudio")
+        os.makedirs(claudio_path)
+        with open(os.path.join(claudio_path, "service.env"), "w") as f:
+            f.write('PORT="8421"\n')
+            f.write('HASS_TOKEN="secret_token"\n')
+            f.write('CUSTOM_VAR="custom_val"\n')
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        cfg.save_service_env()
+        result = parse_env_file(cfg.env_file)
+        assert result.get('HASS_TOKEN') == 'secret_token'
+        assert result.get('CUSTOM_VAR') == 'custom_val'
+
+    def test_uses_defaults_for_missing_keys(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        cfg.init()
+        cfg.save_service_env()
+        result = parse_env_file(cfg.env_file)
+        assert result['PORT'] == '8421'
+        assert result['MEMORY_ENABLED'] == '1'
+        assert result['ELEVENLABS_VOICE_ID'] == 'iP95p4xoKVk53GoZ742B'
+
+    def test_file_permissions(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        cfg.init()
+        cfg.save_service_env()
+        mode = os.stat(cfg.env_file).st_mode & 0o777
+        assert mode == 0o600
+
+    def test_preserves_comments(self, tmp_path):
+        claudio_path = str(tmp_path / "claudio")
+        os.makedirs(claudio_path)
+        with open(os.path.join(claudio_path, "service.env"), "w") as f:
+            f.write('PORT="8421"\n')
+            f.write('# Custom comment\n')
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        cfg.init()
+        cfg.save_service_env()
+        with open(cfg.env_file) as f:
+            content = f.read()
+        assert '# Custom comment' in content
+
+
+class TestClaudioConfigListBots:
+    def test_lists_bots(self, tmp_path):
+        claudio_path = str(tmp_path / "claudio")
+        bots_dir = os.path.join(claudio_path, "bots")
+        for name in ("alpha", "beta", "gamma"):
+            d = os.path.join(bots_dir, name)
+            os.makedirs(d)
+            with open(os.path.join(d, "bot.env"), "w") as f:
+                f.write(f'MODEL="haiku"\n')
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        assert cfg.list_bots() == ["alpha", "beta", "gamma"]
+
+    def test_empty_when_no_bots_dir(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        assert cfg.list_bots() == []
+
+    def test_skips_dirs_without_bot_env(self, tmp_path):
+        claudio_path = str(tmp_path / "claudio")
+        bots_dir = os.path.join(claudio_path, "bots")
+        os.makedirs(os.path.join(bots_dir, "valid"))
+        with open(os.path.join(bots_dir, "valid", "bot.env"), "w") as f:
+            f.write('MODEL="haiku"\n')
+        os.makedirs(os.path.join(bots_dir, "invalid"))
+        # No bot.env in 'invalid'
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        assert cfg.list_bots() == ["valid"]
+
+
+class TestClaudioConfigLoadBot:
+    def test_loads_bot(self, tmp_path):
+        claudio_path = str(tmp_path / "claudio")
+        bot_dir = os.path.join(claudio_path, "bots", "mybot")
+        os.makedirs(bot_dir)
+        with open(os.path.join(bot_dir, "bot.env"), "w") as f:
+            f.write('TELEGRAM_BOT_TOKEN="tok"\n')
+            f.write('MODEL="opus"\n')
+        cfg = ClaudioConfig(claudio_path=claudio_path)
+        bot = cfg.load_bot("mybot")
+        assert isinstance(bot, BotConfig)
+        assert bot.bot_id == "mybot"
+        assert bot.telegram_token == "tok"
+        assert bot.model == "opus"
+
+    def test_invalid_bot_id(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        with pytest.raises(ValueError):
+            cfg.load_bot("../evil")
+
+
+class TestClaudioConfigProperties:
+    def test_webhook_url_property(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        cfg.init()
+        cfg.webhook_url = "https://example.com"
+        assert cfg.webhook_url == "https://example.com"
+
+    def test_tunnel_name_property(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        cfg.init()
+        cfg.tunnel_name = "mytunnel"
+        assert cfg.tunnel_name == "mytunnel"
+
+    def test_tunnel_hostname_property(self, tmp_path):
+        cfg = ClaudioConfig(claudio_path=str(tmp_path / "claudio"))
+        cfg.init()
+        cfg.tunnel_hostname = "test.example.com"
+        assert cfg.tunnel_hostname == "test.example.com"
