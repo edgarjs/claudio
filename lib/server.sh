@@ -91,13 +91,15 @@ register_all_webhooks() {
 
         # Load bot config using safe loader (defense-in-depth against command injection)
         local bot_token bot_secret bot_chat_id
+        local script_dir
+        script_dir="$(dirname "${BASH_SOURCE[0]}")"
         eval "$(
             (
                 # Unset variables to ensure we load them from the bot's env file
                 unset TELEGRAM_BOT_TOKEN WEBHOOK_SECRET TELEGRAM_CHAT_ID
                 # Source the safe loader and the bot's env file
                 # shellcheck source=lib/config.sh
-                source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
+                source "$script_dir/config.sh"
                 _safe_load_env "$bot_env"
                 # Print the variables in a format that can be eval'd
                 printf 'bot_token=%q\n' "${TELEGRAM_BOT_TOKEN:-}"
