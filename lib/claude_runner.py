@@ -252,8 +252,10 @@ def run_claude(prompt, config, history_context='', memories=''):
             )
             t.start()
 
+        num_turns = raw_json.get('num_turns', 0) if raw_json else 0
         log(_MODULE,
-            f"Claude finished (response_len={len(response)})",
+            f"Claude finished (response_len={len(response)}, "
+            f"turns={num_turns}, tools_used={bool(tool_summary)})",
             bot_id=config.bot_id)
 
         return ClaudeResult(
