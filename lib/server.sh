@@ -95,6 +95,8 @@ register_all_webhooks() {
         local tmp_vars
         tmp_vars=$(mktemp)
         (
+            # Unset variables to prevent inheritance from previous bot iteration
+            unset TELEGRAM_BOT_TOKEN WEBHOOK_SECRET TELEGRAM_CHAT_ID
             # shellcheck source=lib/config.sh
             source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
             _safe_load_env "$bot_env"
