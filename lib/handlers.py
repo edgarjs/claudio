@@ -9,6 +9,7 @@ Entry point: process_webhook(body, bot_id, platform, bot_config_dict)
 
 import json
 import os
+import signal
 import sqlite3
 import tempfile
 import threading
@@ -238,6 +239,9 @@ def _handle_command(text, config, client, target, message_id):
             config.save_model(model)
         except ValueError:
             return False
+        # Trigger server bot registry reload so the new model takes effect
+        # for subsequent requests (server.py's SIGHUP handler calls load_bots())
+        os.kill(os.getpid(), signal.SIGHUP)
         client.send_message(target, f"_Switched to {model.capitalize()} model._",
                             reply_to=message_id)
         return True

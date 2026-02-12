@@ -3,6 +3,7 @@
 
 import json
 import os
+import signal
 import sqlite3
 import sys
 import tempfile
@@ -377,25 +378,31 @@ class TestHandleCommand(unittest.TestCase):
         import shutil
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_opus_command(self):
+    @patch('lib.handlers.os.kill')
+    def test_opus_command(self, mock_kill):
         result = _handle_command("/opus", self.config, self.client, "999", "42")
         self.assertTrue(result)
         self.assertEqual(self.config.model, "opus")
         self.client.send_message.assert_called_once()
         args = self.client.send_message.call_args
         self.assertIn("Opus", args[0][1])
+        mock_kill.assert_called_once_with(os.getpid(), signal.SIGHUP)
 
-    def test_sonnet_command(self):
+    @patch('lib.handlers.os.kill')
+    def test_sonnet_command(self, mock_kill):
         self.config.model = "haiku"
         result = _handle_command("/sonnet", self.config, self.client, "999", "42")
         self.assertTrue(result)
         self.assertEqual(self.config.model, "sonnet")
+        mock_kill.assert_called_once()
 
-    def test_haiku_command(self):
+    @patch('lib.handlers.os.kill')
+    def test_haiku_command(self, mock_kill):
         self.config.model = "opus"
         result = _handle_command("/haiku", self.config, self.client, "999", "42")
         self.assertTrue(result)
         self.assertEqual(self.config.model, "haiku")
+        mock_kill.assert_called_once()
 
     def test_start_command(self):
         result = _handle_command("/start", self.config, self.client, "999", "42")
@@ -621,8 +628,9 @@ class TestProcessWebhook(unittest.TestCase):
         # send_message should not be called (silently skipped)
         mock_client.send_message.assert_not_called()
 
+    @patch("lib.handlers.os.kill")
     @patch("lib.handlers.TelegramClient")
-    def test_command_handling(self, mock_tg_cls):
+    def test_command_handling(self, mock_tg_cls, mock_kill):
         """Slash commands should be handled without invoking Claude."""
         mock_client = MagicMock()
         mock_tg_cls.return_value = mock_client
@@ -636,6 +644,8 @@ class TestProcessWebhook(unittest.TestCase):
         mock_client.send_message.assert_called_once()
         args = mock_client.send_message.call_args
         self.assertIn("Haiku", args[0][1])
+        # Should trigger bot registry reload
+        mock_kill.assert_called_once_with(os.getpid(), signal.SIGHUP)
 
 
 # ---------------------------------------------------------------------------
