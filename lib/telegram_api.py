@@ -172,7 +172,8 @@ class TelegramClient:
 
         result = self.api_call("sendVoice", files=files)
         if result.get("ok") is not True:
-            log_error("telegram", f"sendVoice failed: {result}", bot_id=self._bot_id)
+            error_desc = result.get("description", "unknown error")[:200]
+            log_error("telegram", f"sendVoice failed: {error_desc}", bot_id=self._bot_id)
             return False
         return True
 

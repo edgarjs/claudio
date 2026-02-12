@@ -165,7 +165,8 @@ class WhatsAppClient:
                 else None
             )
             if not msg_id:
-                self._log_error(f"Failed to send message: {json.dumps(result)}")
+                error_msg = (result.get("error", {}).get("message", "unknown error"))[:200]
+                self._log_error(f"Failed to send message: {error_msg}")
 
     # -- send_audio --------------------------------------------------------
 
@@ -184,7 +185,8 @@ class WhatsAppClient:
 
         media_id = result.get("id")
         if not media_id:
-            self._log_error(f"Failed to upload audio: {json.dumps(result)}")
+            error_msg = (result.get("error", {}).get("message", "unknown error"))[:200]
+            self._log_error(f"Failed to upload audio: {error_msg}")
             return False
 
         # Step 2: Send the audio message referencing the uploaded media
@@ -206,7 +208,8 @@ class WhatsAppClient:
             else None
         )
         if not msg_id:
-            self._log_error(f"Failed to send audio message: {json.dumps(result)}")
+            error_msg = (result.get("error", {}).get("message", "unknown error"))[:200]
+            self._log_error(f"Failed to send audio message: {error_msg}")
             return False
 
         return True

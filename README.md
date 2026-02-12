@@ -388,14 +388,18 @@ claudio restart
 
 **Health Check**
 
+**Webhook Handlers**
+
+- `CLAUDIO_PYTHON_HANDLERS` — Set to `1` to use the in-process Python webhook handlers instead of Bash subprocesses. Reduces per-message latency by 400-800ms. Default: unset (Bash handlers).
+
+**Health Check**
+
 - `DISK_USAGE_THRESHOLD` — Disk usage percentage to trigger alerts. Default: `90`.
 - `LOG_MAX_SIZE` — Maximum log file size in bytes before rotation. Default: `10485760` (10 MB).
 - `BACKUP_MAX_AGE` — Maximum backup age in seconds before alerting. Default: `7200` (2 hours).
 - `BACKUP_DEST` — Backup destination path for freshness checks. Default: `/mnt/ssd` (customize to your backup location).
 - `LOG_CHECK_WINDOW` — Seconds of recent log history to scan for errors and anomalies. Default: `300` (5 minutes).
 - `LOG_ALERT_COOLDOWN` — Minimum seconds between log-analysis alert notifications. Default: `1800` (30 minutes).
-
----
 
 **Per-bot variables** (stored in `$HOME/.claudio/bots/<bot_id>/bot.env`):
 
@@ -426,14 +430,18 @@ claudio restart
 
 ## Testing
 
-Claudio uses [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) for integration tests.
+Claudio uses [BATS](https://github.com/bats-core/bats-core) for Bash tests and [pytest](https://docs.pytest.org/) for Python tests.
 
 ```bash
-# Run all tests
+# Run Bash tests
 bats tests/
+
+# Run Python tests
+python3 -m pytest tests/ -v
 
 # Run a specific test file
 bats tests/db.bats
+python3 -m pytest tests/test_handlers.py -v
 ```
 
 ---
@@ -469,6 +477,7 @@ bats tests/db.bats
 - [x] Health check log analysis (error detection, restart loops, API slowness)
 - [x] Claude code review for Pull Requests (GitHub Actions)
 - [x] WhatsApp Business API integration with dual-platform support (single bot serving both Telegram and WhatsApp)
+- [x] Python webhook handlers (opt-in via `CLAUDIO_PYTHON_HANDLERS=1`, eliminates Bash subprocess overhead)
 
 **Future**
 
