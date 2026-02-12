@@ -664,7 +664,7 @@ def _process_message(msg, text, config, client, platform, bot_id):
                 history_text = "[Sent an image]"
         elif doc_file:
             doc_name = sanitize_doc_name(msg.doc_filename)
-            user_caption = msg.caption
+            user_caption = msg.caption or msg.text
             if user_caption:
                 history_text = f'[Sent a file "{doc_name}" with caption: {user_caption}]'
             else:
