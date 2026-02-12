@@ -364,9 +364,13 @@ def _read_notifier_log(path):
         line = raw_line.strip()
         if not line:
             continue
-        # Strip surrounding JSON quotes
-        if len(line) >= 2 and line.startswith('"') and line.endswith('"'):
-            line = line[1:-1]
+        # Each line should be a JSON-encoded string; decode properly
+        try:
+            line = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            # Fallback: manual strip for non-JSON lines
+            if len(line) >= 2 and line.startswith('"') and line.endswith('"'):
+                line = line[1:-1]
         lines.append(f"[Notification: {line}]")
 
     return '\n'.join(lines)

@@ -301,6 +301,11 @@ def _process_queue_loop(queue_key):
 def _process_webhook_python(body, bot_id, platform, queue_key):
     """Process a webhook using the in-process Python handler."""
     try:
+        # Ensure repo root is on sys.path so lib.* imports resolve
+        # (server.py is launched as `python3 lib/server.py` from server.sh)
+        _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _repo_root not in sys.path:
+            sys.path.insert(0, _repo_root)
         from lib.handlers import process_webhook
 
         # Look up bot config from the global registry

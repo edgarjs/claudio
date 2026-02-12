@@ -456,76 +456,69 @@ class TestBotConfigSaveModel:
         assert os.path.isdir(bot_dir)
         assert os.path.exists(os.path.join(bot_dir, "bot.env"))
 
-    def test_preserves_telegram_fields(self, tmp_path):
+    def test_preserves_existing_lines(self, tmp_path):
+        """save_model does a targeted update, preserving all other lines."""
         bot_dir = str(tmp_path / "bot")
         os.makedirs(bot_dir)
-        cfg = BotConfig(
-            bot_id="test",
-            bot_dir=bot_dir,
-            telegram_token="tok",
-            telegram_chat_id="chat",
-            webhook_secret="sec",
-            model="haiku",
-            max_history_lines=75,
-        )
+        bot_env = os.path.join(bot_dir, "bot.env")
+        with open(bot_env, "w") as f:
+            f.write('TELEGRAM_BOT_TOKEN="tok"\n')
+            f.write('TELEGRAM_CHAT_ID="chat"\n')
+            f.write('WEBHOOK_SECRET="sec"\n')
+            f.write('MODEL="haiku"\n')
+            f.write('MAX_HISTORY_LINES="75"\n')
+        cfg = BotConfig(bot_id="test", bot_dir=bot_dir, model="haiku")
         cfg.save_model("sonnet")
-        content = parse_env_file(os.path.join(bot_dir, "bot.env"))
+        content = parse_env_file(bot_env)
         assert content["TELEGRAM_BOT_TOKEN"] == "tok"
         assert content["TELEGRAM_CHAT_ID"] == "chat"
         assert content["WEBHOOK_SECRET"] == "sec"
         assert content["MODEL"] == "sonnet"
         assert content["MAX_HISTORY_LINES"] == "75"
 
-    def test_preserves_whatsapp_fields(self, tmp_path):
+    def test_preserves_comments(self, tmp_path):
+        """save_model preserves comments and extra lines."""
         bot_dir = str(tmp_path / "bot")
         os.makedirs(bot_dir)
-        cfg = BotConfig(
-            bot_id="test",
-            bot_dir=bot_dir,
-            whatsapp_phone_number_id="pn",
-            whatsapp_access_token="at",
-            whatsapp_app_secret="as",
-            whatsapp_verify_token="vt",
-            whatsapp_phone_number="+1",
-        )
+        bot_env = os.path.join(bot_dir, "bot.env")
+        with open(bot_env, "w") as f:
+            f.write("# Bot config\n")
+            f.write('MODEL="haiku"\n')
+            f.write('CUSTOM_VAR="keep"\n')
+        cfg = BotConfig(bot_id="test", bot_dir=bot_dir, model="haiku")
         cfg.save_model("opus")
-        content = parse_env_file(os.path.join(bot_dir, "bot.env"))
+        with open(bot_env, "r") as f:
+            raw = f.read()
+        assert "# Bot config" in raw
+        assert 'CUSTOM_VAR="keep"' in raw
+        content = parse_env_file(bot_env)
+        assert content["MODEL"] == "opus"
+        assert content["CUSTOM_VAR"] == "keep"
+
+    def test_appends_model_if_missing(self, tmp_path):
+        """save_model appends MODEL= if not present in existing file."""
+        bot_dir = str(tmp_path / "bot")
+        os.makedirs(bot_dir)
+        bot_env = os.path.join(bot_dir, "bot.env")
+        with open(bot_env, "w") as f:
+            f.write('WHATSAPP_PHONE_NUMBER_ID="pn"\n')
+            f.write('WHATSAPP_ACCESS_TOKEN="at"\n')
+        cfg = BotConfig(bot_id="test", bot_dir=bot_dir)
+        cfg.save_model("opus")
+        content = parse_env_file(bot_env)
         assert content["WHATSAPP_PHONE_NUMBER_ID"] == "pn"
         assert content["WHATSAPP_ACCESS_TOKEN"] == "at"
-        assert content["WHATSAPP_APP_SECRET"] == "as"
-        assert content["WHATSAPP_VERIFY_TOKEN"] == "vt"
-        assert content["WHATSAPP_PHONE_NUMBER"] == "+1"
+        assert content["MODEL"] == "opus"
 
-    def test_omits_telegram_when_no_token(self, tmp_path):
+    def test_creates_new_file_with_model(self, tmp_path):
+        """save_model creates bot.env with only MODEL if file didn't exist."""
         bot_dir = str(tmp_path / "bot")
         os.makedirs(bot_dir)
         cfg = BotConfig(bot_id="test", bot_dir=bot_dir)
         cfg.save_model("haiku")
         content = parse_env_file(os.path.join(bot_dir, "bot.env"))
-        assert "TELEGRAM_BOT_TOKEN" not in content
-
-    def test_omits_whatsapp_when_no_phone_number_id(self, tmp_path):
-        bot_dir = str(tmp_path / "bot")
-        os.makedirs(bot_dir)
-        cfg = BotConfig(bot_id="test", bot_dir=bot_dir)
-        cfg.save_model("haiku")
-        content = parse_env_file(os.path.join(bot_dir, "bot.env"))
-        assert "WHATSAPP_PHONE_NUMBER_ID" not in content
-
-    def test_escapes_special_chars_in_values(self, tmp_path):
-        bot_dir = str(tmp_path / "bot")
-        os.makedirs(bot_dir)
-        cfg = BotConfig(
-            bot_id="test",
-            bot_dir=bot_dir,
-            telegram_token='tok$with"special\\chars',
-            telegram_chat_id="chat",
-            webhook_secret="sec",
-        )
-        cfg.save_model("haiku")
-        # Re-read and verify roundtrip
-        content = parse_env_file(os.path.join(bot_dir, "bot.env"))
-        assert content["TELEGRAM_BOT_TOKEN"] == 'tok$with"special\\chars'
+        assert content["MODEL"] == "haiku"
+        assert len(content) == 1
 
     def test_file_permissions_restrictive(self, tmp_path):
         bot_dir = str(tmp_path / "bot")

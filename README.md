@@ -384,8 +384,6 @@ claudio restart
 - `MEMORY_EMBEDDING_MODEL` — Sentence-transformers model for memory embeddings. Default: `sentence-transformers/all-MiniLM-L6-v2`.
 - `MEMORY_CONSOLIDATION_MODEL` — Claude model used for memory consolidation. Default: `haiku`.
 
-**Health Check**
-
 **Webhook Handlers**
 
 - `CLAUDIO_PYTHON_HANDLERS` — Set to `1` to use the in-process Python webhook handlers instead of Bash subprocesses. Reduces per-message latency by 400-800ms. Default: unset (Bash handlers).

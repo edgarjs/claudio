@@ -10,6 +10,9 @@ import sys
 # Only allow alphanumeric keys with underscores (standard env var names)
 _ENV_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
+# Restrict bot_id to safe filesystem characters
+_BOT_ID_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$')
+
 
 def parse_env_file(path):
     """Parse a KEY="value" or KEY=value env file.
@@ -149,6 +152,9 @@ class BotConfig:
         This is the full-resolution path used when building config from scratch
         (rather than from the server.py in-memory registry).
         """
+        if not bot_id or not _BOT_ID_RE.match(bot_id):
+            raise ValueError(f"Invalid bot_id: {bot_id!r}")
+
         if claudio_path is None:
             claudio_path = os.path.join(os.path.expanduser('~'), '.claudio')
 
@@ -187,8 +193,9 @@ class BotConfig:
     def save_model(self, model):
         """Persist a model change to bot.env.
 
-        Updates self.model and rewrites the bot.env file, preserving
-        all other values. Mirrors claudio_save_bot_env() in config.sh.
+        Updates self.model and does a targeted update of the MODEL= line
+        in bot.env, preserving all other lines (comments, extra variables).
+        Falls back to appending if MODEL= is not found.
         """
         if model not in ('opus', 'sonnet', 'haiku'):
             raise ValueError(f"Invalid model: {model}")
@@ -199,29 +206,32 @@ class BotConfig:
             return
 
         bot_env_path = os.path.join(self.bot_dir, 'bot.env')
-
-        lines = []
-        # Telegram
-        if self.telegram_token:
-            lines.append(f'TELEGRAM_BOT_TOKEN="{_env_quote(self.telegram_token)}"')
-            lines.append(f'TELEGRAM_CHAT_ID="{_env_quote(self.telegram_chat_id)}"')
-            lines.append(f'WEBHOOK_SECRET="{_env_quote(self.webhook_secret)}"')
-        # WhatsApp
-        if self.whatsapp_phone_number_id:
-            lines.append(f'WHATSAPP_PHONE_NUMBER_ID="{_env_quote(self.whatsapp_phone_number_id)}"')
-            lines.append(f'WHATSAPP_ACCESS_TOKEN="{_env_quote(self.whatsapp_access_token)}"')
-            lines.append(f'WHATSAPP_APP_SECRET="{_env_quote(self.whatsapp_app_secret)}"')
-            lines.append(f'WHATSAPP_VERIFY_TOKEN="{_env_quote(self.whatsapp_verify_token)}"')
-            lines.append(f'WHATSAPP_PHONE_NUMBER="{_env_quote(self.whatsapp_phone_number)}"')
-        # Common
-        lines.append(f'MODEL="{_env_quote(self.model)}"')
-        lines.append(f'MAX_HISTORY_LINES="{_env_quote(str(self.max_history_lines))}"')
+        new_line = f'MODEL="{_env_quote(self.model)}"'
 
         os.makedirs(self.bot_dir, exist_ok=True)
+
+        # Read existing file, replace MODEL= line in-place
+        existing_lines = []
+        found = False
+        try:
+            with open(bot_env_path, 'r') as f:
+                for line in f:
+                    stripped = line.rstrip('\n')
+                    if stripped.startswith('MODEL='):
+                        existing_lines.append(new_line)
+                        found = True
+                    else:
+                        existing_lines.append(stripped)
+        except FileNotFoundError:
+            pass
+
+        if not found:
+            existing_lines.append(new_line)
+
         old_umask = os.umask(0o077)
         try:
             with open(bot_env_path, 'w') as f:
-                f.write('\n'.join(lines) + '\n')
+                f.write('\n'.join(existing_lines) + '\n')
         finally:
             os.umask(old_umask)
 

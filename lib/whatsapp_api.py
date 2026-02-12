@@ -291,14 +291,15 @@ class WhatsAppClient:
 
         try:
             with urllib.request.urlopen(dl_req, timeout=60) as resp:
-                data = resp.read()
+                data = resp.read(_MAX_MEDIA_SIZE + 1)
         except Exception as exc:
             self._log_error(f"Failed to download media ({exc})")
             return False
 
-        # Write to output path
+        # Write to output path with restrictive permissions (0600)
         try:
-            with open(output_path, "wb") as f:
+            fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as f:
                 f.write(data)
         except OSError as exc:
             self._log_error(f"Failed to write media file ({exc})")

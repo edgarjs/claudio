@@ -273,10 +273,8 @@ class TelegramClient:
         # Write with restrictive permissions (chmod 600)
         fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
                      stat.S_IRUSR | stat.S_IWUSR)
-        try:
-            os.write(fd, file_data)
-        finally:
-            os.close(fd)
+        with os.fdopen(fd, "wb") as f:
+            f.write(file_data)
 
         # Magic byte validation
         if validate_fn is not None:
