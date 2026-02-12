@@ -531,8 +531,8 @@ class TestProcessWebhook(unittest.TestCase):
         self._add_patch("lib.handlers.run_claude", return_value=_mock_claude_result())
         self._add_patch("lib.handlers._memory_retrieve", return_value='')
         self._add_patch("lib.handlers._memory_consolidate")
-        self._add_patch("lib.handlers.stt_transcribe", return_value="transcribed text")
-        self._add_patch("lib.handlers.tts_convert", return_value=True)
+        self._add_patch("lib.handlers._stt_transcribe", return_value="transcribed text")
+        self._add_patch("lib.handlers._tts_convert", return_value=True)
 
         # Start all patches
         for p in self.patches:
@@ -672,8 +672,8 @@ class TestProcessMessage(unittest.TestCase):
 
     @patch("lib.handlers._memory_consolidate")
     @patch("lib.handlers._memory_retrieve", return_value='')
-    @patch("lib.handlers.stt_transcribe", return_value="Hello from voice")
-    @patch("lib.handlers.tts_convert", return_value=True)
+    @patch("lib.handlers._stt_transcribe", return_value="Hello from voice")
+    @patch("lib.handlers._tts_convert", return_value=True)
     @patch("lib.handlers.run_claude", return_value=_mock_claude_result("Voice reply"))
     def test_voice_message_flow(self, mock_claude, mock_tts, mock_stt,
                                 mock_mem_r, mock_mem_c):
@@ -828,7 +828,7 @@ class TestProcessMessage(unittest.TestCase):
 
     @patch("lib.handlers._memory_consolidate")
     @patch("lib.handlers._memory_retrieve", return_value='')
-    @patch("lib.handlers.stt_transcribe", return_value='')
+    @patch("lib.handlers._stt_transcribe", return_value='')
     @patch("lib.handlers.run_claude")
     def test_voice_transcription_failure(self, mock_claude, mock_stt,
                                          mock_mem_r, mock_mem_c):
@@ -860,8 +860,8 @@ class TestProcessMessage(unittest.TestCase):
         )
         self.client.download_audio.return_value = True
 
-        with patch("lib.handlers.stt_transcribe", return_value="wa transcription"), \
-             patch("lib.handlers.tts_convert", return_value=True):
+        with patch("lib.handlers._stt_transcribe", return_value="wa transcription"), \
+             patch("lib.handlers._tts_convert", return_value=True):
             _process_message(msg, '', self.config, self.client,
                              "whatsapp", "test-bot")
 

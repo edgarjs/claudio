@@ -69,9 +69,14 @@ class BotConfig:
         'whatsapp_app_secret', 'whatsapp_verify_token', 'whatsapp_phone_number',
         # Common
         'model', 'max_history_lines',
+        # Speech provider selection (from service.env)
+        'speech_provider',
         # ElevenLabs (from service.env)
         'elevenlabs_api_key', 'elevenlabs_voice_id', 'elevenlabs_model',
         'elevenlabs_stt_model',
+        # Speechmatics (from service.env)
+        'speechmatics_api_key', 'speechmatics_voice_id',
+        'speechmatics_stt_region',
         # Memory (from service.env)
         'memory_enabled',
         # Database
@@ -84,9 +89,12 @@ class BotConfig:
                  whatsapp_app_secret='', whatsapp_verify_token='',
                  whatsapp_phone_number='',
                  model='haiku', max_history_lines=100,
+                 speech_provider='elevenlabs',
                  elevenlabs_api_key='', elevenlabs_voice_id='iP95p4xoKVk53GoZ742B',
                  elevenlabs_model='eleven_multilingual_v2',
                  elevenlabs_stt_model='scribe_v1',
+                 speechmatics_api_key='', speechmatics_voice_id='sarah',
+                 speechmatics_stt_region='eu1',
                  memory_enabled=True, db_file=''):
         self.bot_id = bot_id
         self.bot_dir = bot_dir or ''
@@ -100,10 +108,14 @@ class BotConfig:
         self.whatsapp_phone_number = whatsapp_phone_number
         self.model = model
         self.max_history_lines = int(max_history_lines)
+        self.speech_provider = speech_provider
         self.elevenlabs_api_key = elevenlabs_api_key
         self.elevenlabs_voice_id = elevenlabs_voice_id
         self.elevenlabs_model = elevenlabs_model
         self.elevenlabs_stt_model = elevenlabs_stt_model
+        self.speechmatics_api_key = speechmatics_api_key
+        self.speechmatics_voice_id = speechmatics_voice_id
+        self.speechmatics_stt_region = speechmatics_stt_region
         self.memory_enabled = memory_enabled
         self.db_file = db_file or (os.path.join(bot_dir, 'history.db') if bot_dir else '')
 
@@ -135,11 +147,17 @@ class BotConfig:
             # Common
             model=bot_config.get('model', 'haiku'),
             max_history_lines=bot_config.get('max_history_lines', '100'),
+            # Speech provider (from service.env)
+            speech_provider=svc.get('SPEECH_PROVIDER', 'elevenlabs'),
             # ElevenLabs (from service.env)
             elevenlabs_api_key=svc.get('ELEVENLABS_API_KEY', ''),
             elevenlabs_voice_id=svc.get('ELEVENLABS_VOICE_ID', 'iP95p4xoKVk53GoZ742B'),
             elevenlabs_model=svc.get('ELEVENLABS_MODEL', 'eleven_multilingual_v2'),
             elevenlabs_stt_model=svc.get('ELEVENLABS_STT_MODEL', 'scribe_v1'),
+            # Speechmatics (from service.env)
+            speechmatics_api_key=svc.get('SPEECHMATICS_API_KEY', ''),
+            speechmatics_voice_id=svc.get('SPEECHMATICS_VOICE_ID', 'sarah'),
+            speechmatics_stt_region=svc.get('SPEECHMATICS_STT_REGION', 'eu1'),
             # Memory
             memory_enabled=svc.get('MEMORY_ENABLED', '1') == '1',
             db_file=os.path.join(bot_dir, 'history.db') if bot_dir else '',
@@ -181,11 +199,17 @@ class BotConfig:
             # Common
             model=bot_env.get('MODEL', 'haiku'),
             max_history_lines=bot_env.get('MAX_HISTORY_LINES', '100'),
+            # Speech provider (from service.env)
+            speech_provider=svc.get('SPEECH_PROVIDER', 'elevenlabs'),
             # ElevenLabs (from service.env)
             elevenlabs_api_key=svc.get('ELEVENLABS_API_KEY', ''),
             elevenlabs_voice_id=svc.get('ELEVENLABS_VOICE_ID', 'iP95p4xoKVk53GoZ742B'),
             elevenlabs_model=svc.get('ELEVENLABS_MODEL', 'eleven_multilingual_v2'),
             elevenlabs_stt_model=svc.get('ELEVENLABS_STT_MODEL', 'scribe_v1'),
+            # Speechmatics (from service.env)
+            speechmatics_api_key=svc.get('SPEECHMATICS_API_KEY', ''),
+            speechmatics_voice_id=svc.get('SPEECHMATICS_VOICE_ID', 'sarah'),
+            speechmatics_stt_region=svc.get('SPEECHMATICS_STT_REGION', 'eu1'),
             # Memory
             memory_enabled=svc.get('MEMORY_ENABLED', '1') == '1',
         )
@@ -277,8 +301,12 @@ class ClaudioConfig:
     # Keys managed in service.env (global, not per-bot)
     _MANAGED_KEYS = [
         'PORT', 'WEBHOOK_URL', 'TUNNEL_NAME', 'TUNNEL_HOSTNAME',
-        'WEBHOOK_RETRY_DELAY', 'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
-        'ELEVENLABS_MODEL', 'ELEVENLABS_STT_MODEL', 'MEMORY_ENABLED',
+        'WEBHOOK_RETRY_DELAY', 'SPEECH_PROVIDER',
+        'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
+        'ELEVENLABS_MODEL', 'ELEVENLABS_STT_MODEL',
+        'SPEECHMATICS_API_KEY', 'SPEECHMATICS_VOICE_ID',
+        'SPEECHMATICS_STT_REGION',
+        'MEMORY_ENABLED',
         'MEMORY_EMBEDDING_MODEL', 'MEMORY_CONSOLIDATION_MODEL',
     ]
 
@@ -295,10 +323,14 @@ class ClaudioConfig:
         'TUNNEL_NAME': '',
         'TUNNEL_HOSTNAME': '',
         'WEBHOOK_RETRY_DELAY': '60',
+        'SPEECH_PROVIDER': 'elevenlabs',
         'ELEVENLABS_API_KEY': '',
         'ELEVENLABS_VOICE_ID': 'iP95p4xoKVk53GoZ742B',
         'ELEVENLABS_MODEL': 'eleven_multilingual_v2',
         'ELEVENLABS_STT_MODEL': 'scribe_v1',
+        'SPEECHMATICS_API_KEY': '',
+        'SPEECHMATICS_VOICE_ID': 'sarah',
+        'SPEECHMATICS_STT_REGION': 'eu1',
         'MEMORY_ENABLED': '1',
         'MEMORY_EMBEDDING_MODEL': 'sentence-transformers/all-MiniLM-L6-v2',
         'MEMORY_CONSOLIDATION_MODEL': 'haiku',

@@ -25,7 +25,8 @@ from lib.util import (
 )
 from lib.telegram_api import TelegramClient
 from lib.whatsapp_api import WhatsAppClient
-from lib.elevenlabs import tts_convert, stt_transcribe
+from lib.elevenlabs import tts_convert as elevenlabs_tts, stt_transcribe as elevenlabs_stt
+from lib.speechmatics import tts_convert as speechmatics_tts, stt_transcribe as speechmatics_stt
 from lib.claude_runner import run_claude
 
 # -- Constants --
@@ -384,6 +385,46 @@ def _memory_consolidate():
         pass
 
 
+# -- Speech provider dispatch --
+
+def _get_speech_api_key(config):
+    """Return the API key for the configured speech provider, or ''."""
+    if config.speech_provider == 'speechmatics':
+        return config.speechmatics_api_key
+    return config.elevenlabs_api_key
+
+
+def _stt_transcribe(audio_path, config):
+    """Transcribe audio using the configured speech provider."""
+    if config.speech_provider == 'speechmatics':
+        return speechmatics_stt(
+            audio_path,
+            config.speechmatics_api_key,
+            region=config.speechmatics_stt_region,
+        )
+    return elevenlabs_stt(
+        audio_path,
+        config.elevenlabs_api_key,
+        model=config.elevenlabs_stt_model,
+    )
+
+
+def _tts_convert(text, output_path, config):
+    """Convert text to speech using the configured speech provider."""
+    if config.speech_provider == 'speechmatics':
+        return speechmatics_tts(
+            text, output_path,
+            config.speechmatics_api_key,
+            config.speechmatics_voice_id,
+        )
+    return elevenlabs_tts(
+        text, output_path,
+        config.elevenlabs_api_key,
+        config.elevenlabs_voice_id,
+        config.elevenlabs_model,
+    )
+
+
 # -- Main entry point --
 
 def process_webhook(body, bot_id, platform, bot_config_dict):
@@ -562,10 +603,14 @@ def _process_message(msg, text, config, client, platform, bot_id):
         # -- Voice transcription --
 
         if msg.has_voice:
-            if not config.elevenlabs_api_key:
+            stt_api_key = _get_speech_api_key(config)
+            if not stt_api_key:
+                provider = config.speech_provider or 'elevenlabs'
+                key_name = ('SPEECHMATICS_API_KEY' if provider == 'speechmatics'
+                            else 'ELEVENLABS_API_KEY')
                 client.send_message(
                     msg.chat_id,
-                    f"_{voice_label.capitalize()} messages require ELEVENLABS_API_KEY "
+                    f"_{voice_label.capitalize()} messages require {key_name} "
                     f"to be configured._",
                     reply_to=msg.message_id,
                 )
@@ -593,11 +638,7 @@ def _process_message(msg, text, config, client, platform, bot_id):
                 )
                 return
 
-            transcription = stt_transcribe(
-                voice_file,
-                config.elevenlabs_api_key,
-                model=config.elevenlabs_stt_model,
-            )
+            transcription = _stt_transcribe(voice_file, config)
             if not transcription:
                 client.send_message(
                     msg.chat_id,
@@ -743,7 +784,7 @@ def _process_message(msg, text, config, client, platform, bot_id):
         # -- Response delivery --
 
         if response:
-            if has_voice and config.elevenlabs_api_key:
+            if has_voice and _get_speech_api_key(config):
                 _deliver_voice_response(
                     response, config, client, msg, platform,
                     tmp_dir, tmp_files, bot_id,
@@ -787,15 +828,15 @@ def _process_message(msg, text, config, client, platform, bot_id):
 def _deliver_voice_response(response, config, client, msg, platform,
                             tmp_dir, tmp_files, bot_id):
     """Convert response to voice/audio and send, falling back to text."""
+    tts_ext = '.wav' if config.speech_provider == 'speechmatics' else '.mp3'
     fd, tts_file = tempfile.mkstemp(
-        prefix='claudio-tts-', suffix='.mp3', dir=tmp_dir,
+        prefix='claudio-tts-', suffix=tts_ext, dir=tmp_dir,
     )
     os.close(fd)
     os.chmod(tts_file, 0o600)
     tmp_files.append(tts_file)
 
-    if tts_convert(response, tts_file, config.elevenlabs_api_key,
-                   config.elevenlabs_voice_id, config.elevenlabs_model):
+    if _tts_convert(response, tts_file, config):
         if platform == 'telegram':
             ok = client.send_voice(msg.chat_id, tts_file, reply_to=msg.message_id)
         else:
