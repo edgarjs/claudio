@@ -356,12 +356,12 @@ def _history_get_context(db_file, limit):
 
     lines = []
     for role, content in rows:
-        prefix = 'H' if role == 'user' else 'A'
-        lines.append(f"{prefix}: {content}")
+        tag = 'user' if role == 'user' else 'assistant'
+        lines.append(f"<{tag}>{content}</{tag}>")
 
     return (
         "Here is the recent conversation history for context:\n\n"
-        + "\n\n".join(lines)
+        + "\n".join(lines)
         + "\n\n"
     )
 

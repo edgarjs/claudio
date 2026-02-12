@@ -472,8 +472,8 @@ class TestDbHistory(unittest.TestCase):
         _history_add(self.db_file, "assistant", "Hi there!")
 
         ctx = _history_get_context(self.db_file, 10)
-        self.assertIn("H: Hello!", ctx)
-        self.assertIn("A: Hi there!", ctx)
+        self.assertIn("<user>Hello!</user>", ctx)
+        self.assertIn("<assistant>Hi there!</assistant>", ctx)
 
     def test_empty_db_returns_empty_string(self):
         _db_init(self.db_file)
@@ -800,8 +800,8 @@ class TestProcessMessage(unittest.TestCase):
                          "telegram", "test-bot")
 
         ctx = _history_get_context(self.config.db_file, 10)
-        self.assertIn("H: hi there", ctx)
-        self.assertIn("A: OK", ctx)
+        self.assertIn("<user>hi there</user>", ctx)
+        self.assertIn("<assistant>OK</assistant>", ctx)
 
     @patch("lib.handlers._memory_consolidate")
     @patch("lib.handlers._memory_retrieve", return_value='')
