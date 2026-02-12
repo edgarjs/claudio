@@ -127,8 +127,6 @@ The wizard will validate credentials and provide webhook configuration details f
 
 A single bot can serve both platforms, sharing conversation history across Telegram and WhatsApp. During `claudio install <bot_id>`, choose option 3 to configure both, or add a platform later using the platform-specific setup commands.
 
-See [DUAL_PLATFORM_SETUP.md](DUAL_PLATFORM_SETUP.md) for detailed dual-platform configuration.
-
 Once setup is done, the service restarts automatically, and you can start chatting with Claude Code from either platform.
 
 > A cron job runs every minute to monitor the webhook endpoint. It verifies the webhook is registered and re-registers it if needed. If the server is unreachable, it auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After exhausting restart attempts without recovery, it sends a Telegram alert and stops retrying until the server responds with HTTP 200. The restart counter auto-clears when the health endpoint returns HTTP 200. You can also reset it manually by deleting `$HOME/.claudio/.last_restart_attempt` and `$HOME/.claudio/.restart_fail_count`.

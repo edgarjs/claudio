@@ -39,7 +39,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 ALEXA_SKILL_ID = os.environ.get("ALEXA_SKILL_ID", "")
 MANAGEMENT_SECRET = os.environ.get("MANAGEMENT_SECRET", "")
 
-# Python webhook handlers (Phase 3: opt-in via env var, Phase 4: default on)
+# Python webhook handlers (opt-in via CLAUDIO_PYTHON_HANDLERS=1 env var)
 _USE_PYTHON_HANDLERS = os.environ.get("CLAUDIO_PYTHON_HANDLERS", "") == "1"
 
 # Multi-bot registry: loaded from ~/.claudio/bots/*/bot.env

@@ -19,8 +19,8 @@ STT_MAX_SIZE = 20 * 1024 * 1024  # 20 MB
 
 ELEVENLABS_API = "https://api.elevenlabs.io/v1"
 
-_VOICE_ID_RE = re.compile(r'^[a-zA-Z0-9]+$')
-_MODEL_RE = re.compile(r'^[a-zA-Z0-9_]+$')
+_VOICE_ID_RE = re.compile(r'^[a-zA-Z0-9]{1,64}$')
+_MODEL_RE = re.compile(r'^[a-zA-Z0-9_]{1,64}$')
 
 # MP3 magic bytes: ID3 tag, MPEG frame sync variants (MPEG1/2 Layer 2/3),
 # and ADTS frame sync variants (AAC).
@@ -116,16 +116,21 @@ def tts_convert(text, output_path, api_key, voice_id,
         with urllib.request.urlopen(req, timeout=120) as resp:
             data = resp.read()
     except urllib.error.HTTPError as e:
-        error_body = ''
+        error_detail = f"HTTP {e.code}"
         try:
-            error_body = e.read(500).decode('utf-8', errors='replace')
+            raw = e.read(500).decode('utf-8', errors='replace')
+            detail = json.loads(raw).get('detail', {})
+            if isinstance(detail, dict):
+                error_detail = f"HTTP {e.code}: {detail.get('message', 'API error')[:100]}"
+            elif isinstance(detail, str):
+                error_detail = f"HTTP {e.code}: {detail[:100]}"
         except Exception:
             pass
-        log_error("tts", f"ElevenLabs API returned HTTP {e.code}: {error_body}")
+        log_error("tts", f"ElevenLabs TTS API error: {error_detail}")
         _safe_delete(output_path)
         return False
     except (urllib.error.URLError, OSError) as e:
-        log_error("tts", f"ElevenLabs API request failed: {e}")
+        log_error("tts", f"ElevenLabs TTS request failed: {type(e).__name__}")
         _safe_delete(output_path)
         return False
 
@@ -208,16 +213,20 @@ def stt_transcribe(audio_path, api_key, model='scribe_v1'):
         with urllib.request.urlopen(req, timeout=120) as resp:
             resp_data = resp.read()
     except urllib.error.HTTPError as e:
-        error_body = ''
+        error_detail = f"HTTP {e.code}"
         try:
-            error_body = e.read(500).decode('utf-8', errors='replace')
+            raw = e.read(500).decode('utf-8', errors='replace')
+            detail = json.loads(raw).get('detail', {})
+            if isinstance(detail, dict):
+                error_detail = f"HTTP {e.code}: {detail.get('message', 'API error')[:100]}"
+            elif isinstance(detail, str):
+                error_detail = f"HTTP {e.code}: {detail[:100]}"
         except Exception:
             pass
-        log_error("stt",
-                  f"ElevenLabs STT API returned HTTP {e.code}: {error_body}")
+        log_error("stt", f"ElevenLabs STT API error: {error_detail}")
         return None
     except (urllib.error.URLError, OSError) as e:
-        log_error("stt", f"ElevenLabs STT API request failed: {e}")
+        log_error("stt", f"ElevenLabs STT request failed: {type(e).__name__}")
         return None
 
     try:

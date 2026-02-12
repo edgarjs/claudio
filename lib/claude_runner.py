@@ -109,6 +109,14 @@ def run_claude(prompt, config, history_context='', memories=''):
     Returns:
         A ClaudeResult namedtuple.
     """
+    # Defense-in-depth: validate model at invocation time
+    allowed_models = {'opus', 'sonnet', 'haiku'}
+    if config.model not in allowed_models:
+        log_error(_MODULE,
+                  f"Invalid model '{config.model}', falling back to haiku",
+                  bot_id=config.bot_id)
+        config.model = 'haiku'
+
     claude_cmd = find_claude_cmd()
     if claude_cmd is None:
         log_error(_MODULE, "claude command not found in common locations",
