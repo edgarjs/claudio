@@ -366,20 +366,32 @@ telegram_handle_webhook() {
     case "$text" in
         /opus)
             MODEL="opus"
-            claudio_save_env
+            if [ -n "$CLAUDIO_BOT_DIR" ]; then
+                claudio_save_bot_env
+            else
+                claudio_save_env
+            fi
             telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Opus model._" "$message_id"
             return
             ;;
         /sonnet)
             MODEL="sonnet"
-            claudio_save_env
+            if [ -n "$CLAUDIO_BOT_DIR" ]; then
+                claudio_save_bot_env
+            else
+                claudio_save_env
+            fi
             telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Sonnet model._" "$message_id"
             return
             ;;
         /haiku)
             # shellcheck disable=SC2034  # Used by claude.sh via config
             MODEL="haiku"
-            claudio_save_env
+            if [ -n "$CLAUDIO_BOT_DIR" ]; then
+                claudio_save_bot_env
+            else
+                claudio_save_env
+            fi
             telegram_send_message "$WEBHOOK_CHAT_ID" "_Switched to Haiku model._" "$message_id"
             return
             ;;
@@ -687,7 +699,12 @@ Read this file and summarize its contents."
 }
 
 telegram_setup() {
+    local bot_id="${1:-}"
+
     echo "=== Claudio Telegram Setup ==="
+    if [ -n "$bot_id" ]; then
+        echo "Bot: $bot_id"
+    fi
     echo ""
 
     read -rp "Enter your Telegram Bot Token: " token
@@ -760,7 +777,7 @@ telegram_setup() {
     done
 
     print_success "Received /start from chat_id: ${TELEGRAM_CHAT_ID}"
-    telegram_send_message "$TELEGRAM_CHAT_ID" "👋 Hola! Please return to your terminal to complete the webhook setup."
+    telegram_send_message "$TELEGRAM_CHAT_ID" "Hola! Please return to your terminal to complete the webhook setup."
 
     # Verify tunnel is configured
     if [ -z "$WEBHOOK_URL" ]; then
@@ -768,20 +785,50 @@ telegram_setup() {
         exit 1
     fi
 
-    claudio_save_env
+    # Save config: per-bot or global
+    if [ -n "$bot_id" ]; then
+        local bot_dir="$CLAUDIO_PATH/bots/$bot_id"
+        mkdir -p "$bot_dir"
+        chmod 700 "$bot_dir"
 
-    # Restart service
-    echo ""
-    echo "Restarting service..."
-    service_restart 2>/dev/null || {
-        print_warning "Service not installed yet. Run 'claudio install' to set up the service."
-        return
-    }
+        # Generate per-bot webhook secret
+        WEBHOOK_SECRET=$(openssl rand -hex 32) || {
+            print_error "Failed to generate WEBHOOK_SECRET"
+            exit 1
+        }
 
-    # Register webhook (will retry until successful)
-    echo ""
-    echo "Registering Telegram webhook (DNS propagation could take a moment)..."
-    register_webhook "$WEBHOOK_URL"
+        export CLAUDIO_BOT_ID="$bot_id"
+        export CLAUDIO_BOT_DIR="$bot_dir"
+        export CLAUDIO_DB_FILE="$bot_dir/history.db"
+
+        claudio_save_bot_env
+
+        # Copy default system prompt if none exists
+        if [ ! -f "$bot_dir/SYSTEM_PROMPT.md" ]; then
+            local default_prompt
+            default_prompt="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/SYSTEM_PROMPT.md"
+            if [ -f "$default_prompt" ]; then
+                cp "$default_prompt" "$bot_dir/SYSTEM_PROMPT.md"
+            fi
+        fi
+
+        print_success "Bot config saved to $bot_dir/bot.env"
+    else
+        claudio_save_env
+
+        # Restart service
+        echo ""
+        echo "Restarting service..."
+        service_restart 2>/dev/null || {
+            print_warning "Service not installed yet. Run 'claudio install' to set up the service."
+            return
+        }
+
+        # Register webhook (will retry until successful)
+        echo ""
+        echo "Registering Telegram webhook (DNS propagation could take a moment)..."
+        register_webhook "$WEBHOOK_URL"
+    fi
 
     print_success "Setup complete!"
 }

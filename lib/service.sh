@@ -153,11 +153,23 @@ symlink_uninstall() {
 }
 
 service_install() {
+    local bot_id="${1:-claudio}"
+
+    # Validate bot_id: alphanumeric, hyphens, underscores only
+    if [[ ! "$bot_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        print_error "Invalid bot name: '$bot_id'. Use only letters, numbers, hyphens, and underscores."
+        exit 1
+    fi
+
     deps_install
     symlink_install
     claudio_init
-    cloudflared_setup
-    claudio_save_env
+
+    # System setup (idempotent): cloudflared tunnel, systemd/launchd, cron, hooks
+    if [ -z "$TUNNEL_NAME" ]; then
+        cloudflared_setup
+        claudio_save_env
+    fi
 
     if [[ "$(uname)" == "Darwin" ]]; then
         service_install_launchd
@@ -168,10 +180,37 @@ service_install() {
     cron_install
     claude_hooks_install "$(cd "$CLAUDIO_LIB/.." && pwd)"
 
+    # Per-bot setup
+    bot_setup "$bot_id"
+
+    # Restart to pick up new bot
     echo ""
-    print_success "Claudio service installed and started."
-    # shellcheck disable=SC2016  # Backticks intentionally not expanded (documentation)
-    echo 'Run `claudio telegram setup` to connect your Telegram bot.'
+    echo "Restarting service to pick up bot '$bot_id'..."
+    service_restart 2>/dev/null || true
+
+    echo ""
+    print_success "Claudio service installed with bot '$bot_id'."
+}
+
+# Interactive wizard to set up a bot's Telegram connection and config.
+bot_setup() {
+    local bot_id="$1"
+    local bot_dir="$CLAUDIO_PATH/bots/$bot_id"
+
+    # Check if bot already exists
+    if [ -f "$bot_dir/bot.env" ]; then
+        echo ""
+        echo "Bot '$bot_id' already exists at $bot_dir"
+        read -rp "Re-run setup? [y/N] " confirm
+        if [[ ! "$confirm" =~ ^[Yy] ]]; then
+            echo "Skipping bot setup."
+            return 0
+        fi
+    fi
+
+    echo ""
+    echo "=== Setting up bot: $bot_id ==="
+    telegram_setup "$bot_id"
 }
 
 cloudflared_setup() {
@@ -331,30 +370,56 @@ _disable_linger() {
 }
 
 service_uninstall() {
-    local purge=false
-    [ "$1" = "--purge" ] && purge=true
+    local arg="${1:-}"
 
-    if [[ "$(uname)" == "Darwin" ]]; then
-        launchctl stop com.claudio.server 2>/dev/null || true
-        launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
-        rm -f "$LAUNCHD_PLIST"
-    else
-        systemctl --user stop claudio 2>/dev/null || true
-        systemctl --user disable claudio 2>/dev/null || true
-        rm -f "$SYSTEMD_UNIT"
-        systemctl --user daemon-reload 2>/dev/null
+    # Full system uninstall (--purge or no arg)
+    if [ "$arg" = "--purge" ] || [ -z "$arg" ]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            launchctl stop com.claudio.server 2>/dev/null || true
+            launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+            rm -f "$LAUNCHD_PLIST"
+        else
+            systemctl --user stop claudio 2>/dev/null || true
+            systemctl --user disable claudio 2>/dev/null || true
+            rm -f "$SYSTEMD_UNIT"
+            systemctl --user daemon-reload 2>/dev/null
 
-        _disable_linger
+            _disable_linger
+        fi
+
+        cron_uninstall
+        symlink_uninstall
+        print_success "Claudio service removed."
+
+        if [ "$arg" = "--purge" ]; then
+            rm -rf "$CLAUDIO_PATH"
+            print_success "Removed ${CLAUDIO_PATH}"
+        fi
+        return
     fi
 
-    cron_uninstall
-    symlink_uninstall
-    print_success "Claudio service removed."
+    # Per-bot uninstall: claudio uninstall <bot_name>
+    local bot_id="$arg"
+    local bot_dir="$CLAUDIO_PATH/bots/$bot_id"
 
-    if [ "$purge" = true ]; then
-        rm -rf "$CLAUDIO_PATH"
-        print_success "Removed ${CLAUDIO_PATH}"
+    if [ ! -d "$bot_dir" ]; then
+        print_error "Bot '$bot_id' not found at $bot_dir"
+        exit 1
     fi
+
+    echo "This will remove bot '$bot_id' and all its data:"
+    echo "  $bot_dir/"
+    read -rp "Continue? [y/N] " confirm
+    if [[ ! "$confirm" =~ ^[Yy] ]]; then
+        echo "Cancelled."
+        return
+    fi
+
+    rm -rf "$bot_dir"
+    print_success "Bot '$bot_id' removed."
+
+    # Restart service to drop the bot
+    service_restart 2>/dev/null || true
 }
 
 service_restart() {
