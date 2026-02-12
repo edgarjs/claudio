@@ -17,10 +17,6 @@ VERSION=$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null) || VERSION="unknown"
 # Source library files
 # shellcheck source=lib/config.sh
 source "$LIB_DIR/config.sh"
-# shellcheck source=lib/history.sh
-source "$LIB_DIR/history.sh"
-# shellcheck source=lib/claude.sh
-source "$LIB_DIR/claude.sh"
 # shellcheck source=lib/telegram.sh
 source "$LIB_DIR/telegram.sh"
 # shellcheck source=lib/whatsapp.sh
@@ -31,12 +27,6 @@ source "$LIB_DIR/server.sh"
 source "$LIB_DIR/service.sh"
 # shellcheck source=lib/backup.sh
 source "$LIB_DIR/backup.sh"
-# shellcheck source=lib/tts.sh
-source "$LIB_DIR/tts.sh"
-# shellcheck source=lib/stt.sh
-source "$LIB_DIR/stt.sh"
-# shellcheck source=lib/memory.sh
-source "$LIB_DIR/memory.sh"
 
 usage() {
     cat <<EOF
@@ -92,24 +82,6 @@ case "${1:-}" in
     version|--version|-v)
         echo "claudio v${VERSION}"
         exit 0
-        ;;
-    _webhook)
-        # Load per-bot config from CLAUDIO_BOT_ID (set by server.py)
-        if [ -n "$CLAUDIO_BOT_ID" ]; then
-            claudio_load_bot "$CLAUDIO_BOT_ID"
-        fi
-        history_init
-        memory_init
-        body=$(cat)
-        # Call appropriate handler based on platform passed from server.py
-        platform="${2:-}"
-        if [ "$platform" = "whatsapp" ]; then
-            whatsapp_handle_webhook "$body"
-        elif [ "$platform" = "telegram" ]; then
-            telegram_handle_webhook "$body"
-        else
-            log_error "webhook" "Unknown platform '$platform' for bot $CLAUDIO_BOT_ID"
-        fi
         ;;
     status)
         service_status

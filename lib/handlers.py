@@ -1,8 +1,8 @@
 """Webhook orchestrator for Claudio.
 
 Routes webhooks to the appropriate platform handler and runs the unified
-message processing pipeline. Replaces the telegram.sh and whatsapp.sh
-Bash webhook handlers.
+message processing pipeline (media download, voice transcription, Claude
+invocation, response delivery).
 
 Entry point: process_webhook(body, bot_id, platform, bot_config_dict)
 """

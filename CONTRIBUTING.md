@@ -34,9 +34,8 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/server.sh` — Starts the Python HTTP server and cloudflared tunnel, multi-bot webhook registration
 - `lib/server.py` — Python HTTP server (stdlib `http.server`, port 8421), multi-bot dispatch via secret-token matching, SIGHUP hot-reload, `/reload` endpoint
 - `lib/handlers.py` — Webhook orchestrator: unified pipeline for Telegram and WhatsApp
-- `lib/telegram.sh` — Telegram Bot API: setup wizard, send message helpers for health-check alerts
-- `lib/whatsapp.sh` — WhatsApp Business API: setup wizard
-- `lib/claude.sh` — Claude Code CLI wrapper (legacy, kept for compatibility)
+- `lib/telegram.sh` — Telegram Bot API: `telegram_api()`, `telegram_send_message()` (used by setup wizard + health-check alerts), and `telegram_setup()`
+- `lib/whatsapp.sh` — WhatsApp Business API: `whatsapp_api()`, `whatsapp_send_message()`, and `whatsapp_setup()`
 - `lib/telegram_api.py` — Python Telegram Bot API client with retry logic
 - `lib/whatsapp_api.py` — Python WhatsApp Business API client with retry logic
 - `lib/elevenlabs.py` — Python ElevenLabs TTS/STT integration
@@ -47,8 +46,6 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/db.sh` — SQLite database layer for conversation storage
 - `lib/log.sh` — Centralized logging
 - `lib/health-check.sh` — Cron health-check script (every minute) for webhook monitoring; auto-restarts service if unreachable (throttled to once per 3 minutes, max 3 attempts), sends Telegram alert on failure
-- `lib/tts.sh` — ElevenLabs text-to-speech for voice responses (Bash handler path)
-- `lib/stt.sh` — ElevenLabs speech-to-text for voice message transcription (Bash handler path)
 - `lib/backup.sh` — Automated backup management: rsync-based hourly/daily rotating backups with cron scheduling
 - `lib/memory.sh` — Cognitive memory system (bash glue), invokes `lib/memory.py`
 - `lib/memory.py` — Python memory backend: embeddings, retrieval, consolidation
@@ -89,7 +86,6 @@ Tests are located in the `tests/` directory. Key test suites:
 - `tests/multibot.bats` — Multi-bot config: migration, loading, saving, listing (19 tests)
 - `tests/db.bats` — SQLite conversation storage
 - `tests/telegram.bats` — Telegram API integration
-- `tests/claude.bats` — Claude Code CLI wrapper
 - `tests/health-check.bats` — Health check and monitoring
 - `tests/memory.bats` — Cognitive memory system
 

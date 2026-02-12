@@ -20,16 +20,13 @@ Claudio is a messaging-to-Claude Code bridge. It supports both Telegram and What
   - `lib/claude_runner.py` — Claude CLI invocation with `start_new_session=True`, MCP config, JSON output parsing, token usage persistence. Returns `ClaudeResult` namedtuple.
   - `lib/config.py` — `BotConfig` class with typed fields for all bot.env + service.env keys. `save_model()` for /opus, /sonnet, /haiku commands.
   - `lib/util.py` — Shared utilities: `sanitize_for_prompt()`, `summarize()`, filename validation, magic byte checks (image/audio/OGG), `MultipartEncoder`, `strip_markdown()`, logging helpers.
-- **Bash modules** (setup, health-check, and CLI — webhook handling is now Python-only):
-  - `lib/telegram.sh` — Telegram Bot API integration: `telegram_setup()` for interactive bot configuration, send message helpers used by health-check alerts.
-  - `lib/whatsapp.sh` — WhatsApp Business API integration: `whatsapp_setup()` for interactive bot configuration.
-  - `lib/claude.sh` — Claude Code CLI wrapper (legacy, kept for `_webhook` subcommand compatibility).
+- **Bash modules** (setup, health-check, and CLI):
+  - `lib/telegram.sh` — Telegram Bot API: `telegram_api()`, `telegram_send_message()` (used by setup wizard + health-check alerts), and `telegram_setup()` for interactive bot configuration.
+  - `lib/whatsapp.sh` — WhatsApp Business API: `whatsapp_api()`, `whatsapp_send_message()`, and `whatsapp_setup()` for interactive bot configuration.
 - `lib/history.sh` — Conversation history wrapper, delegates to `lib/db.sh` for SQLite storage. Per-bot history stored in `$CLAUDIO_BOT_DIR/history.db`.
 - `lib/db.sh` — SQLite database layer for conversation storage.
 - `lib/log.sh` — Centralized logging with module prefix, optional bot_id (from `CLAUDIO_BOT_ID` env var), and file output. Format: `[timestamp] [module] [bot_id] message`.
 - `lib/health-check.sh` — Cron health-check script (runs every minute) that calls `/health` endpoint. Auto-restarts the service if unreachable (throttled to once per 3 minutes, max 3 attempts). Sends Telegram alert after exhausting retries. Additional checks when healthy: disk usage alerts, log rotation, backup freshness, and recent log analysis (errors, restart loops, slow API — configurable via `LOG_CHECK_WINDOW` and `LOG_ALERT_COOLDOWN`). State: `.last_restart_attempt`, `.restart_fail_count`, `.last_log_alert` in `$HOME/.claudio/`. Loads first bot's credentials for alerting.
-- `lib/tts.sh` — ElevenLabs text-to-speech integration for generating voice responses.
-- `lib/stt.sh` — ElevenLabs speech-to-text integration for transcribing incoming voice messages.
 - `lib/backup.sh` — Automated backup management: rsync-based hourly/daily rotating backups of `$HOME/.claudio/` with cron scheduling. Subcommands: `backup <dest>`, `backup status <dest>`, `backup cron install/uninstall`.
 - `lib/memory.sh` — Cognitive memory system (bash glue). Invokes `lib/memory.py` for embedding-based retrieval and ACT-R activation scoring. Consolidates conversation history into long-term memories. Degrades gracefully if fastembed is not installed.
 - `lib/mcp_tools.py` — MCP stdio server exposing Claudio tools: Telegram notifications (`send_telegram_message`) and delayed service restart (`restart_service`). Pure stdlib, no external dependencies.

@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 # Add lib/ to path so we can import server module
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
@@ -27,6 +28,9 @@ def _make_webhook(update_id, chat_id="123", text="hello"):
     )
 
 
+_TEST_BOT_CONFIG = {"chat_id": "123", "secret": "s", "bot_dir": "/tmp", "token": "t"}
+
+
 def _reset_server_state():
     """Reset module-level state between tests."""
     with server.queue_lock:
@@ -35,6 +39,9 @@ def _reset_server_state():
         server.active_threads.clear()
         server.seen_updates.clear()
         server.shutting_down = False
+    with server.bots_lock:
+        server.bots.clear()
+        server.bots_by_secret.clear()
 
 
 class TestGracefulShutdown(unittest.TestCase):
@@ -49,65 +56,53 @@ class TestGracefulShutdown(unittest.TestCase):
         server.shutting_down = True
         body = _make_webhook(1)
 
-        server.enqueue_webhook(body)
+        server.enqueue_webhook(body, "test-bot", _TEST_BOT_CONFIG)
 
         with server.queue_lock:
             self.assertEqual(len(server.chat_queues), 0)
             self.assertEqual(len(server.active_threads), 0)
 
-    def test_processor_thread_is_non_daemon(self):
+    @patch("server._process_webhook")
+    def test_processor_thread_is_non_daemon(self, mock_process):
         """Processor threads must be non-daemon to survive shutdown."""
-        # We need a mock CLAUDIO_BIN that exits quickly
-        original_bin = server.CLAUDIO_BIN
-        original_log = server.LOG_FILE
-        try:
-            server.CLAUDIO_BIN = "/bin/cat"
-            server.LOG_FILE = "/dev/null"
+        mock_process.return_value = None
 
-            body = _make_webhook(100)
-            server.enqueue_webhook(body)
+        body = _make_webhook(100)
+        server.enqueue_webhook(body, "test-bot", _TEST_BOT_CONFIG)
 
-            # Give thread time to start
-            time.sleep(0.1)
+        # Give thread time to start
+        time.sleep(0.1)
 
-            with server.queue_lock:
-                threads = list(server.active_threads)
+        with server.queue_lock:
+            threads = list(server.active_threads)
 
-            # Thread should exist and be non-daemon
-            # (it may have already finished since /bin/cat exits on empty stdin)
-            # The important thing is that when it was created, daemon=False
-            # We verify by checking the thread was added to active_threads
-            # Even if it already completed, we know it was tracked
-        finally:
-            server.CLAUDIO_BIN = original_bin
-            server.LOG_FILE = original_log
-            # Wait for any threads to finish
-            time.sleep(0.5)
+        # Thread should exist and be non-daemon
+        # (it may have already finished since mock returns immediately)
+        # The important thing is that when it was created, daemon=False
+        # We verify by checking the thread was added to active_threads
+        # Even if it already completed, we know it was tracked
 
-    def test_active_threads_cleaned_up_after_completion(self):
+        # Wait for thread to finish
+        time.sleep(0.5)
+
+    @patch("server._process_webhook")
+    def test_active_threads_cleaned_up_after_completion(self, mock_process):
         """Threads remove themselves from active_threads when done."""
-        original_bin = server.CLAUDIO_BIN
-        original_log = server.LOG_FILE
-        try:
-            server.CLAUDIO_BIN = "/bin/true"
-            server.LOG_FILE = "/dev/null"
+        mock_process.return_value = None
 
-            body = _make_webhook(200)
-            server.enqueue_webhook(body)
+        body = _make_webhook(200)
+        server.enqueue_webhook(body, "test-bot", _TEST_BOT_CONFIG)
 
-            # Wait for the processor thread to finish
-            with server.queue_lock:
-                threads_snapshot = list(server.active_threads)
-            for t in threads_snapshot:
-                t.join(timeout=5)
+        # Wait for the processor thread to finish
+        with server.queue_lock:
+            threads_snapshot = list(server.active_threads)
+        for t in threads_snapshot:
+            t.join(timeout=5)
 
-            with server.queue_lock:
-                self.assertEqual(len(server.active_threads), 0)
-                self.assertEqual(len(server.chat_queues), 0)
-                self.assertEqual(len(server.chat_active), 0)
-        finally:
-            server.CLAUDIO_BIN = original_bin
-            server.LOG_FILE = original_log
+        with server.queue_lock:
+            self.assertEqual(len(server.active_threads), 0)
+            self.assertEqual(len(server.chat_queues), 0)
+            self.assertEqual(len(server.chat_active), 0)
 
     def test_shutdown_waits_for_active_thread(self):
         """_graceful_shutdown blocks until active threads complete."""
@@ -149,43 +144,38 @@ class TestGracefulShutdown(unittest.TestCase):
 
         # Try to enqueue multiple messages
         for i in range(5):
-            server.enqueue_webhook(_make_webhook(400 + i))
+            server.enqueue_webhook(
+                _make_webhook(400 + i), "test-bot", _TEST_BOT_CONFIG
+            )
 
         with server.queue_lock:
             self.assertEqual(len(server.chat_queues), 0)
 
-
-    def test_queue_loop_drains_during_shutdown(self):
+    @patch("server._process_webhook")
+    def test_queue_loop_drains_during_shutdown(self, mock_process):
         """_process_queue_loop processes remaining messages during shutdown."""
-        original_bin = server.CLAUDIO_BIN
-        original_log = server.LOG_FILE
-        try:
-            server.CLAUDIO_BIN = "/bin/true"
-            server.LOG_FILE = "/dev/null"
+        mock_process.return_value = None
 
-            # Manually load 3 messages into the queue without starting a thread
-            chat_id = "99999"
-            with server.queue_lock:
-                server.chat_queues[chat_id] = server.deque()
-                for i in range(3):
-                    server.chat_queues[chat_id].append(
-                        _make_webhook(700 + i, chat_id=chat_id)
-                    )
-                server.chat_active[chat_id] = True
+        # Manually load 3 messages into the queue without starting a thread
+        queue_key = "test-bot:99999"
+        with server.queue_lock:
+            server.chat_queues[queue_key] = server.deque()
+            for i in range(3):
+                server.chat_queues[queue_key].append(
+                    (_make_webhook(700 + i, chat_id="99999"), "test-bot", "telegram")
+                )
+            server.chat_active[queue_key] = True
 
-            # Set shutdown before the loop runs — it should still drain all messages
-            with server.queue_lock:
-                server.shutting_down = True
+        # Set shutdown before the loop runs — it should still drain all messages
+        with server.queue_lock:
+            server.shutting_down = True
 
-            server._process_queue_loop(chat_id)
+        server._process_queue_loop(queue_key)
 
-            with server.queue_lock:
-                # Queue should be fully drained and cleaned up
-                self.assertNotIn(chat_id, server.chat_queues)
-                self.assertNotIn(chat_id, server.chat_active)
-        finally:
-            server.CLAUDIO_BIN = original_bin
-            server.LOG_FILE = original_log
+        with server.queue_lock:
+            # Queue should be fully drained and cleaned up
+            self.assertNotIn(queue_key, server.chat_queues)
+            self.assertNotIn(queue_key, server.chat_active)
 
     def test_shutdown_join_has_timeout(self):
         """_graceful_shutdown uses timeout on thread.join to avoid blocking forever."""
@@ -231,8 +221,6 @@ class TestGracefulShutdown(unittest.TestCase):
 
     def test_503_during_shutdown_via_handler(self):
         """HTTP handler returns 503 when shutting_down is True."""
-        from http.server import HTTPServer
-        from io import BytesIO
         import http.client
 
         with server.queue_lock:
@@ -270,26 +258,20 @@ class TestQueueDeduplication(unittest.TestCase):
     def tearDown(self):
         _reset_server_state()
 
-    def test_duplicate_update_id_rejected(self):
-        original_bin = server.CLAUDIO_BIN
-        original_log = server.LOG_FILE
-        try:
-            server.CLAUDIO_BIN = "/bin/true"
-            server.LOG_FILE = "/dev/null"
+    @patch("server._process_webhook")
+    def test_duplicate_update_id_rejected(self, mock_process):
+        mock_process.return_value = None
 
-            body = _make_webhook(500)
-            server.enqueue_webhook(body)
-            # Enqueue same update_id again
-            server.enqueue_webhook(body)
+        body = _make_webhook(500)
+        server.enqueue_webhook(body, "test-bot", _TEST_BOT_CONFIG)
+        # Enqueue same update_id again
+        server.enqueue_webhook(body, "test-bot", _TEST_BOT_CONFIG)
 
-            # Should only have 1 message queued (or 0 if thread already processed it)
-            time.sleep(0.5)
-            with server.queue_lock:
-                total = sum(len(q) for q in server.chat_queues.values())
-                self.assertEqual(total, 0)  # Processed by now
-        finally:
-            server.CLAUDIO_BIN = original_bin
-            server.LOG_FILE = original_log
+        # Should only have 1 message queued (or 0 if thread already processed it)
+        time.sleep(0.5)
+        with server.queue_lock:
+            total = sum(len(q) for q in server.chat_queues.values())
+            self.assertEqual(total, 0)  # Processed by now
 
 
 if __name__ == "__main__":
