@@ -15,6 +15,7 @@ import threading
 import traceback
 
 from lib.config import BotConfig, parse_env_file
+from lib.memory import _try_daemon as memory_daemon_call
 from lib.util import (
     log, log_error,
     sanitize_for_prompt, summarize,
@@ -365,8 +366,7 @@ def _history_get_context(db_file, limit):
 
 def _memory_retrieve(query):
     """Retrieve relevant memories via the memory daemon."""
-    from lib.memory import _try_daemon
-    resp = _try_daemon({"command": "retrieve", "query": query, "top_k": 5})
+    resp = memory_daemon_call({"command": "retrieve", "query": query, "top_k": 5})
     if resp and "result" in resp:
         return resp["result"]
     return ''
@@ -374,9 +374,8 @@ def _memory_retrieve(query):
 
 def _memory_consolidate():
     """Trigger memory consolidation via daemon (best-effort, background)."""
-    from lib.memory import _try_daemon
     try:
-        _try_daemon({"command": "consolidate", "_timeout": 150})
+        memory_daemon_call({"command": "consolidate", "_timeout": 150})
     except Exception:
         pass
 

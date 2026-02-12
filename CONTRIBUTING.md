@@ -33,10 +33,10 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/config.sh` — Multi-bot config management: global (`service.env`) and per-bot (`bots/<bot_id>/bot.env`) configuration, migration, loading, saving, listing, bot_id validation for security
 - `lib/server.sh` — Starts the Python HTTP server and cloudflared tunnel, multi-bot webhook registration
 - `lib/server.py` — Python HTTP server (stdlib `http.server`, port 8421), multi-bot dispatch via secret-token matching, SIGHUP hot-reload, `/reload` endpoint
-- `lib/telegram.sh` — Telegram Bot API integration (messages, webhooks, images, documents, voice), per-bot setup (Bash handler path)
-- `lib/whatsapp.sh` — WhatsApp Business API integration (Bash handler path)
-- `lib/claude.sh` — Claude Code CLI wrapper with conversation context, global SYSTEM_PROMPT.md and per-bot CLAUDE.md support (Bash handler path)
-- `lib/handlers.py` — Python webhook orchestrator: unified pipeline for Telegram and WhatsApp (Python handler path, enabled via `CLAUDIO_PYTHON_HANDLERS=1`)
+- `lib/handlers.py` — Webhook orchestrator: unified pipeline for Telegram and WhatsApp
+- `lib/telegram.sh` — Telegram Bot API: setup wizard, send message helpers for health-check alerts
+- `lib/whatsapp.sh` — WhatsApp Business API: setup wizard
+- `lib/claude.sh` — Claude Code CLI wrapper (legacy, kept for compatibility)
 - `lib/telegram_api.py` — Python Telegram Bot API client with retry logic
 - `lib/whatsapp_api.py` — Python WhatsApp Business API client with retry logic
 - `lib/elevenlabs.py` — Python ElevenLabs TTS/STT integration

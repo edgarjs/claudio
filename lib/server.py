@@ -29,7 +29,6 @@ MAX_PHOTOS_PER_GROUP = 10  # Max photos allowed in a single media group
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CLAUDIO_BIN = os.path.join(SCRIPT_DIR, "..", "claudio")
 CLAUDIO_PATH = os.path.join(os.path.expanduser("~"), ".claudio")
 LOG_FILE = os.path.join(CLAUDIO_PATH, "claudio.log")
 MEMORY_SOCKET = os.path.join(CLAUDIO_PATH, "memory.sock")
@@ -38,9 +37,6 @@ PORT = int(os.environ.get("PORT", 8421))
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 ALEXA_SKILL_ID = os.environ.get("ALEXA_SKILL_ID", "")
 MANAGEMENT_SECRET = os.environ.get("MANAGEMENT_SECRET", "")
-
-# Python webhook handlers (opt-in via CLAUDIO_PYTHON_HANDLERS=1 env var)
-_USE_PYTHON_HANDLERS = os.environ.get("CLAUDIO_PYTHON_HANDLERS", "") == "1"
 
 # Multi-bot registry: loaded from ~/.claudio/bots/*/bot.env
 # bots: dict of bot_id -> {"token": str, "chat_id": str, "secret": str, ...}
@@ -292,22 +288,19 @@ def _process_queue_loop(queue_key):
                 return
             body, bot_id, platform = chat_queues[queue_key].popleft()
 
-        if _USE_PYTHON_HANDLERS:
-            _process_webhook_python(body, bot_id, platform, queue_key)
-        else:
-            _process_webhook_bash(body, bot_id, platform, queue_key)
+        _process_webhook(body, bot_id, platform, queue_key)
 
 
-def _process_webhook_python(body, bot_id, platform, queue_key):
+def _process_webhook(body, bot_id, platform, queue_key):
     """Process a webhook using the in-process Python handler."""
-    try:
-        # Ensure repo root is on sys.path so lib.* imports resolve
-        # (server.py is launched as `python3 lib/server.py` from server.sh)
-        _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if _repo_root not in sys.path:
-            sys.path.insert(0, _repo_root)
-        from lib.handlers import process_webhook
+    # Ensure repo root is on sys.path so lib.* imports resolve
+    # (server.py is launched as `python3 lib/server.py` by server.sh)
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from lib.handlers import process_webhook
 
+    try:
         # Look up bot config from the global registry
         with bots_lock:
             if platform == 'telegram':
@@ -321,53 +314,6 @@ def _process_webhook_python(body, bot_id, platform, queue_key):
     except Exception as e:
         sys.stderr.write(log_msg("queue", f"Error processing message for {queue_key}: {e}", bot_id))
         time.sleep(1)
-
-
-def _process_webhook_bash(body, bot_id, platform, queue_key):
-    """Process a webhook by spawning the Bash handler subprocess."""
-    proc = None
-    try:
-        with open(LOG_FILE, "a") as log_fh:
-            # Ensure PATH includes ~/.local/bin for claude command
-            env = os.environ.copy()
-            home = os.path.expanduser("~")
-            local_bin = os.path.join(home, ".local", "bin")
-            if local_bin not in env.get("PATH", "").split(os.pathsep):
-                env["PATH"] = f"{local_bin}{os.pathsep}{env.get('PATH', '')}"
-
-            # Pass bot_id so the webhook handler loads the right config
-            env["CLAUDIO_BOT_ID"] = bot_id
-
-            proc = subprocess.Popen(
-                [CLAUDIO_BIN, "_webhook", platform],
-                stdin=subprocess.PIPE,
-                stdout=log_fh,
-                stderr=log_fh,
-                env=env,
-                start_new_session=True,
-            )
-            proc.communicate(input=body.encode(), timeout=WEBHOOK_TIMEOUT)
-            if proc.returncode != 0:
-                sys.stderr.write(log_msg(
-                    "queue",
-                    f"Webhook handler exited with code {proc.returncode} for {queue_key}",
-                    bot_id
-                ))
-    except subprocess.TimeoutExpired:
-        sys.stderr.write(log_msg(
-            "queue",
-            f"Webhook handler timed out after {WEBHOOK_TIMEOUT}s for {queue_key}, killing process",
-            bot_id
-        ))
-        if proc:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except Exception as e:
-        sys.stderr.write(log_msg("queue", f"Error processing message for {queue_key}: {e}", bot_id))
-        time.sleep(1)  # Avoid tight loop on persistent errors
 
 
 def _merge_media_group(group_key):

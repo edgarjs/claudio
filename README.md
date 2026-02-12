@@ -384,10 +384,6 @@ claudio restart
 - `MEMORY_EMBEDDING_MODEL` — Sentence-transformers model for memory embeddings. Default: `sentence-transformers/all-MiniLM-L6-v2`.
 - `MEMORY_CONSOLIDATION_MODEL` — Claude model used for memory consolidation. Default: `haiku`.
 
-**Webhook Handlers**
-
-- `CLAUDIO_PYTHON_HANDLERS` — Set to `1` to use the in-process Python webhook handlers instead of Bash subprocesses. Reduces per-message latency by 400-800ms. Default: unset (Bash handlers).
-
 **Health Check**
 
 - `DISK_USAGE_THRESHOLD` — Disk usage percentage to trigger alerts. Default: `90`.
@@ -473,7 +469,7 @@ python3 -m pytest tests/test_handlers.py -v
 - [x] Health check log analysis (error detection, restart loops, API slowness)
 - [x] Claude code review for Pull Requests (GitHub Actions)
 - [x] WhatsApp Business API integration with dual-platform support (single bot serving both Telegram and WhatsApp)
-- [x] Python webhook handlers (opt-in via `CLAUDIO_PYTHON_HANDLERS=1`, eliminates Bash subprocess overhead)
+- [x] Python webhook handlers (eliminates Bash subprocess overhead, ~400-800ms latency reduction)
 
 **Future**
 
