@@ -279,7 +279,7 @@ def service_install_systemd(config):
     claudio_bin = _claudio_bin()
     env_file = config.env_file
     home = os.path.expanduser("~")
-    user = os.environ.get("USER", os.getlogin())
+    user = os.environ.get("USER") or os.getenv("LOGNAME") or "pi"
 
     unit_content = f"""\
 [Unit]
@@ -329,7 +329,7 @@ def service_install_launchd(config):
     claudio_bin = _claudio_bin()
     claudio_path = config.claudio_path
     home = os.path.expanduser("~")
-    user = os.environ.get("USER", os.getlogin())
+    user = os.environ.get("USER") or os.getenv("LOGNAME") or "pi"
 
     plist_content = f"""\
 <?xml version="1.0" encoding="UTF-8"?>
