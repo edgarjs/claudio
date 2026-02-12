@@ -21,11 +21,16 @@ register_webhook() {
         ((attempt++)) || true
         local result
         # Pass bot token via --config to avoid exposing it in process list (ps aux)
-        local curl_args=("-s" "--config" <(printf 'url = "https://api.telegram.org/bot%s/setWebhook"\n' "$bot_token") "-d" "url=${tunnel_url}/telegram/webhook" "-d" 'allowed_updates=["message"]')
+        # Use a temporary file instead of process substitution for better compatibility
+        local curl_config
+        curl_config=$(mktemp)
+        printf 'url = "https://api.telegram.org/bot%s/setWebhook"\n' "$bot_token" > "$curl_config"
+        local curl_args=("-s" "--config" "$curl_config" "-d" "url=${tunnel_url}/telegram/webhook" "-d" 'allowed_updates=["message"]')
         if [ -n "$bot_secret" ]; then
             curl_args+=("-d" "secret_token=${bot_secret}")
         fi
         result=$(curl "${curl_args[@]}")
+        rm -f "$curl_config"
         local wh_ok
         wh_ok=$(echo "$result" | jq -r '.ok')
 
@@ -84,16 +89,21 @@ register_all_webhooks() {
         local bot_env="$bot_dir/bot.env"
         [ -f "$bot_env" ] || continue
 
-        # Load bot config using robust parsing (in subshell to avoid polluting globals)
+        # Load bot config using safe loader (defense-in-depth against command injection)
         local bot_token bot_secret bot_chat_id
         eval "$(
-            set -a
-            # shellcheck source=/dev/null
-            source "$bot_env" 2>/dev/null || true
-            set +a
-            printf 'bot_token=%q\n' "$TELEGRAM_BOT_TOKEN"
-            printf 'bot_secret=%q\n' "$WEBHOOK_SECRET"
-            printf 'bot_chat_id=%q\n' "$TELEGRAM_CHAT_ID"
+            (
+                # Unset variables to ensure we load them from the bot's env file
+                unset TELEGRAM_BOT_TOKEN WEBHOOK_SECRET TELEGRAM_CHAT_ID
+                # Source the safe loader and the bot's env file
+                # shellcheck source=lib/config.sh
+                source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
+                _safe_load_env "$bot_env"
+                # Print the variables in a format that can be eval'd
+                printf 'bot_token=%q\n' "${TELEGRAM_BOT_TOKEN:-}"
+                printf 'bot_secret=%q\n' "${WEBHOOK_SECRET:-}"
+                printf 'bot_chat_id=%q\n' "${TELEGRAM_CHAT_ID:-}"
+            )
         )"
 
         if [ -z "$bot_token" ]; then

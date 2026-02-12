@@ -8,7 +8,7 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 
 ## Architecture
 
-- `claudio` — Main CLI entry point, dispatches subcommands (`status`, `start`, `install [bot_name]`, `uninstall <bot>`, `update`, `restart`, `log`, `telegram setup`, `version`).
+- `claudio` — Main CLI entry point, dispatches subcommands (`status`, `start`, `install [bot_id]`, `uninstall {<bot_id>|--purge}`, `update`, `restart`, `log`, `telegram setup`, `version`).
 - `lib/config.sh` — Multi-bot config management. Handles global config (`$HOME/.claudio/service.env`) and per-bot config (`$HOME/.claudio/bots/<bot_id>/bot.env`). Functions: `claudio_load_bot()`, `claudio_save_bot_env()`, `claudio_list_bots()`, `_migrate_to_multi_bot()` (auto-migrates single-bot installs).
 - `lib/server.sh` — Starts the Python HTTP server and cloudflared named tunnel together. Handles webhook registration with retry logic. `register_all_webhooks()` registers webhooks for all configured bots.
 - `lib/server.py` — Python HTTP server (stdlib `http.server`), listens on port 8421, routes POST `/telegram/webhook`. Multi-bot dispatch: matches incoming webhooks to bots via secret-token header, loads bot registry from `~/.claudio/bots/*/bot.env`. SIGHUP handler for hot-reload. Composite queue keys (`bot_id:chat_id`) for per-bot message isolation. `/reload` endpoint (requires `MANAGEMENT_SECRET` authentication). Logging includes bot_id via `log_msg()` helper.

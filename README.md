@@ -23,7 +23,7 @@ Claudio is an adapter for Claude Code CLI and Telegram. It makes a tunnel betwee
 
 Claudio starts a local HTTP server that listens on port 8421, and creates a tunnel using [cloudflared](https://github.com/cloudflare/cloudflared). When a user sends a message from Telegram, it's sent to `<cloudflare-tunnel-url>/telegram/webhook` and forwarded to the Claude Code CLI.
 
-Claudio supports **multiple bots**: each bot has its own Telegram token, chat ID, webhook secret, conversation history, and configuration. Incoming webhooks are matched to bots via secret-token validation, and each bot maintains independent conversation context.
+Claudio supports **multiple bots**: each bot has its own Telegram token, chat ID, webhook secret, conversation history, and configuration. Incoming webhooks are matched to bots via HMAC secret-token header matching, and each bot maintains independent conversation context.
 
 User messages are passed as one-shot prompts, along with conversation context to maintain continuity. All messages are stored in a per-bot SQLite database, with the last 100 used as conversation context (configurable via `MAX_HISTORY_LINES`).
 
@@ -47,7 +47,7 @@ The whole purpose of Claudio is to give you remote access to Claude Code from yo
 
 **⚠️ CLAUDE CODE RUNS WITH ALL TOOLS AUTO-APPROVED (`--tools` + `--allowedTools`) AND `--disable-slash-commands`**
 
-Since there's no human in front of the terminal to approve permission prompts, Claude Code must run autonomously. Rather than using `--dangerously-skip-permissions`, Claudio explicitly lists the tools Claude can use and auto-approves them — excluding interactive-only tools like `AskUserQuestion` and `Chrome`. Claudio mitigates the risk through: webhook secret validation (HMAC), single authorized `chat_id`, and binding the HTTP server to localhost only (external access goes through cloudflared).
+Since there's no human in front of the terminal to approve permission prompts, Claude Code must run autonomously. Claudio explicitly whitelists allowed tools via `--allowedTools` (safer than `--dangerously-skip-permissions`) and auto-approves them with `--tools` — excluding interactive-only tools like `AskUserQuestion` and `Chrome`. Claudio mitigates the risk through: webhook secret validation (HMAC), single authorized `chat_id` per bot, and binding the HTTP server to localhost only (external access goes through cloudflared).
 
 ### Requirements
 
@@ -79,15 +79,19 @@ This will:
 
 > **Note:** If `~/.local/bin` is not in your PATH, you'll need to add it. See the installation output for instructions.
 
-> **Multi-bot support:** To configure additional bots, run `claudio install <bot_name>` with a unique bot name. Each bot will have its own Telegram credentials, conversation history, and configuration stored in `~/.claudio/bots/<bot_name>/`.
+> **Multi-bot support:** To configure additional bots, run `claudio install <bot_id>` with a unique bot identifier (alphanumeric, hyphens, and underscores only). Each bot will have its own Telegram credentials, conversation history, and configuration stored in `~/.claudio/bots/<bot_id>/`.
 
 2. Set up Telegram bot credentials
 
-The install wizard will guide you through Telegram bot setup. If you skipped it or need to reconfigure, in Telegram, message `@BotFather` with `/newbot` and follow instructions to create a bot. At the end, you'll be given a secret token, copy it and then run:
+The install wizard will guide you through Telegram bot setup. If you skipped it or need to reconfigure, in Telegram, message `@BotFather` with `/newbot` and follow instructions to create a bot. At the end, you'll be given a secret token.
+
+For the default bot (or when reconfiguring an existing bot), run:
 
 ```bash
 claudio telegram setup
 ```
+
+For additional bots, use `claudio install <bot_id>` which will interactively configure the new bot's Telegram credentials.
 
 Paste your Telegram token when asked, and press Enter. Then, send a `/start` message to your bot from the Telegram account that you'll use to communicate with Claude Code.
 
@@ -137,10 +141,10 @@ claudio log -n 100
 To remove a specific bot's configuration:
 
 ```bash
-claudio uninstall <bot_name>
+claudio uninstall <bot_id>
 ```
 
-This will prompt for confirmation, then delete the bot's directory (`~/.claudio/bots/<bot_name>/`) including its credentials, conversation history, and configuration. The service will restart to reload the bot registry.
+This will prompt for confirmation, then delete the bot's directory (`~/.claudio/bots/<bot_id>/`) including its credentials, conversation history, and configuration. The service will restart to reload the bot registry.
 
 To stop the service and remove **all** bots and configuration:
 
@@ -303,14 +307,14 @@ claudio backup cron uninstall
 
 To customize Claude's behavior globally, use `~/.claude/CLAUDE.md` (Claude Code's built-in configuration file). Instructions there are loaded automatically by Claude Code on every invocation and persist across updates.
 
-For **per-bot customization**, create `~/.claudio/bots/<bot_name>/SYSTEM_PROMPT.md` or `~/.claudio/bots/<bot_name>/CLAUDE.md`. When a bot is loaded, Claudio will use the bot-specific prompt files if they exist, falling back to the global `~/.claude/CLAUDE.md` otherwise.
+For **per-bot customization**, create `~/.claudio/bots/<bot_id>/SYSTEM_PROMPT.md` or `~/.claudio/bots/<bot_id>/CLAUDE.md`. When a bot is loaded, Claudio will use the bot-specific prompt files if they exist, falling back to the global `~/.claude/CLAUDE.md` otherwise.
 
 ### Configuration
 
 Claudio stores its configuration and other files in `$HOME/.claudio/`. Configuration is split into:
 
 - **Global settings** (`$HOME/.claudio/service.env`) — Applies to all bots (server port, tunnel config, global feature flags).
-- **Per-bot settings** (`$HOME/.claudio/bots/<bot_name>/bot.env`) — Bot-specific credentials, model preference, and conversation history.
+- **Per-bot settings** (`$HOME/.claudio/bots/<bot_id>/bot.env`) — Bot-specific credentials, model preference, and conversation history.
 
 After any manual edits, restart to apply your changes:
 
@@ -361,7 +365,7 @@ claudio restart
 
 ---
 
-**Per-bot variables** (stored in `$HOME/.claudio/bots/<bot_name>/bot.env`):
+**Per-bot variables** (stored in `$HOME/.claudio/bots/<bot_id>/bot.env`):
 
 **Telegram**
 
@@ -376,7 +380,7 @@ claudio restart
 
 ---
 
-> Most global variables are configured automatically by `claudio install`. Per-bot variables are set during bot setup (`claudio install <bot_name>` or `claudio telegram setup`). Manual editing is only needed for fine-tuning.
+> Most global variables are configured automatically by `claudio install`. Per-bot variables are set during bot setup (`claudio install <bot_id>` or `claudio telegram setup`). Manual editing is only needed for fine-tuning.
 
 ---
 
