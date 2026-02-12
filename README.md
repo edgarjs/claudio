@@ -21,9 +21,11 @@ Claudio is an adapter for Claude Code CLI and Telegram. It makes a tunnel betwee
 
 ## Overview
 
-Claudio starts a local HTTP server that listens on port 8421, and creates a tunnel using [cloudflared](https://github.com/cloudflare/cloudflared). When the user sends a message from Telegram, it's sent to `<cloudflare-tunnel-url>/telegram/webhook` and forwarded to the Claude Code CLI.
+Claudio starts a local HTTP server that listens on port 8421, and creates a tunnel using [cloudflared](https://github.com/cloudflare/cloudflared). When a user sends a message from Telegram, it's sent to `<cloudflare-tunnel-url>/telegram/webhook` and forwarded to the Claude Code CLI.
 
-The user message is passed as a one-shot prompt, along with some context to maintain continuity. All messages are kept in the database, with the last 100 used as conversation context (configurable via `MAX_HISTORY_LINES`).
+Claudio supports **multiple bots**: each bot has its own Telegram token, chat ID, webhook secret, conversation history, and configuration. Incoming webhooks are matched to bots via HMAC secret-token header matching, and each bot maintains independent conversation context.
+
+User messages are passed as one-shot prompts, along with conversation context to maintain continuity. All messages are stored in a per-bot SQLite database, with the last 100 used as conversation context (configurable via `MAX_HISTORY_LINES`).
 
 After Claude Code finishes, it outputs a JSON response to stdout. Claudio parses the result text and token usage stats, then forwards the response to the Telegram API.
 
@@ -45,7 +47,7 @@ The whole purpose of Claudio is to give you remote access to Claude Code from yo
 
 **⚠️ CLAUDE CODE RUNS WITH ALL TOOLS AUTO-APPROVED (`--tools` + `--allowedTools`) AND `--disable-slash-commands`**
 
-Since there's no human in front of the terminal to approve permission prompts, Claude Code must run autonomously. Rather than using `--dangerously-skip-permissions`, Claudio explicitly lists the tools Claude can use and auto-approves them — excluding interactive-only tools like `AskUserQuestion` and `Chrome`. Claudio mitigates the risk through: webhook secret validation (HMAC), single authorized `chat_id`, and binding the HTTP server to localhost only (external access goes through cloudflared).
+Since there's no human in front of the terminal to approve permission prompts, Claude Code must run autonomously. Claudio explicitly whitelists allowed tools via `--allowedTools` (safer than `--dangerously-skip-permissions`) and auto-approves them with `--tools` — excluding interactive-only tools like `AskUserQuestion` and `Chrome`. Claudio mitigates the risk through: webhook secret validation (HMAC), single authorized `chat_id` per bot, and binding the HTTP server to localhost only (external access goes through cloudflared).
 
 ### Requirements
 
@@ -73,16 +75,23 @@ This will:
 - Set up a Cloudflare **named tunnel** (permanent URL, requires a free Cloudflare account)
 - Install a systemd/launchd service
 - Enable loginctl linger on Linux (so the service survives logout on headless systems)
+- Configure the default bot (named "claudio")
 
 > **Note:** If `~/.local/bin` is not in your PATH, you'll need to add it. See the installation output for instructions.
 
-2. Set up Telegram bot
+> **Multi-bot support:** To configure additional bots, run `claudio install <bot_id>` with a unique bot identifier (alphanumeric, hyphens, and underscores only). Each bot will have its own Telegram credentials, conversation history, and configuration stored in `~/.claudio/bots/<bot_id>/`.
 
-In Telegram, message `@BotFather` with `/newbot` and follow instructions to create a bot. At the end, you'll be given a secret token, copy it and then run:
+2. Set up Telegram bot credentials
+
+The install wizard will guide you through Telegram bot setup. If you skipped it or need to reconfigure, in Telegram, message `@BotFather` with `/newbot` and follow instructions to create a bot. At the end, you'll be given a secret token.
+
+For the default bot (or when reconfiguring an existing bot), run:
 
 ```bash
 claudio telegram setup
 ```
+
+For additional bots, use `claudio install <bot_id>` which will interactively configure the new bot's Telegram credentials.
 
 Paste your Telegram token when asked, and press Enter. Then, send a `/start` message to your bot from the Telegram account that you'll use to communicate with Claude Code.
 
@@ -129,17 +138,21 @@ claudio log -n 100
 
 ### Uninstall
 
-To stop and remove the service run:
+To remove a specific bot's configuration:
 
 ```bash
-claudio uninstall
+claudio uninstall <bot_id>
 ```
 
-If you want to remove the `$HOME/.claudio` directory completely, run:
+This will prompt for confirmation, then delete the bot's directory (`~/.claudio/bots/<bot_id>/`) including its credentials, conversation history, and configuration. The service will restart to reload the bot registry.
+
+To stop the service and remove **all** bots and configuration:
 
 ```bash
 claudio uninstall --purge
 ```
+
+This removes the `$HOME/.claudio` directory completely, stops the systemd/launchd service, removes the cron health check, uninstalls Claude Code hooks, and removes the `~/.local/bin/claudio` symlink.
 
 > On Linux, uninstall disables loginctl linger if no other user services remain enabled.
 
@@ -149,7 +162,7 @@ claudio uninstall --purge
 
 ### Model
 
-Claudio uses Haiku by default. If you want to switch to another model, just send the name of the model as a command: `/opus`, `/sonnet`, or `/haiku`. And then continue chatting.
+Claudio uses Haiku by default. If you want to switch to another model, just send the name of the model as a command: `/opus`, `/sonnet`, or `/haiku`. The model preference is saved per-bot and persists across restarts.
 
 ### Voice
 
@@ -292,11 +305,18 @@ claudio backup cron uninstall
 
 ### System Prompt
 
-To customize Claude's behavior, use `~/.claude/CLAUDE.md` (Claude Code's built-in configuration file). Instructions there are loaded automatically by Claude Code on every invocation and persist across updates.
+To customize Claude's behavior globally, use `~/.claude/CLAUDE.md` (Claude Code's built-in configuration file). Instructions there are loaded automatically by Claude Code on every invocation and persist across updates.
+
+For **per-bot customization**, create `~/.claudio/bots/<bot_id>/CLAUDE.md`. When a bot is loaded, Claudio will append the bot-specific CLAUDE.md (if it exists) to the global system prompt.
 
 ### Configuration
 
-Claudio stores its configuration and other files in `$HOME/.claudio/`. Settings are managed in the `service.env` file within that directory. After any manual edits, restart to apply your changes:
+Claudio stores its configuration and other files in `$HOME/.claudio/`. Configuration is split into:
+
+- **Global settings** (`$HOME/.claudio/service.env`) — Applies to all bots (server port, tunnel config, global feature flags).
+- **Per-bot settings** (`$HOME/.claudio/bots/<bot_id>/bot.env`) — Bot-specific credentials, model preference, and conversation history.
+
+After any manual edits, restart to apply your changes:
 
 ```bash
 claudio restart
@@ -304,23 +324,17 @@ claudio restart
 
 #### Environment Variables
 
-The following variables can be set in `$HOME/.claudio/service.env`:
+**Global variables** (stored in `$HOME/.claudio/service.env`):
 
 **Server**
 
 - `PORT` — HTTP server listening port. Default: `8421`.
 
-**Claude**
+**Tunnel**
 
-- `MODEL` — Claude model to use. Accepts `haiku`, `sonnet`, or `opus`. Default: `haiku`. Can also be changed at runtime via Telegram commands `/haiku`, `/sonnet`, `/opus`.
-- `MAX_HISTORY_LINES` — Number of recent messages used as conversation context. Default: `100`.
-
-**Telegram**
-
-- `TELEGRAM_BOT_TOKEN` — Telegram Bot API token. Set automatically during `claudio telegram setup`.
-- `TELEGRAM_CHAT_ID` — Authorized Telegram chat ID. Only messages from this chat are processed. Set automatically during `claudio telegram setup`.
+- `TUNNEL_NAME` — Name of the Cloudflare named tunnel. Set during `claudio install`.
+- `TUNNEL_HOSTNAME` — Hostname for the named tunnel (e.g. `claudio.example.com`). Set during `claudio install`.
 - `WEBHOOK_URL` — Public URL where Telegram sends webhook updates (e.g. `https://claudio.example.com`). Set automatically when using a named tunnel.
-- `WEBHOOK_SECRET` — HMAC secret for validating incoming webhook requests. Auto-generated on first run if not set.
 - `WEBHOOK_RETRY_DELAY` — Seconds between webhook registration retry attempts. Default: `60`.
 
 **Alexa (Optional)**
@@ -349,12 +363,24 @@ The following variables can be set in `$HOME/.claudio/service.env`:
 - `LOG_CHECK_WINDOW` — Seconds of recent log history to scan for errors and anomalies. Default: `300` (5 minutes).
 - `LOG_ALERT_COOLDOWN` — Minimum seconds between log-analysis alert notifications. Default: `1800` (30 minutes).
 
-**Tunnel**
+---
 
-- `TUNNEL_NAME` — Name of the Cloudflare named tunnel. Set during `claudio install`.
-- `TUNNEL_HOSTNAME` — Hostname for the named tunnel (e.g. `claudio.example.com`). Set during `claudio install`.
+**Per-bot variables** (stored in `$HOME/.claudio/bots/<bot_id>/bot.env`):
 
-> Most of these variables are configured automatically by `claudio install` and `claudio telegram setup`. Manual editing is only needed for fine-tuning.
+**Telegram**
+
+- `TELEGRAM_BOT_TOKEN` — Telegram Bot API token. Set automatically during `claudio telegram setup`.
+- `TELEGRAM_CHAT_ID` — Authorized Telegram chat ID. Only messages from this chat are processed. Set automatically during `claudio telegram setup`.
+- `WEBHOOK_SECRET` — HMAC secret for validating incoming webhook requests. Auto-generated during bot setup.
+
+**Claude**
+
+- `MODEL` — Claude model to use for this bot. Accepts `haiku`, `sonnet`, or `opus`. Default: `haiku`. Can also be changed at runtime via Telegram commands `/haiku`, `/sonnet`, `/opus`.
+- `MAX_HISTORY_LINES` — Number of recent messages used as conversation context for this bot. Default: `100`.
+
+---
+
+> Most global variables are configured automatically by `claudio install`. Per-bot variables are set during bot setup (`claudio install <bot_id>` or `claudio telegram setup`). Manual editing is only needed for fine-tuning.
 
 ---
 

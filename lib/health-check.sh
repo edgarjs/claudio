@@ -57,13 +57,22 @@ _safe_load_env() {
     done < "$env_file"
 }
 
-# Load environment for PORT, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+# Load environment for PORT and other global vars
 if [ ! -f "$CLAUDIO_ENV_FILE" ]; then
     log_error "health-check" "Environment file not found: $CLAUDIO_ENV_FILE"
     exit 1
 fi
 
 _safe_load_env "$CLAUDIO_ENV_FILE"
+
+# Load first bot's config for TELEGRAM_BOT_TOKEN/CHAT_ID (needed for alerts)
+if [ -d "$CLAUDIO_PATH/bots" ]; then
+    for _bot_env in "$CLAUDIO_PATH"/bots/*/bot.env; do
+        [ -f "$_bot_env" ] || continue
+        _safe_load_env "$_bot_env"
+        break  # Use first bot for alerts
+    done
+fi
 
 PORT="${PORT:-8421}"
 

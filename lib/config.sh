@@ -1,9 +1,9 @@
 #!/bin/bash
 # shellcheck disable=SC2034  # Variables are used by other sourced scripts
 
-export CLAUDIO_PATH="$HOME/.claudio"
-CLAUDIO_ENV_FILE="$CLAUDIO_PATH/service.env"
-CLAUDIO_LOG_FILE="$CLAUDIO_PATH/claudio.log"
+export CLAUDIO_PATH="${CLAUDIO_PATH:-$HOME/.claudio}"
+CLAUDIO_ENV_FILE="${CLAUDIO_ENV_FILE:-$CLAUDIO_PATH/service.env}"
+CLAUDIO_LOG_FILE="${CLAUDIO_LOG_FILE:-$CLAUDIO_PATH/claudio.log}"
 
 PORT="${PORT:-8421}"
 MODEL="${MODEL:-haiku}"
@@ -22,6 +22,10 @@ export MEMORY_ENABLED="${MEMORY_ENABLED:-1}"
 MEMORY_EMBEDDING_MODEL="${MEMORY_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
 MEMORY_CONSOLIDATION_MODEL="${MEMORY_CONSOLIDATION_MODEL:-haiku}"
 MAX_HISTORY_LINES="${MAX_HISTORY_LINES:-100}"
+
+# Per-bot variables (set by claudio_load_bot)
+export CLAUDIO_BOT_ID="${CLAUDIO_BOT_ID:-}"
+export CLAUDIO_BOT_DIR="${CLAUDIO_BOT_DIR:-}"
 
 # Safe env file loader: only accepts KEY=value or KEY="value" lines
 # where KEY matches [A-Z_][A-Z0-9_]*. Reverses _env_quote escaping
@@ -58,14 +62,126 @@ claudio_init() {
 
     _safe_load_env "$CLAUDIO_ENV_FILE"
 
-    # Auto-generate WEBHOOK_SECRET if not set (required for security)
-    if [ -z "$WEBHOOK_SECRET" ]; then
+    # Auto-migrate single-bot config to multi-bot layout
+    _migrate_to_multi_bot
+
+    # Legacy: auto-generate WEBHOOK_SECRET in service.env for pre-migration installs
+    # New installs generate per-bot secrets in bot.env via bot_setup()
+    if [ -z "$WEBHOOK_SECRET" ] && ! [ -d "$CLAUDIO_PATH/bots" ]; then
         WEBHOOK_SECRET=$(openssl rand -hex 32) || {
             echo "Error: Failed to generate WEBHOOK_SECRET (openssl rand failed)" >&2
             return 1
         }
         claudio_save_env
     fi
+}
+
+# Migrate single-bot config to bots/ directory layout.
+# Idempotent: skips if bots/ already exists.
+_migrate_to_multi_bot() {
+    # Already migrated
+    [ -d "$CLAUDIO_PATH/bots" ] && return 0
+
+    # Nothing to migrate (fresh install)
+    [ -z "$TELEGRAM_BOT_TOKEN" ] && return 0
+
+    local bot_dir="$CLAUDIO_PATH/bots/claudio"
+    mkdir -p "$bot_dir"
+    chmod 700 "$bot_dir"
+
+    # Write per-bot env
+    (
+        umask 077
+        {
+            printf 'TELEGRAM_BOT_TOKEN="%s"\n' "$(_env_quote "$TELEGRAM_BOT_TOKEN")"
+            printf 'TELEGRAM_CHAT_ID="%s"\n' "$(_env_quote "$TELEGRAM_CHAT_ID")"
+            printf 'WEBHOOK_SECRET="%s"\n' "$(_env_quote "$WEBHOOK_SECRET")"
+            printf 'MODEL="%s"\n' "$(_env_quote "$MODEL")"
+            printf 'MAX_HISTORY_LINES="%s"\n' "$(_env_quote "$MAX_HISTORY_LINES")"
+        } > "$bot_dir/bot.env"
+    )
+
+    # Move history.db to per-bot dir
+    if [ -f "$CLAUDIO_PATH/history.db" ]; then
+        mv "$CLAUDIO_PATH/history.db" "$bot_dir/history.db"
+    fi
+    # Move WAL/SHM files if they exist (SQLite WAL mode)
+    for suffix in -wal -shm; do
+        if [ -f "$CLAUDIO_PATH/history.db${suffix}" ]; then
+            mv "$CLAUDIO_PATH/history.db${suffix}" "$bot_dir/history.db${suffix}"
+        fi
+    done
+
+    # Move CLAUDE.md to per-bot dir if it exists
+    if [ -f "$CLAUDIO_PATH/CLAUDE.md" ]; then
+        mv "$CLAUDIO_PATH/CLAUDE.md" "$bot_dir/CLAUDE.md"
+    fi
+
+    # Remove per-bot vars from service.env (re-save with only global vars)
+    claudio_save_env
+
+    echo "Migrated single-bot config to $bot_dir" >&2
+}
+
+# Load a bot's config, setting per-bot globals.
+# Usage: claudio_load_bot <bot_id>
+claudio_load_bot() {
+    local bot_id="$1"
+
+    # Security: Validate bot_id format to prevent command injection (defense in depth)
+    if [[ ! "$bot_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "Error: Invalid bot_id format: '$bot_id' (must match [a-zA-Z0-9_-]+)" >&2
+        return 1
+    fi
+
+    local bot_dir="$CLAUDIO_PATH/bots/$bot_id"
+
+    if [ ! -f "$bot_dir/bot.env" ]; then
+        echo "Error: Bot '$bot_id' not found (no $bot_dir/bot.env)" >&2
+        return 1
+    fi
+
+    export CLAUDIO_BOT_ID="$bot_id"
+    export CLAUDIO_BOT_DIR="$bot_dir"
+    export CLAUDIO_DB_FILE="$bot_dir/history.db"
+
+    # Load per-bot vars (overrides globals)
+    _safe_load_env "$bot_dir/bot.env"
+}
+
+# Save per-bot variables to the current bot's bot.env.
+# Requires CLAUDIO_BOT_DIR to be set (via claudio_load_bot).
+claudio_save_bot_env() {
+    if [ -z "$CLAUDIO_BOT_DIR" ]; then
+        echo "Error: CLAUDIO_BOT_DIR not set — call claudio_load_bot first" >&2
+        return 1
+    fi
+
+    mkdir -p "$CLAUDIO_BOT_DIR"
+    (
+        umask 077
+        {
+            printf 'TELEGRAM_BOT_TOKEN="%s"\n' "$(_env_quote "$TELEGRAM_BOT_TOKEN")"
+            printf 'TELEGRAM_CHAT_ID="%s"\n' "$(_env_quote "$TELEGRAM_CHAT_ID")"
+            printf 'WEBHOOK_SECRET="%s"\n' "$(_env_quote "$WEBHOOK_SECRET")"
+            printf 'MODEL="%s"\n' "$(_env_quote "$MODEL")"
+            printf 'MAX_HISTORY_LINES="%s"\n' "$(_env_quote "$MAX_HISTORY_LINES")"
+        } > "$CLAUDIO_BOT_DIR/bot.env"
+    )
+}
+
+# List all configured bot IDs (one per line).
+claudio_list_bots() {
+    local bots_dir="$CLAUDIO_PATH/bots"
+    [ -d "$bots_dir" ] || return 0
+    local bot_dir
+    for bot_dir in "$bots_dir"/*/bot.env; do
+        [ -f "$bot_dir" ] || continue
+        # Extract bot_id from path: .../bots/<bot_id>/bot.env
+        local dir
+        dir=$(dirname "$bot_dir")
+        basename "$dir"
+    done
 }
 
 _env_quote() {
@@ -115,23 +231,29 @@ claude_hooks_install() {
 }
 
 claudio_save_env() {
-    # Managed variables (written by this function)
+    # Global-only managed variables (per-bot vars live in bot.env)
     local -a managed_keys=(
-        PORT MODEL TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
-        WEBHOOK_URL TUNNEL_NAME TUNNEL_HOSTNAME WEBHOOK_SECRET
+        PORT WEBHOOK_URL TUNNEL_NAME TUNNEL_HOSTNAME
         WEBHOOK_RETRY_DELAY ELEVENLABS_API_KEY ELEVENLABS_VOICE_ID
         ELEVENLABS_MODEL ELEVENLABS_STT_MODEL MEMORY_ENABLED
-        MEMORY_EMBEDDING_MODEL MEMORY_CONSOLIDATION_MODEL MAX_HISTORY_LINES
+        MEMORY_EMBEDDING_MODEL MEMORY_CONSOLIDATION_MODEL
+    )
+
+    # Legacy per-bot keys to strip during migration
+    local -a legacy_keys=(
+        MODEL TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
+        WEBHOOK_SECRET MAX_HISTORY_LINES
     )
 
     # Collect extra (unmanaged) lines from existing file before overwriting
     local extra_lines=""
     if [ -f "$CLAUDIO_ENV_FILE" ]; then
+        local all_keys=("${managed_keys[@]}" "${legacy_keys[@]}")
         local managed_pattern
-        managed_pattern=$(printf '%s|' "${managed_keys[@]}")
+        managed_pattern=$(printf '%s|' "${all_keys[@]}")
         managed_pattern="^(${managed_pattern%|})="
         while IFS= read -r line || [ -n "$line" ]; do
-            # Keep everything except managed variable assignments
+            # Keep everything except managed/legacy variable assignments
             if [[ ! "$line" =~ $managed_pattern ]]; then
                 extra_lines+="$line"$'\n'
             fi
@@ -144,13 +266,9 @@ claudio_save_env() {
         # Double-quoted values for bash source + systemd EnvironmentFile compatibility
         {
             printf 'PORT="%s"\n' "$(_env_quote "$PORT")"
-            printf 'MODEL="%s"\n' "$(_env_quote "$MODEL")"
-            printf 'TELEGRAM_BOT_TOKEN="%s"\n' "$(_env_quote "$TELEGRAM_BOT_TOKEN")"
-            printf 'TELEGRAM_CHAT_ID="%s"\n' "$(_env_quote "$TELEGRAM_CHAT_ID")"
             printf 'WEBHOOK_URL="%s"\n' "$(_env_quote "$WEBHOOK_URL")"
             printf 'TUNNEL_NAME="%s"\n' "$(_env_quote "$TUNNEL_NAME")"
             printf 'TUNNEL_HOSTNAME="%s"\n' "$(_env_quote "$TUNNEL_HOSTNAME")"
-            printf 'WEBHOOK_SECRET="%s"\n' "$(_env_quote "$WEBHOOK_SECRET")"
             printf 'WEBHOOK_RETRY_DELAY="%s"\n' "$(_env_quote "$WEBHOOK_RETRY_DELAY")"
             printf 'ELEVENLABS_API_KEY="%s"\n' "$(_env_quote "$ELEVENLABS_API_KEY")"
             printf 'ELEVENLABS_VOICE_ID="%s"\n' "$(_env_quote "$ELEVENLABS_VOICE_ID")"
@@ -159,7 +277,6 @@ claudio_save_env() {
             printf 'MEMORY_ENABLED="%s"\n' "$(_env_quote "$MEMORY_ENABLED")"
             printf 'MEMORY_EMBEDDING_MODEL="%s"\n' "$(_env_quote "$MEMORY_EMBEDDING_MODEL")"
             printf 'MEMORY_CONSOLIDATION_MODEL="%s"\n' "$(_env_quote "$MEMORY_CONSOLIDATION_MODEL")"
-            printf 'MAX_HISTORY_LINES="%s"\n' "$(_env_quote "$MAX_HISTORY_LINES")"
             # Preserve unmanaged variables (e.g. HASS_TOKEN, ALEXA_SKILL_ID)
             if [ -n "$extra_lines" ]; then
                 printf '%s' "$extra_lines"

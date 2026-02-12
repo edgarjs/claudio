@@ -45,8 +45,9 @@ Usage: claudio <command> [options]
 Commands:
   status             Show service and webhook status
   start              Start the HTTP server
-  install            Install and start the system service
-  uninstall [--purge] Stop and remove the service (--purge removes all data)
+  install [bot_name] Install system service + configure a bot (default: "claudio")
+  uninstall <bot>    Remove a bot's config (with confirmation)
+  uninstall --purge  Stop service, remove all data
   update             Update to the latest release
   restart            Restart the service
   telegram setup     Set up Telegram bot and webhook
@@ -90,6 +91,10 @@ case "${1:-}" in
         exit 0
         ;;
     _webhook)
+        # Load per-bot config from CLAUDIO_BOT_ID (set by server.py)
+        if [ -n "$CLAUDIO_BOT_ID" ]; then
+            claudio_load_bot "$CLAUDIO_BOT_ID"
+        fi
         history_init
         memory_init
         body=$(cat)
@@ -99,12 +104,10 @@ case "${1:-}" in
         service_status
         ;;
     start)
-        history_init
-        memory_init
         server_start
         ;;
     install)
-        service_install
+        service_install "${2:-}"
         ;;
     uninstall)
         service_uninstall "${2:-}"

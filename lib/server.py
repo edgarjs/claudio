@@ -34,27 +34,144 @@ LOG_FILE = os.path.join(CLAUDIO_PATH, "claudio.log")
 MEMORY_SOCKET = os.path.join(CLAUDIO_PATH, "memory.sock")
 MEMORY_DAEMON_LOG = os.path.join(CLAUDIO_PATH, "memory-daemon.log")
 PORT = int(os.environ.get("PORT", 8421))
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 ALEXA_SKILL_ID = os.environ.get("ALEXA_SKILL_ID", "")
+MANAGEMENT_SECRET = os.environ.get("MANAGEMENT_SECRET", "")
+
+# Multi-bot registry: loaded from ~/.claudio/bots/*/bot.env
+# bots: dict of bot_id -> {"token": str, "chat_id": str, "secret": str, ...}
+# bots_by_secret: list of (secret, bot_id) for dispatch
+bots = {}
+bots_by_secret = []
+bots_lock = threading.Lock()
 
 # Per-chat message queues for serial processing
-chat_queues = {}  # chat_id -> deque of webhook bodies
-chat_active = {}  # chat_id -> bool, True if a processor thread is running
+chat_queues = {}  # queue_key -> deque of (webhook_body, bot_id)
+chat_active = {}  # queue_key -> bool, True if a processor thread is running
 active_threads = []  # Non-daemon processor threads to wait on during shutdown
 queue_lock = threading.Lock()
 seen_updates = OrderedDict()  # Track processed update_ids to prevent duplicates
 MAX_SEEN_UPDATES = 1000
 shutting_down = False  # Set to True on SIGTERM to reject new webhooks
 
-# Media group buffering: group_id -> {"bodies": [str], "chat_id": str, "timer": Timer}
+# Media group buffering: group_key -> {"bodies": [str], "chat_id": str, "bot_id": str, "timer": Timer}
 media_groups = {}
 media_group_lock = threading.Lock()
 
 # Health check cache
 _health_cache = {"result": None, "time": 0}
+
+
+def log_msg(module, msg, bot_id=None):
+    """Format log message with module and optional bot_id."""
+    if bot_id:
+        return f"[{module}] [{bot_id}] {msg}\n"
+    return f"[{module}] {msg}\n"
+
+
+def parse_env_file(path):
+    """Parse a KEY="value" or KEY=value env file. Mirrors _safe_load_env in bash."""
+    result = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                eq = line.find("=")
+                if eq < 1:
+                    continue
+                key = line[:eq]
+                val = line[eq + 1:]
+                # Strip surrounding double quotes
+                if len(val) >= 2 and val.startswith('"') and val.endswith('"'):
+                    val = val[1:-1]
+                    # Reverse _env_quote escaping
+                    val = val.replace("\\n", "\n")
+                    val = val.replace("\\`", "`")
+                    val = val.replace("\\$", "$")
+                    val = val.replace('\\"', '"')
+                    val = val.replace("\\\\", "\\")
+                result[key] = val
+    except (OSError, IOError):
+        pass
+    return result
+
+
+def is_valid_bot_id(bot_id):
+    """Validate bot_id contains only safe characters (alphanumeric, underscore, hyphen)."""
+    import re
+    return bool(re.match(r'^[a-zA-Z0-9_-]+$', bot_id))
+
+
+def load_bots():
+    """Scan ~/.claudio/bots/*/bot.env and build bot registry."""
+    global bots, bots_by_secret
+    bots_dir = os.path.join(CLAUDIO_PATH, "bots")
+    new_bots = {}
+    new_by_secret = []
+
+    if not os.path.isdir(bots_dir):
+        with bots_lock:
+            bots = new_bots
+            bots_by_secret = new_by_secret
+        return
+
+    bots_dir_real = os.path.realpath(bots_dir)
+    for entry in sorted(os.listdir(bots_dir)):
+        # Security: Validate bot_id format to prevent command injection
+        if not is_valid_bot_id(entry):
+            sys.stderr.write(f"[bots] Invalid bot_id '{entry}', skipping (must match [a-zA-Z0-9_-]+)\n")
+            continue
+
+        # Security: Validate entry doesn't contain path traversal sequences
+        if '..' in entry or '/' in entry or entry.startswith('.'):
+            sys.stderr.write(f"[bots] Skipping invalid bot directory name: {entry}\n")
+            continue
+
+        bot_env = os.path.join(bots_dir, entry, "bot.env")
+
+        # Security: Verify the path is actually under bots_dir (defense against symlink attacks)
+        bot_env_real = os.path.realpath(bot_env)
+        if not bot_env_real.startswith(bots_dir_real + os.sep):
+            sys.stderr.write(f"[bots] Path traversal detected in bot '{entry}', skipping\n")
+            continue
+
+        if not os.path.isfile(bot_env):
+            continue
+        cfg = parse_env_file(bot_env)
+        token = cfg.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = cfg.get("TELEGRAM_CHAT_ID", "")
+        secret = cfg.get("WEBHOOK_SECRET", "")
+        if not token or not secret:
+            sys.stderr.write(f"[bots] Skipping bot '{entry}': missing token or secret\n")
+            continue
+        new_bots[entry] = {
+            "token": token,
+            "chat_id": chat_id,
+            "secret": secret,
+            "model": cfg.get("MODEL", "haiku"),
+            "max_history_lines": cfg.get("MAX_HISTORY_LINES", "100"),
+            "bot_dir": os.path.join(bots_dir, entry),
+        }
+        new_by_secret.append((secret, entry))
+
+    with bots_lock:
+        bots = new_bots
+        bots_by_secret = new_by_secret
+
+    sys.stderr.write(f"[bots] Loaded {len(new_bots)} bot(s): {', '.join(new_bots.keys())}\n")
+
+
+def match_bot_by_secret(token_header):
+    """Find bot matching the secret token header. Returns (bot_id, bot_config) or (None, None)."""
+    if not token_header:
+        return None, None
+    with bots_lock:
+        for secret, bot_id in bots_by_secret:
+            if hmac.compare_digest(token_header, secret):
+                return bot_id, bots[bot_id]
+    return None, None
 
 
 def parse_webhook(body):
@@ -70,28 +187,28 @@ def parse_webhook(body):
         return None, "", ""
 
 
-def process_queue(chat_id):
+def process_queue(queue_key):
     """Process messages for a chat one at a time."""
     current = threading.current_thread()
     try:
-        _process_queue_loop(chat_id)
+        _process_queue_loop(queue_key)
     finally:
         with queue_lock:
             if current in active_threads:
                 active_threads.remove(current)
 
 
-def _process_queue_loop(chat_id):
+def _process_queue_loop(queue_key):
     """Inner loop for process_queue, separated for clean thread tracking."""
     while True:
         with queue_lock:
-            if chat_id not in chat_queues or not chat_queues[chat_id]:
+            if queue_key not in chat_queues or not chat_queues[queue_key]:
                 # Queue empty, clean up
-                if chat_id in chat_queues:
-                    del chat_queues[chat_id]
-                chat_active.pop(chat_id, None)
+                if queue_key in chat_queues:
+                    del chat_queues[queue_key]
+                chat_active.pop(queue_key, None)
                 return
-            body = chat_queues[chat_id].popleft()
+            body, bot_id = chat_queues[queue_key].popleft()
 
         proc = None
         try:
@@ -103,6 +220,9 @@ def _process_queue_loop(chat_id):
                 if local_bin not in env.get("PATH", "").split(os.pathsep):
                     env["PATH"] = f"{local_bin}{os.pathsep}{env.get('PATH', '')}"
 
+                # Pass bot_id so the webhook handler loads the right config
+                env["CLAUDIO_BOT_ID"] = bot_id
+
                 proc = subprocess.Popen(
                     [CLAUDIO_BIN, "_webhook"],
                     stdin=subprocess.PIPE,
@@ -113,15 +233,17 @@ def _process_queue_loop(chat_id):
                 )
                 proc.communicate(input=body.encode(), timeout=WEBHOOK_TIMEOUT)
                 if proc.returncode != 0:
-                    sys.stderr.write(
-                        f"[queue] Webhook handler exited with code {proc.returncode} "
-                        f"for chat {chat_id}\n"
-                    )
+                    sys.stderr.write(log_msg(
+                        "queue",
+                        f"Webhook handler exited with code {proc.returncode} for {queue_key}",
+                        bot_id
+                    ))
         except subprocess.TimeoutExpired:
-            sys.stderr.write(
-                f"[queue] Webhook handler timed out after {WEBHOOK_TIMEOUT}s "
-                f"for chat {chat_id}, killing process\n"
-            )
+            sys.stderr.write(log_msg(
+                "queue",
+                f"Webhook handler timed out after {WEBHOOK_TIMEOUT}s for {queue_key}, killing process",
+                bot_id
+            ))
             if proc:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                 try:
@@ -129,11 +251,11 @@ def _process_queue_loop(chat_id):
                 except subprocess.TimeoutExpired:
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except Exception as e:
-            sys.stderr.write(f"[queue] Error processing message for chat {chat_id}: {e}\n")
+            sys.stderr.write(log_msg("queue", f"Error processing message for {queue_key}: {e}", bot_id))
             time.sleep(1)  # Avoid tight loop on persistent errors
 
 
-def _merge_media_group(group_id):
+def _merge_media_group(group_key):
     """Merge buffered media group messages into a single webhook body and enqueue it.
 
     Called by the Timer after MEDIA_GROUP_WAIT seconds of inactivity. Takes the
@@ -145,14 +267,15 @@ def _merge_media_group(group_id):
     lost) to avoid blocking the queue entirely.
     """
     with media_group_lock:
-        group = media_groups.pop(group_id, None)
+        group = media_groups.pop(group_key, None)
     if not group or not group["bodies"]:
         return
 
     bodies = group["bodies"]
+    bot_id = group["bot_id"]
     if len(bodies) == 1:
         # Single photo, enqueue as-is
-        _enqueue_single(bodies[0], group["chat_id"])
+        _enqueue_single(bodies[0], group["chat_id"], bot_id)
         return
 
     # Merge: use the first message as base, collect all photo file_ids
@@ -171,19 +294,20 @@ def _merge_media_group(group_id):
         # Inject extra photo file_ids into the base message as a custom field
         if extra_photos:
             base["message"]["_extra_photos"] = extra_photos
-            sys.stderr.write(
-                f"[media-group] Merged {len(bodies)} photos into one webhook "
-                f"(group {group_id})\n"
-            )
+            sys.stderr.write(log_msg(
+                "media-group",
+                f"Merged {len(bodies)} photos into one webhook (group {group_key})",
+                bot_id
+            ))
 
-        _enqueue_single(json.dumps(base), group["chat_id"])
+        _enqueue_single(json.dumps(base), group["chat_id"], bot_id)
     except (json.JSONDecodeError, KeyError) as e:
-        sys.stderr.write(f"[media-group] Error merging group {group_id}: {e}\n")
+        sys.stderr.write(log_msg("media-group", f"Error merging group {group_key}: {e}", bot_id))
         # Fallback: enqueue just the first message
-        _enqueue_single(bodies[0], group["chat_id"])
+        _enqueue_single(bodies[0], group["chat_id"], bot_id)
 
 
-def enqueue_webhook(body):
+def enqueue_webhook(body, bot_id, bot_config):
     """Add webhook to per-chat queue and start processor if needed.
 
     Media group messages (multiple photos sent together) are buffered briefly
@@ -194,13 +318,17 @@ def enqueue_webhook(body):
         return  # Invalid webhook, skip
 
     # Validate chat_id against authorized chat (defense in depth, also checked in bash)
-    if not TELEGRAM_CHAT_ID or chat_id != TELEGRAM_CHAT_ID:
+    bot_chat_id = bot_config.get("chat_id", "")
+    if not bot_chat_id or chat_id != bot_chat_id:
         return
+
+    # Composite queue key for per-bot, per-chat isolation
+    queue_key = f"{bot_id}:{chat_id}"
 
     with queue_lock:
         # Reject new messages during shutdown — let active handlers finish
         if shutting_down:
-            sys.stderr.write(f"[queue] Rejecting webhook during shutdown for chat {chat_id}\n")
+            sys.stderr.write(log_msg("queue", f"Rejecting webhook during shutdown for {queue_key}", bot_id))
             return
 
         # Deduplicate: skip if we've already seen this update_id
@@ -213,59 +341,72 @@ def enqueue_webhook(body):
 
     # Buffer media group messages, then merge after a short delay
     if media_group_id:
+        group_key = f"{bot_id}:{media_group_id}"
         with media_group_lock:
-            if media_group_id in media_groups:
-                if len(media_groups[media_group_id]["bodies"]) >= MAX_PHOTOS_PER_GROUP:
-                    sys.stderr.write(
-                        f"[media-group] Dropping photo — group {media_group_id} "
-                        f"reached {MAX_PHOTOS_PER_GROUP} photo limit\n"
-                    )
+            if group_key in media_groups:
+                if len(media_groups[group_key]["bodies"]) >= MAX_PHOTOS_PER_GROUP:
+                    sys.stderr.write(log_msg(
+                        "media-group",
+                        f"Dropping photo — group {group_key} reached {MAX_PHOTOS_PER_GROUP} photo limit",
+                        bot_id
+                    ))
                     return
-                media_groups[media_group_id]["bodies"].append(body)
+                media_groups[group_key]["bodies"].append(body)
                 # Reset timer — extend window for late-arriving photos
-                media_groups[media_group_id]["timer"].cancel()
+                media_groups[group_key]["timer"].cancel()
             else:
                 if len(media_groups) >= MAX_MEDIA_GROUPS:
-                    sys.stderr.write(
-                        f"[media-group] Dropping group {media_group_id} — "
-                        f"reached {MAX_MEDIA_GROUPS} concurrent group limit\n"
-                    )
+                    sys.stderr.write(log_msg(
+                        "media-group",
+                        f"Dropping group {group_key} — reached {MAX_MEDIA_GROUPS} concurrent group limit",
+                        bot_id
+                    ))
                     return
-                media_groups[media_group_id] = {
+                media_groups[group_key] = {
                     "bodies": [body],
                     "chat_id": chat_id,
+                    "bot_id": bot_id,
                     "timer": None,
                 }
-            timer = threading.Timer(MEDIA_GROUP_WAIT, _merge_media_group, [media_group_id])
-            media_groups[media_group_id]["timer"] = timer
+            timer = threading.Timer(MEDIA_GROUP_WAIT, _merge_media_group, [group_key])
+            media_groups[group_key]["timer"] = timer
             timer.start()
         return
 
-    _enqueue_single(body, chat_id)
+    _enqueue_single(body, chat_id, bot_id)
 
 
-def _enqueue_single(body, chat_id):
+def _enqueue_single(body, chat_id, bot_id):
     """Enqueue a single (possibly merged) webhook body for processing."""
+    queue_key = f"{bot_id}:{chat_id}"
     with queue_lock:
         # Initialize queue for this chat if needed
-        if chat_id not in chat_queues:
-            chat_queues[chat_id] = deque()
+        if queue_key not in chat_queues:
+            chat_queues[queue_key] = deque()
 
         # Prevent unbounded queue growth
-        queue_size = len(chat_queues[chat_id])
+        queue_size = len(chat_queues[queue_key])
         if queue_size >= MAX_QUEUE_SIZE:
-            sys.stderr.write(f"[queue] Queue full for chat {chat_id} ({queue_size}/{MAX_QUEUE_SIZE}), dropping message\n")
+            sys.stderr.write(log_msg(
+                "queue",
+                f"Queue full for {queue_key} ({queue_size}/{MAX_QUEUE_SIZE}), dropping message",
+                bot_id
+            ))
             return
         if queue_size >= MAX_QUEUE_SIZE * QUEUE_WARNING_RATIO:
-            sys.stderr.write(f"[queue] Warning: queue for chat {chat_id} at {queue_size}/{MAX_QUEUE_SIZE} ({queue_size * 100 // MAX_QUEUE_SIZE}%)\n")
+            sys.stderr.write(log_msg(
+                "queue",
+                f"Warning: queue for {queue_key} at {queue_size}/{MAX_QUEUE_SIZE} ({queue_size * 100 // MAX_QUEUE_SIZE}%)",
+                bot_id
+            ))
 
-        chat_queues[chat_id].append(body)
+        chat_queues[queue_key].append((body, bot_id))
 
-        if not chat_active.get(chat_id):
-            chat_active[chat_id] = True
+        if not chat_active.get(queue_key):
+            chat_active[queue_key] = True
             thread = threading.Thread(
                 target=process_queue,
-                args=(chat_id,),
+                args=(queue_key,),
                 daemon=False,
             )
             active_threads.append(thread)
@@ -306,16 +447,17 @@ class Handler(BaseHTTPRequestHandler):
             if shutting_down:
                 self._respond(503, {"error": "shutting down"})
                 return
-            # Verify webhook secret before reading body
-            token = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-            if not hmac.compare_digest(token, WEBHOOK_SECRET):
+            # Match bot by secret token
+            token_header = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+            bot_id, bot_config = match_bot_by_secret(token_header)
+            if bot_id is None:
                 self._respond(401, {"error": "unauthorized"})
                 return
             body = self._read_body()
             if body is None:
                 return
             self._respond(200, {"ok": True})
-            enqueue_webhook(body)
+            enqueue_webhook(body, bot_id, bot_config)
         elif self.path == "/alexa":
             self._handle_alexa()
         else:
@@ -441,8 +583,33 @@ class Handler(BaseHTTPRequestHandler):
             health = check_health()
             code = 200 if health["status"] == "healthy" else 503
             self._respond(code, health)
+        elif self.path == "/reload":
+            # Require MANAGEMENT_SECRET to access this endpoint
+            if not MANAGEMENT_SECRET:
+                self._respond(404, {"error": "not found"})
+                return
+
+            auth_header = self.headers.get("Authorization", "")
+            expected = f"Bearer {MANAGEMENT_SECRET}"
+
+            # Timing-safe comparison to prevent timing attacks
+            if not hmac.compare_digest(auth_header, expected):
+                self._respond(401, {"error": "unauthorized"})
+                return
+
+            load_bots()
+            self._respond(200, {"ok": True, "bots": list(bots.keys())})
         else:
             self._respond(404, {"error": "not found"})
+
+
+def _get_default_bot():
+    """Get the first bot config for Alexa routing (or None)."""
+    with bots_lock:
+        if not bots:
+            return None, None
+        bot_id = next(iter(bots))
+        return bot_id, bots[bot_id]
 
 
 _alexa_update_counter = 0
@@ -535,8 +702,15 @@ def _flush_alexa_session(session_id, locale):
             lines.append(f'- "{msg}"')
         transcript = "\n".join(lines)
 
-    if not TELEGRAM_CHAT_ID:
-        sys.stderr.write("[alexa] TELEGRAM_CHAT_ID not configured, cannot relay\n")
+    # Route to default (first) bot
+    bot_id, bot_config = _get_default_bot()
+    if bot_config is None:
+        sys.stderr.write("[alexa] No bots configured, cannot relay\n")
+        return
+
+    bot_chat_id = bot_config.get("chat_id", "")
+    if not bot_chat_id:
+        sys.stderr.write("[alexa] Default bot has no TELEGRAM_CHAT_ID, cannot relay\n")
         return
 
     global _alexa_update_counter
@@ -549,12 +723,12 @@ def _flush_alexa_session(session_id, locale):
         "message": {
             "message_id": update_id,
             "date": int(time.time()),
-            "chat": {"id": int(TELEGRAM_CHAT_ID), "type": "private"},
-            "from": {"id": int(TELEGRAM_CHAT_ID), "first_name": "Alexa", "is_bot": False},
+            "chat": {"id": int(bot_chat_id), "type": "private"},
+            "from": {"id": int(bot_chat_id), "first_name": "Alexa", "is_bot": False},
             "text": transcript,
         },
     })
-    enqueue_webhook(body)
+    enqueue_webhook(body, bot_id, bot_config)
 
 
 def _cleanup_stale_alexa_sessions():
@@ -691,7 +865,7 @@ def _verify_alexa_signature(cert_url, signature_b64, body):
 
 
 def check_health():
-    """Verify system health by checking Telegram webhook status."""
+    """Verify system health by checking Telegram webhook status for all bots."""
     now = time.monotonic()
     if _health_cache["result"] and 0 <= (now - _health_cache["time"]) < HEALTH_CACHE_TTL:
         return _health_cache["result"]
@@ -699,52 +873,58 @@ def check_health():
     checks = {}
     status = "healthy"
 
-    # Check 1: Telegram webhook configuration
-    if TELEGRAM_BOT_TOKEN and WEBHOOK_URL:
-        try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getWebhookInfo"
-            with urllib.request.urlopen(url, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
+    # Check each bot's webhook
+    with bots_lock:
+        bot_items = list(bots.items())
 
-            if data.get("ok"):
-                result = data.get("result", {})
-                current_url = result.get("url", "")
-                expected_url = f"{WEBHOOK_URL}/telegram/webhook"
-                pending = result.get("pending_update_count", 0)
-                last_error = result.get("last_error_message", "")
-
-                if current_url == expected_url:
-                    checks["telegram_webhook"] = {
-                        "status": "ok",
-                        "pending_updates": pending,
-                    }
-                    if last_error:
-                        checks["telegram_webhook"]["last_error"] = last_error
-                else:
-                    checks["telegram_webhook"] = {
-                        "status": "mismatch",
-                        "expected": expected_url,
-                        "actual": current_url,
-                    }
-                    status = "unhealthy"
-                    # Try to re-register webhook
-                    _register_webhook(expected_url)
-            else:
-                checks["telegram_webhook"] = {"status": "error", "detail": "API returned not ok"}
-                status = "unhealthy"
-                # Try to re-register webhook
-                expected_url = f"{WEBHOOK_URL}/telegram/webhook"
-                _register_webhook(expected_url)
-        except (urllib.error.URLError, TimeoutError) as e:
-            checks["telegram_webhook"] = {"status": "error", "detail": str(e)}
-            status = "unhealthy"
-            # Try to re-register webhook
-            expected_url = f"{WEBHOOK_URL}/telegram/webhook"
-            _register_webhook(expected_url)
-    else:
+    if not bot_items:
         checks["telegram_webhook"] = {"status": "not_configured"}
+    else:
+        for bot_id, bot_config in bot_items:
+            check_key = f"telegram_webhook_{bot_id}" if len(bot_items) > 1 else "telegram_webhook"
+            token = bot_config["token"]
+            if token and WEBHOOK_URL:
+                try:
+                    url = f"https://api.telegram.org/bot{token}/getWebhookInfo"
+                    with urllib.request.urlopen(url, timeout=10) as resp:
+                        data = json.loads(resp.read().decode())
 
-    # Check 2: Memory daemon (non-critical — degrades gracefully)
+                    if data.get("ok"):
+                        result = data.get("result", {})
+                        current_url = result.get("url", "")
+                        expected_url = f"{WEBHOOK_URL}/telegram/webhook"
+                        pending = result.get("pending_update_count", 0)
+                        last_error = result.get("last_error_message", "")
+
+                        if current_url == expected_url:
+                            checks[check_key] = {
+                                "status": "ok",
+                                "pending_updates": pending,
+                            }
+                            if last_error:
+                                checks[check_key]["last_error"] = last_error
+                        else:
+                            checks[check_key] = {
+                                "status": "mismatch",
+                                "expected": expected_url,
+                                "actual": current_url,
+                            }
+                            status = "unhealthy"
+                            _register_webhook(expected_url, bot_config)
+                    else:
+                        checks[check_key] = {"status": "error", "detail": "API returned not ok"}
+                        status = "unhealthy"
+                        expected_url = f"{WEBHOOK_URL}/telegram/webhook"
+                        _register_webhook(expected_url, bot_config)
+                except (urllib.error.URLError, TimeoutError) as e:
+                    checks[check_key] = {"status": "error", "detail": str(e)}
+                    status = "unhealthy"
+                    expected_url = f"{WEBHOOK_URL}/telegram/webhook"
+                    _register_webhook(expected_url, bot_config)
+            else:
+                checks[check_key] = {"status": "not_configured"}
+
+    # Check: Memory daemon (non-critical — degrades gracefully)
     checks["memory_daemon"] = _check_memory_daemon()
 
     result = {"status": status, "checks": checks}
@@ -758,15 +938,17 @@ def check_health():
     return result
 
 
-def _register_webhook(webhook_url):
-    """Attempt to re-register the Telegram webhook."""
+def _register_webhook(webhook_url, bot_config):
+    """Attempt to re-register the Telegram webhook for a specific bot."""
+    token = bot_config["token"]
+    secret = bot_config.get("secret", "")
     try:
         params = {"url": webhook_url, "allowed_updates": '["message"]'}
-        if WEBHOOK_SECRET:
-            params["secret_token"] = WEBHOOK_SECRET
+        if secret:
+            params["secret_token"] = secret
         data = urllib.parse.urlencode(params)
 
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+        url = f"https://api.telegram.org/bot{token}/setWebhook"
         req = urllib.request.Request(
             url,
             data=data.encode(),
@@ -780,7 +962,7 @@ def _register_webhook(webhook_url):
 
 
 def startup_health_check():
-    """Run health check after startup to ensure webhook is registered."""
+    """Run health check after startup to ensure webhooks are registered for all bots."""
     # Small delay to ensure server is ready
     time.sleep(2)
     print("Running startup health check...")
@@ -1027,17 +1209,23 @@ def _check_memory_daemon():
     return check
 
 
-def main():
-    # Require WEBHOOK_SECRET for security
-    if not WEBHOOK_SECRET:
-        sys.stderr.write("Error: WEBHOOK_SECRET environment variable is required.\n")
-        sys.stderr.write("Generate one with: openssl rand -hex 32\n")
-        sys.exit(1)
+def _reload_bots_on_sighup(*args):
+    """SIGHUP handler: reload bot configs without restarting."""
+    sys.stderr.write("[bots] SIGHUP received, reloading bot configs...\n")
+    _health_cache["result"] = None  # Invalidate health cache
+    load_bots()
 
-    # Warn if TELEGRAM_CHAT_ID is not set (server will reject all messages)
-    if not TELEGRAM_CHAT_ID:
-        sys.stderr.write("Warning: TELEGRAM_CHAT_ID not set — all messages will be rejected.\n")
-        sys.stderr.write("Run 'claudio telegram setup' to configure it.\n")
+
+def main():
+    # Load bot configs
+    load_bots()
+
+    with bots_lock:
+        bot_count = len(bots)
+
+    if bot_count == 0:
+        sys.stderr.write("Warning: No bots configured — all webhooks will be rejected.\n")
+        sys.stderr.write("Run 'claudio install <bot_name>' to configure a bot.\n")
 
     # Start memory daemon (pre-loads ONNX model to eliminate cold-start)
     global _memory_proc
@@ -1054,6 +1242,10 @@ def main():
     # Graceful shutdown: SIGTERM → stop HTTP server → wait for active handlers
     shutdown_event = threading.Event()
     signal.signal(signal.SIGTERM, lambda s, f: shutdown_event.set())
+
+    # SIGHUP: reload bot configs without restart
+    signal.signal(signal.SIGHUP, _reload_bots_on_sighup)
+
     shutdown_thread = threading.Thread(
         target=_graceful_shutdown,
         args=(server, shutdown_event),

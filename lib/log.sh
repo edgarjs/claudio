@@ -18,21 +18,30 @@ print_success() {
     echo "✅ $*"
 }
 
-# Log a message with module prefix
-# Usage: log "module" "message"
+# Log a message with module prefix and optional bot_id
+# Usage: log "module" "message" [bot_id]
 # Example: log "server" "Starting on port 8421"
+# Example: log "queue" "Processing webhook" "claudio"
 log() {
     local module="$1"
     shift
-    local msg
-    msg="[$(date '+%Y-%m-%d %H:%M:%S')] [$module] $*"
+    local msg="$*"
+    local bot_id="${CLAUDIO_BOT_ID:-}"
+
+    # Build log line: [timestamp] [module] [bot_id] message
+    local log_line
+    if [ -n "$bot_id" ]; then
+        log_line="[$(date '+%Y-%m-%d %H:%M:%S')] [$module] [$bot_id] $msg"
+    else
+        log_line="[$(date '+%Y-%m-%d %H:%M:%S')] [$module] $msg"
+    fi
 
     if ! $_LOG_DIR_INIT; then
         mkdir -p "$(dirname "$CLAUDIO_LOG_FILE")"
         _LOG_DIR_INIT=true
     fi
 
-    printf '%s\n' "$msg" >> "$CLAUDIO_LOG_FILE"
+    printf '%s\n' "$log_line" >> "$CLAUDIO_LOG_FILE"
 }
 
 # Log an error message (same as log but marked as ERROR)
