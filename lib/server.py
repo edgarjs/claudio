@@ -29,7 +29,6 @@ MAX_PHOTOS_PER_GROUP = 10  # Max photos allowed in a single media group
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CLAUDIO_BIN = os.path.join(SCRIPT_DIR, "..", "claudio")
 CLAUDIO_PATH = os.path.join(os.path.expanduser("~"), ".claudio")
 LOG_FILE = os.path.join(CLAUDIO_PATH, "claudio.log")
 MEMORY_SOCKET = os.path.join(CLAUDIO_PATH, "memory.sock")
@@ -289,49 +288,32 @@ def _process_queue_loop(queue_key):
                 return
             body, bot_id, platform = chat_queues[queue_key].popleft()
 
-        proc = None
-        try:
-            with open(LOG_FILE, "a") as log_fh:
-                # Ensure PATH includes ~/.local/bin for claude command
-                env = os.environ.copy()
-                home = os.path.expanduser("~")
-                local_bin = os.path.join(home, ".local", "bin")
-                if local_bin not in env.get("PATH", "").split(os.pathsep):
-                    env["PATH"] = f"{local_bin}{os.pathsep}{env.get('PATH', '')}"
+        _process_webhook(body, bot_id, platform, queue_key)
 
-                # Pass bot_id so the webhook handler loads the right config
-                env["CLAUDIO_BOT_ID"] = bot_id
 
-                proc = subprocess.Popen(
-                    [CLAUDIO_BIN, "_webhook", platform],
-                    stdin=subprocess.PIPE,
-                    stdout=log_fh,
-                    stderr=log_fh,
-                    env=env,
-                    start_new_session=True,
-                )
-                proc.communicate(input=body.encode(), timeout=WEBHOOK_TIMEOUT)
-                if proc.returncode != 0:
-                    sys.stderr.write(log_msg(
-                        "queue",
-                        f"Webhook handler exited with code {proc.returncode} for {queue_key}",
-                        bot_id
-                    ))
-        except subprocess.TimeoutExpired:
-            sys.stderr.write(log_msg(
-                "queue",
-                f"Webhook handler timed out after {WEBHOOK_TIMEOUT}s for {queue_key}, killing process",
-                bot_id
-            ))
-            if proc:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except Exception as e:
-            sys.stderr.write(log_msg("queue", f"Error processing message for {queue_key}: {e}", bot_id))
-            time.sleep(1)  # Avoid tight loop on persistent errors
+def _process_webhook(body, bot_id, platform, queue_key):
+    """Process a webhook using the in-process Python handler."""
+    # Ensure repo root is on sys.path so lib.* imports resolve
+    # (server.py is launched as `python3 lib/server.py` by server.sh)
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from lib.handlers import process_webhook
+
+    try:
+        # Look up bot config from the global registry
+        with bots_lock:
+            if platform == 'telegram':
+                bot_config = dict(bots.get(bot_id, {}))
+            elif platform == 'whatsapp':
+                bot_config = dict(whatsapp_bots.get(bot_id, {}))
+            else:
+                bot_config = {}
+
+        process_webhook(body, bot_id, platform, bot_config)
+    except Exception as e:
+        sys.stderr.write(log_msg("queue", f"Error processing message for {queue_key}: {e}", bot_id))
+        time.sleep(1)
 
 
 def _merge_media_group(group_key):
@@ -354,7 +336,7 @@ def _merge_media_group(group_key):
     bot_id = group["bot_id"]
     if len(bodies) == 1:
         # Single photo, enqueue as-is
-        _enqueue_single(bodies[0], group["chat_id"], bot_id)
+        _enqueue_single(bodies[0], group["chat_id"], bot_id, "telegram")
         return
 
     # Merge: use the first message as base, collect all photo file_ids
@@ -379,11 +361,11 @@ def _merge_media_group(group_key):
                 bot_id
             ))
 
-        _enqueue_single(json.dumps(base), group["chat_id"], bot_id)
+        _enqueue_single(json.dumps(base), group["chat_id"], bot_id, "telegram")
     except (json.JSONDecodeError, KeyError) as e:
         sys.stderr.write(log_msg("media-group", f"Error merging group {group_key}: {e}", bot_id))
         # Fallback: enqueue just the first message
-        _enqueue_single(bodies[0], group["chat_id"], bot_id)
+        _enqueue_single(bodies[0], group["chat_id"], bot_id, "telegram")
 
 
 def enqueue_webhook(body, bot_id, bot_config):
@@ -1050,7 +1032,7 @@ _ALEXA_CERT_CACHE_TTL = 3600  # 1 hour
 def _verify_alexa_signature(cert_url, signature_b64, body):
     """Full cryptographic verification of Alexa request signature."""
     from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
 
     # Get or fetch the signing certificate

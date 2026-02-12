@@ -32,7 +32,7 @@ def summarize(event):
     """Return a one-line summary string, or None to skip."""
     tool = event.get("tool_name", "")
     tool_input = event.get("tool_input", {})
-    tool_output = event.get("tool_output", "")
+    _ = event.get("tool_output", "")  # reserved for future use
 
     # Skip MCP tools — already captured by the notifier system
     if tool.startswith("mcp__"):

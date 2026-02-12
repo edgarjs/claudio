@@ -127,8 +127,6 @@ The wizard will validate credentials and provide webhook configuration details f
 
 A single bot can serve both platforms, sharing conversation history across Telegram and WhatsApp. During `claudio install <bot_id>`, choose option 3 to configure both, or add a platform later using the platform-specific setup commands.
 
-See [DUAL_PLATFORM_SETUP.md](DUAL_PLATFORM_SETUP.md) for detailed dual-platform configuration.
-
 Once setup is done, the service restarts automatically, and you can start chatting with Claude Code from either platform.
 
 > A cron job runs every minute to monitor the webhook endpoint. It verifies the webhook is registered and re-registers it if needed. If the server is unreachable, it auto-restarts the service (throttled to once per 3 minutes, max 3 attempts). After exhausting restart attempts without recovery, it sends a Telegram alert and stops retrying until the server responds with HTTP 200. The restart counter auto-clears when the health endpoint returns HTTP 200. You can also reset it manually by deleting `$HOME/.claudio/.last_restart_attempt` and `$HOME/.claudio/.restart_fail_count`.
@@ -395,8 +393,6 @@ claudio restart
 - `LOG_CHECK_WINDOW` — Seconds of recent log history to scan for errors and anomalies. Default: `300` (5 minutes).
 - `LOG_ALERT_COOLDOWN` — Minimum seconds between log-analysis alert notifications. Default: `1800` (30 minutes).
 
----
-
 **Per-bot variables** (stored in `$HOME/.claudio/bots/<bot_id>/bot.env`):
 
 **Telegram**
@@ -426,14 +422,18 @@ claudio restart
 
 ## Testing
 
-Claudio uses [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System) for integration tests.
+Claudio uses [BATS](https://github.com/bats-core/bats-core) for Bash tests and [pytest](https://docs.pytest.org/) for Python tests.
 
 ```bash
-# Run all tests
+# Run Bash tests
 bats tests/
+
+# Run Python tests
+python3 -m pytest tests/ -v
 
 # Run a specific test file
 bats tests/db.bats
+python3 -m pytest tests/test_handlers.py -v
 ```
 
 ---
@@ -469,6 +469,7 @@ bats tests/db.bats
 - [x] Health check log analysis (error detection, restart loops, API slowness)
 - [x] Claude code review for Pull Requests (GitHub Actions)
 - [x] WhatsApp Business API integration with dual-platform support (single bot serving both Telegram and WhatsApp)
+- [x] Python webhook handlers (eliminates Bash subprocess overhead, ~400-800ms latency reduction)
 
 **Future**
 
