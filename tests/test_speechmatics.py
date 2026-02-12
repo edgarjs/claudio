@@ -7,14 +7,13 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from lib.speechmatics import (
     TTS_MAX_CHARS,
     STT_MAX_SIZE,
-    STT_POLL_INTERVAL,
     STT_POLL_MAX_WAIT,
     _validate_wav_magic,
     tts_convert,
