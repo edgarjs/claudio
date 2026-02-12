@@ -729,16 +729,7 @@ def _process_message(msg, text, config, client, platform, bot_id):
                 _history_add(config.db_file, 'user', history_text)
 
                 if response:
-                    history_response = response
-                    if result.notifier_messages:
-                        history_response = (
-                            f"{result.notifier_messages}\n\n{history_response}"
-                        )
-                    if result.tool_summary:
-                        history_response = (
-                            f"{result.tool_summary}\n\n{history_response}"
-                        )
-                    history_response = sanitize_for_prompt(history_response)
+                    history_response = sanitize_for_prompt(response)
                     _history_add(config.db_file, 'assistant', history_response)
             except Exception as e:
                 log_error(_MODULE, f"Failed to record history: {e}", bot_id=bot_id)
