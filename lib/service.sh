@@ -197,20 +197,94 @@ bot_setup() {
     local bot_id="$1"
     local bot_dir="$CLAUDIO_PATH/bots/$bot_id"
 
-    # Check if bot already exists
+    # Check what's already configured
+    local has_telegram=false
+    local has_whatsapp=false
     if [ -f "$bot_dir/bot.env" ]; then
-        echo ""
-        echo "Bot '$bot_id' already exists at $bot_dir"
-        read -rp "Re-run setup? [y/N] " confirm
-        if [[ ! "$confirm" =~ ^[Yy] ]]; then
-            echo "Skipping bot setup."
-            return 0
-        fi
+        # shellcheck source=/dev/null
+        source "$bot_dir/bot.env" 2>/dev/null || true
+        [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && has_telegram=true
+        [ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ] && has_whatsapp=true
     fi
 
     echo ""
     echo "=== Setting up bot: $bot_id ==="
-    telegram_setup "$bot_id"
+
+    # Show what's already configured
+    if [ "$has_telegram" = true ] || [ "$has_whatsapp" = true ]; then
+        echo ""
+        echo "Current configuration:"
+        [ "$has_telegram" = true ] && echo "  ✓ Telegram configured"
+        [ "$has_whatsapp" = true ] && echo "  ✓ WhatsApp configured"
+    fi
+
+    # Offer platform choices
+    echo ""
+    echo "Which platform(s) do you want to configure?"
+    echo "  1) Telegram only"
+    echo "  2) WhatsApp Business API only"
+    echo "  3) Both Telegram and WhatsApp"
+    [ "$has_telegram" = true ] && echo "  4) Re-configure Telegram"
+    [ "$has_whatsapp" = true ] && echo "  5) Re-configure WhatsApp"
+    echo ""
+
+    local max_choice=3
+    [ "$has_telegram" = true ] && max_choice=4
+    [ "$has_whatsapp" = true ] && max_choice=5
+
+    read -rp "Enter choice [1-${max_choice}]: " platform_choice
+
+    case "$platform_choice" in
+        1)
+            telegram_setup "$bot_id"
+            # Offer to set up WhatsApp too
+            if [ "$has_whatsapp" != true ]; then
+                echo ""
+                read -rp "Would you like to also configure WhatsApp for this bot? [y/N] " add_whatsapp
+                if [[ "$add_whatsapp" =~ ^[Yy] ]]; then
+                    echo ""
+                    whatsapp_setup "$bot_id"
+                fi
+            fi
+            ;;
+        2)
+            whatsapp_setup "$bot_id"
+            # Offer to set up Telegram too
+            if [ "$has_telegram" != true ]; then
+                echo ""
+                read -rp "Would you like to also configure Telegram for this bot? [y/N] " add_telegram
+                if [[ "$add_telegram" =~ ^[Yy] ]]; then
+                    echo ""
+                    telegram_setup "$bot_id"
+                fi
+            fi
+            ;;
+        3)
+            telegram_setup "$bot_id"
+            echo ""
+            whatsapp_setup "$bot_id"
+            ;;
+        4)
+            if [ "$has_telegram" = true ]; then
+                telegram_setup "$bot_id"
+            else
+                echo "Invalid choice."
+                exit 1
+            fi
+            ;;
+        5)
+            if [ "$has_whatsapp" = true ]; then
+                whatsapp_setup "$bot_id"
+            else
+                echo "Invalid choice."
+                exit 1
+            fi
+            ;;
+        *)
+            echo "Invalid choice. Please enter a valid option."
+            exit 1
+            ;;
+    esac
 }
 
 cloudflared_setup() {
