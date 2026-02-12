@@ -84,11 +84,17 @@ register_all_webhooks() {
         local bot_env="$bot_dir/bot.env"
         [ -f "$bot_env" ] || continue
 
-        # Load bot config (in subshell to avoid polluting globals)
+        # Load bot config using robust parsing (in subshell to avoid polluting globals)
         local bot_token bot_secret bot_chat_id
-        bot_token=$(grep '^TELEGRAM_BOT_TOKEN=' "$bot_env" | head -1 | sed 's/^[^=]*=//; s/^"//; s/"$//')
-        bot_secret=$(grep '^WEBHOOK_SECRET=' "$bot_env" | head -1 | sed 's/^[^=]*=//; s/^"//; s/"$//')
-        bot_chat_id=$(grep '^TELEGRAM_CHAT_ID=' "$bot_env" | head -1 | sed 's/^[^=]*=//; s/^"//; s/"$//')
+        eval "$(
+            set -a
+            # shellcheck source=/dev/null
+            source "$bot_env" 2>/dev/null || true
+            set +a
+            printf 'bot_token=%q\n' "$TELEGRAM_BOT_TOKEN"
+            printf 'bot_secret=%q\n' "$WEBHOOK_SECRET"
+            printf 'bot_chat_id=%q\n' "$TELEGRAM_CHAT_ID"
+        )"
 
         if [ -z "$bot_token" ]; then
             log_warn "telegram" "Skipping bot '$bot_id': no token configured"

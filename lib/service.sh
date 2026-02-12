@@ -372,8 +372,14 @@ _disable_linger() {
 service_uninstall() {
     local arg="${1:-}"
 
-    # Full system uninstall (--purge or no arg)
-    if [ "$arg" = "--purge" ] || [ -z "$arg" ]; then
+    # Require explicit argument
+    if [ -z "$arg" ]; then
+        print_error "Error: 'uninstall' requires an argument. Usage: claudio uninstall <bot_name> | --purge"
+        exit 1
+    fi
+
+    # Full system uninstall (--purge)
+    if [ "$arg" = "--purge" ]; then
         if [[ "$(uname)" == "Darwin" ]]; then
             launchctl stop com.claudio.server 2>/dev/null || true
             launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
@@ -400,6 +406,13 @@ service_uninstall() {
 
     # Per-bot uninstall: claudio uninstall <bot_name>
     local bot_id="$arg"
+
+    # Validate bot_id: alphanumeric, hyphens, underscores only (prevent path traversal)
+    if [[ ! "$bot_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        print_error "Invalid bot name: '$bot_id'. Use only letters, numbers, hyphens, and underscores."
+        exit 1
+    fi
+
     local bot_dir="$CLAUDIO_PATH/bots/$bot_id"
 
     if [ ! -d "$bot_dir" ]; then

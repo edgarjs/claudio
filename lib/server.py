@@ -36,6 +36,7 @@ MEMORY_DAEMON_LOG = os.path.join(CLAUDIO_PATH, "memory-daemon.log")
 PORT = int(os.environ.get("PORT", 8421))
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 ALEXA_SKILL_ID = os.environ.get("ALEXA_SKILL_ID", "")
+MANAGEMENT_SECRET = os.environ.get("MANAGEMENT_SECRET", "")
 
 # Multi-bot registry: loaded from ~/.claudio/bots/*/bot.env
 # bots: dict of bot_id -> {"token": str, "chat_id": str, "secret": str, ...}
@@ -59,6 +60,13 @@ media_group_lock = threading.Lock()
 
 # Health check cache
 _health_cache = {"result": None, "time": 0}
+
+
+def log_msg(module, msg, bot_id=None):
+    """Format log message with module and optional bot_id."""
+    if bot_id:
+        return f"[{module}] [{bot_id}] {msg}\n"
+    return f"[{module}] {msg}\n"
 
 
 def parse_env_file(path):
@@ -225,15 +233,17 @@ def _process_queue_loop(queue_key):
                 )
                 proc.communicate(input=body.encode(), timeout=WEBHOOK_TIMEOUT)
                 if proc.returncode != 0:
-                    sys.stderr.write(
-                        f"[queue] Webhook handler exited with code {proc.returncode} "
-                        f"for {queue_key}\n"
-                    )
+                    sys.stderr.write(log_msg(
+                        "queue",
+                        f"Webhook handler exited with code {proc.returncode} for {queue_key}",
+                        bot_id
+                    ))
         except subprocess.TimeoutExpired:
-            sys.stderr.write(
-                f"[queue] Webhook handler timed out after {WEBHOOK_TIMEOUT}s "
-                f"for {queue_key}, killing process\n"
-            )
+            sys.stderr.write(log_msg(
+                "queue",
+                f"Webhook handler timed out after {WEBHOOK_TIMEOUT}s for {queue_key}, killing process",
+                bot_id
+            ))
             if proc:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                 try:
@@ -241,7 +251,7 @@ def _process_queue_loop(queue_key):
                 except subprocess.TimeoutExpired:
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except Exception as e:
-            sys.stderr.write(f"[queue] Error processing message for {queue_key}: {e}\n")
+            sys.stderr.write(log_msg("queue", f"Error processing message for {queue_key}: {e}", bot_id))
             time.sleep(1)  # Avoid tight loop on persistent errors
 
 
@@ -284,14 +294,15 @@ def _merge_media_group(group_key):
         # Inject extra photo file_ids into the base message as a custom field
         if extra_photos:
             base["message"]["_extra_photos"] = extra_photos
-            sys.stderr.write(
-                f"[media-group] Merged {len(bodies)} photos into one webhook "
-                f"(group {group_key})\n"
-            )
+            sys.stderr.write(log_msg(
+                "media-group",
+                f"Merged {len(bodies)} photos into one webhook (group {group_key})",
+                bot_id
+            ))
 
         _enqueue_single(json.dumps(base), group["chat_id"], bot_id)
     except (json.JSONDecodeError, KeyError) as e:
-        sys.stderr.write(f"[media-group] Error merging group {group_key}: {e}\n")
+        sys.stderr.write(log_msg("media-group", f"Error merging group {group_key}: {e}", bot_id))
         # Fallback: enqueue just the first message
         _enqueue_single(bodies[0], group["chat_id"], bot_id)
 
@@ -317,7 +328,7 @@ def enqueue_webhook(body, bot_id, bot_config):
     with queue_lock:
         # Reject new messages during shutdown — let active handlers finish
         if shutting_down:
-            sys.stderr.write(f"[queue] Rejecting webhook during shutdown for {queue_key}\n")
+            sys.stderr.write(log_msg("queue", f"Rejecting webhook during shutdown for {queue_key}", bot_id))
             return
 
         # Deduplicate: skip if we've already seen this update_id
@@ -334,20 +345,22 @@ def enqueue_webhook(body, bot_id, bot_config):
         with media_group_lock:
             if group_key in media_groups:
                 if len(media_groups[group_key]["bodies"]) >= MAX_PHOTOS_PER_GROUP:
-                    sys.stderr.write(
-                        f"[media-group] Dropping photo — group {group_key} "
-                        f"reached {MAX_PHOTOS_PER_GROUP} photo limit\n"
-                    )
+                    sys.stderr.write(log_msg(
+                        "media-group",
+                        f"Dropping photo — group {group_key} reached {MAX_PHOTOS_PER_GROUP} photo limit",
+                        bot_id
+                    ))
                     return
                 media_groups[group_key]["bodies"].append(body)
                 # Reset timer — extend window for late-arriving photos
                 media_groups[group_key]["timer"].cancel()
             else:
                 if len(media_groups) >= MAX_MEDIA_GROUPS:
-                    sys.stderr.write(
-                        f"[media-group] Dropping group {group_key} — "
-                        f"reached {MAX_MEDIA_GROUPS} concurrent group limit\n"
-                    )
+                    sys.stderr.write(log_msg(
+                        "media-group",
+                        f"Dropping group {group_key} — reached {MAX_MEDIA_GROUPS} concurrent group limit",
+                        bot_id
+                    ))
                     return
                 media_groups[group_key] = {
                     "bodies": [body],
@@ -374,10 +387,18 @@ def _enqueue_single(body, chat_id, bot_id):
         # Prevent unbounded queue growth
         queue_size = len(chat_queues[queue_key])
         if queue_size >= MAX_QUEUE_SIZE:
-            sys.stderr.write(f"[queue] Queue full for {queue_key} ({queue_size}/{MAX_QUEUE_SIZE}), dropping message\n")
+            sys.stderr.write(log_msg(
+                "queue",
+                f"Queue full for {queue_key} ({queue_size}/{MAX_QUEUE_SIZE}), dropping message",
+                bot_id
+            ))
             return
         if queue_size >= MAX_QUEUE_SIZE * QUEUE_WARNING_RATIO:
-            sys.stderr.write(f"[queue] Warning: queue for {queue_key} at {queue_size}/{MAX_QUEUE_SIZE} ({queue_size * 100 // MAX_QUEUE_SIZE}%)\n")
+            sys.stderr.write(log_msg(
+                "queue",
+                f"Warning: queue for {queue_key} at {queue_size}/{MAX_QUEUE_SIZE} ({queue_size * 100 // MAX_QUEUE_SIZE}%)",
+                bot_id
+            ))
 
         chat_queues[queue_key].append((body, bot_id))
 
@@ -563,6 +584,19 @@ class Handler(BaseHTTPRequestHandler):
             code = 200 if health["status"] == "healthy" else 503
             self._respond(code, health)
         elif self.path == "/reload":
+            # Require MANAGEMENT_SECRET to access this endpoint
+            if not MANAGEMENT_SECRET:
+                self._respond(404, {"error": "not found"})
+                return
+
+            auth_header = self.headers.get("Authorization", "")
+            expected = f"Bearer {MANAGEMENT_SECRET}"
+
+            # Timing-safe comparison to prevent timing attacks
+            if not hmac.compare_digest(auth_header, expected):
+                self._respond(401, {"error": "unauthorized"})
+                return
+
             load_bots()
             self._respond(200, {"ok": True, "bots": list(bots.keys())})
         else:
