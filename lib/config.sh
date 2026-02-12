@@ -101,13 +101,6 @@ _migrate_to_multi_bot() {
         } > "$bot_dir/bot.env"
     )
 
-    # Copy system prompt (prefer user's custom one, fall back to repo default)
-    if [ -f "$CLAUDIO_PATH/SYSTEM_PROMPT.md" ]; then
-        cp "$CLAUDIO_PATH/SYSTEM_PROMPT.md" "$bot_dir/SYSTEM_PROMPT.md"
-    elif [ -f "$(dirname "${BASH_SOURCE[0]}")/../SYSTEM_PROMPT.md" ]; then
-        cp "$(dirname "${BASH_SOURCE[0]}")/../SYSTEM_PROMPT.md" "$bot_dir/SYSTEM_PROMPT.md"
-    fi
-
     # Move history.db to per-bot dir
     if [ -f "$CLAUDIO_PATH/history.db" ]; then
         mv "$CLAUDIO_PATH/history.db" "$bot_dir/history.db"
@@ -118,6 +111,11 @@ _migrate_to_multi_bot() {
             mv "$CLAUDIO_PATH/history.db${suffix}" "$bot_dir/history.db${suffix}"
         fi
     done
+
+    # Move CLAUDE.md to per-bot dir if it exists
+    if [ -f "$CLAUDIO_PATH/CLAUDE.md" ]; then
+        mv "$CLAUDIO_PATH/CLAUDE.md" "$bot_dir/CLAUDE.md"
+    fi
 
     # Remove per-bot vars from service.env (re-save with only global vars)
     claudio_save_env

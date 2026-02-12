@@ -307,7 +307,7 @@ claudio backup cron uninstall
 
 To customize Claude's behavior globally, use `~/.claude/CLAUDE.md` (Claude Code's built-in configuration file). Instructions there are loaded automatically by Claude Code on every invocation and persist across updates.
 
-For **per-bot customization**, create `~/.claudio/bots/<bot_id>/SYSTEM_PROMPT.md` or `~/.claudio/bots/<bot_id>/CLAUDE.md`. When a bot is loaded, Claudio will use the bot-specific prompt files if they exist, falling back to the global `~/.claude/CLAUDE.md` otherwise.
+For **per-bot customization**, create `~/.claudio/bots/<bot_id>/CLAUDE.md`. When a bot is loaded, Claudio will append the bot-specific CLAUDE.md (if it exists) to the global system prompt.
 
 ### Configuration
 

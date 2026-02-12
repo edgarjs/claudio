@@ -64,13 +64,9 @@ claude_run() {
         -p -
     )
 
-    # Per-bot system prompt: check bot dir first, fall back to repo default
-    local prompt_source=""
-    if [ -n "$CLAUDIO_BOT_DIR" ] && [ -f "$CLAUDIO_BOT_DIR/SYSTEM_PROMPT.md" ]; then
-        prompt_source="$CLAUDIO_BOT_DIR/SYSTEM_PROMPT.md"
-    else
-        prompt_source="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/SYSTEM_PROMPT.md"
-    fi
+    # Global system prompt (same for all bots)
+    local prompt_source
+    prompt_source="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/SYSTEM_PROMPT.md"
     if [ -f "$prompt_source" ]; then
         local system_prompt
         system_prompt=$(cat "$prompt_source")

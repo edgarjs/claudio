@@ -34,7 +34,7 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `lib/server.sh` — Starts the Python HTTP server and cloudflared tunnel, multi-bot webhook registration
 - `lib/server.py` — Python HTTP server (stdlib `http.server`, port 8421), multi-bot dispatch via secret-token matching, SIGHUP hot-reload, `/reload` endpoint
 - `lib/telegram.sh` — Telegram Bot API integration (messages, webhooks, images, documents, voice), per-bot setup
-- `lib/claude.sh` — Claude Code CLI wrapper with conversation context, per-bot SYSTEM_PROMPT.md and CLAUDE.md support
+- `lib/claude.sh` — Claude Code CLI wrapper with conversation context, global SYSTEM_PROMPT.md and per-bot CLAUDE.md support
 - `lib/history.sh` — Conversation history management, delegates to `lib/db.sh`, per-bot history database
 - `lib/db.sh` — SQLite database layer for conversation storage
 - `lib/log.sh` — Centralized logging
@@ -51,7 +51,6 @@ Runtime configuration and state are stored in `$HOME/.claudio/` (not in the repo
 - `~/.claudio/service.env` — Global configuration
 - `~/.claudio/bots/<bot_id>/bot.env` — Per-bot credentials and config (bot_id must match `[a-zA-Z0-9_-]+`)
 - `~/.claudio/bots/<bot_id>/history.db` — Per-bot conversation history (SQLite)
-- `~/.claudio/bots/<bot_id>/SYSTEM_PROMPT.md` — Optional per-bot system prompt
 - `~/.claudio/bots/<bot_id>/CLAUDE.md` — Optional per-bot Claude Code instructions
 
 ## Running Tests

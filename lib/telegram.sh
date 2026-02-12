@@ -810,15 +810,6 @@ telegram_setup() {
 
         claudio_save_bot_env
 
-        # Copy default system prompt if none exists
-        if [ ! -f "$bot_dir/SYSTEM_PROMPT.md" ]; then
-            local default_prompt
-            default_prompt="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/SYSTEM_PROMPT.md"
-            if [ -f "$default_prompt" ]; then
-                cp "$default_prompt" "$bot_dir/SYSTEM_PROMPT.md"
-            fi
-        fi
-
         print_success "Bot config saved to $bot_dir/bot.env"
     else
         claudio_save_env

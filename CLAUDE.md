@@ -13,7 +13,7 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 - `lib/server.sh` — Starts the Python HTTP server and cloudflared named tunnel together. Handles webhook registration with retry logic. `register_all_webhooks()` registers webhooks for all configured bots.
 - `lib/server.py` — Python HTTP server (stdlib `http.server`), listens on port 8421, routes POST `/telegram/webhook`. Multi-bot dispatch: matches incoming webhooks to bots via secret-token header, loads bot registry from `~/.claudio/bots/*/bot.env`. SIGHUP handler for hot-reload. Composite queue keys (`bot_id:chat_id`) for per-bot message isolation. `/reload` endpoint (requires `MANAGEMENT_SECRET` authentication). Logging includes bot_id via `log_msg()` helper.
 - `lib/telegram.sh` — Telegram Bot API integration (send messages, parse webhooks, image download/validation, document download, voice message handling). `telegram_setup()` accepts optional bot_id for per-bot configuration. Model commands (`/haiku`, `/sonnet`, `/opus`) save to bot.env when `CLAUDIO_BOT_DIR` is set.
-- `lib/claude.sh` — Claude Code CLI wrapper with conversation context injection. Supports per-bot SYSTEM_PROMPT.md and CLAUDE.md (loaded from `$CLAUDIO_BOT_DIR` when set).
+- `lib/claude.sh` — Claude Code CLI wrapper with conversation context injection. Uses global SYSTEM_PROMPT.md (from repo root). Supports per-bot CLAUDE.md (loaded from `$CLAUDIO_BOT_DIR` when set).
 - `lib/history.sh` — Conversation history wrapper, delegates to `lib/db.sh` for SQLite storage. Per-bot history stored in `$CLAUDIO_BOT_DIR/history.db`.
 - `lib/db.sh` — SQLite database layer for conversation storage.
 - `lib/log.sh` — Centralized logging with module prefix, optional bot_id (from `CLAUDIO_BOT_ID` env var), and file output. Format: `[timestamp] [module] [bot_id] message`.
@@ -27,7 +27,7 @@ Claudio is a Telegram-to-Claude Code bridge. It runs a local HTTP server (port 8
 - `lib/memory.py` — Python backend for cognitive memory: embedding generation (fastembed), SQLite-backed storage, ACT-R activation scoring for retrieval, and memory consolidation via Claude.
 - `lib/db.py` — Python SQLite helper providing parameterized queries to eliminate SQL injection risk. Used by `db.sh`.
 - `lib/service.sh` — systemd (Linux) and launchd (macOS) service management. Also handles cloudflared installation and named tunnel setup during `claudio install`. `bot_setup()` wizard for interactive bot configuration. `service_install()` accepts optional bot_id (defaults to "claudio"). `service_uninstall()` can remove individual bots or purge all data. Enables loginctl linger on install/update (so the user service survives logout) and disables it on uninstall if no other user services remain.
-- Runtime config/state lives in `$HOME/.claudio/` (not in the repo). Multi-bot directory structure: `~/.claudio/bots/<bot_id>/` containing `bot.env`, `SYSTEM_PROMPT.md`, `CLAUDE.md`, `history.db`, and SQLite WAL files.
+- Runtime config/state lives in `$HOME/.claudio/` (not in the repo). Multi-bot directory structure: `~/.claudio/bots/<bot_id>/` containing `bot.env`, `CLAUDE.md`, `history.db`, and SQLite WAL files.
 
 ## Development
 
