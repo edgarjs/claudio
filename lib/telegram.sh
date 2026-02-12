@@ -801,6 +801,10 @@ telegram_setup() {
         export CLAUDIO_BOT_ID="$bot_id"
         export CLAUDIO_BOT_DIR="$bot_dir"
         export CLAUDIO_DB_FILE="$bot_dir/history.db"
+        # Unset per-bot credentials to prevent stale values from leaking
+        unset TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID WEBHOOK_SECRET \
+            WHATSAPP_PHONE_NUMBER_ID WHATSAPP_ACCESS_TOKEN WHATSAPP_APP_SECRET \
+            WHATSAPP_VERIFY_TOKEN WHATSAPP_PHONE_NUMBER
         if [ -f "$bot_dir/bot.env" ]; then
             # shellcheck source=/dev/null
             source "$bot_dir/bot.env" 2>/dev/null || true

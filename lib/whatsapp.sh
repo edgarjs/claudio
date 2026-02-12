@@ -186,15 +186,9 @@ whatsapp_send_audio() {
     fi
 }
 
-whatsapp_send_typing() {
-    local to="$1"
-    # Fire-and-forget: don't retry typing indicators
-    curl -s --connect-timeout 5 --max-time 10 \
-        --config <(printf 'url = "%s/%s/messages"\n' "$WHATSAPP_API" "$WHATSAPP_PHONE_NUMBER_ID"; printf 'header = "Authorization: Bearer %s"\n' "$WHATSAPP_ACCESS_TOKEN") \
-        -H "Content-Type: application/json" \
-        -d "{\"messaging_product\":\"whatsapp\",\"recipient_type\":\"individual\",\"to\":\"${to}\",\"type\":\"text\",\"text\":{\"body\":\"...\"}}" \
-        > /dev/null 2>&1 || true
-}
+# whatsapp_send_typing removed - WhatsApp Cloud API typing indicator requires
+# message_id and auto-dismisses after 25s. Proper implementation deferred to follow-up.
+# See: https://github.com/edgarjs/claudio/issues/XXX
 
 whatsapp_mark_read() {
     local message_id="$1"
@@ -603,18 +597,9 @@ Read this file and summarize its contents."
         fi
     fi
 
-    # Send typing indicator (sends "..." text message as workaround since WhatsApp
-    # Business API doesn't provide a native typing indicator endpoint)
-    (
-        parent_pid=$$
-        while kill -0 "$parent_pid" 2>/dev/null; do
-            whatsapp_send_typing "$WEBHOOK_FROM_NUMBER"
-            sleep 4
-        done
-    ) &
-    local typing_pid=$!
+    # Typing indicator removed - see whatsapp_send_typing comment above
     local tts_file=""
-    trap 'kill "$typing_pid" 2>/dev/null; wait "$typing_pid" 2>/dev/null; rm -f "$image_file" "$doc_file" "$audio_file" "$tts_file"' RETURN
+    trap 'rm -f "$image_file" "$doc_file" "$audio_file" "$tts_file"' RETURN
 
     local response
     response=$(claude_run "$text")
@@ -779,6 +764,13 @@ whatsapp_setup() {
             # shellcheck source=/dev/null
             source "$bot_dir/bot.env" 2>/dev/null || true
         fi
+
+        # Re-apply new WhatsApp credentials (source may have overwritten them during re-configuration)
+        export WHATSAPP_PHONE_NUMBER_ID="$phone_id"
+        export WHATSAPP_ACCESS_TOKEN="$access_token"
+        export WHATSAPP_APP_SECRET="$app_secret"
+        export WHATSAPP_PHONE_NUMBER="$phone_number"
+        export WHATSAPP_VERIFY_TOKEN="$verify_token"
 
         claudio_save_bot_env
 
