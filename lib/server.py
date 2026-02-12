@@ -51,7 +51,7 @@ whatsapp_bots_by_verify = []
 bots_lock = threading.Lock()
 
 # Per-chat message queues for serial processing
-chat_queues = {}  # queue_key -> deque of (webhook_body, bot_id)
+chat_queues = {}  # queue_key -> deque of (webhook_body, bot_id, platform)
 chat_active = {}  # queue_key -> bool, True if a processor thread is running
 active_threads = []  # Non-daemon processor threads to wait on during shutdown
 queue_lock = threading.Lock()
@@ -287,7 +287,7 @@ def _process_queue_loop(queue_key):
                     del chat_queues[queue_key]
                 chat_active.pop(queue_key, None)
                 return
-            body, bot_id = chat_queues[queue_key].popleft()
+            body, bot_id, platform = chat_queues[queue_key].popleft()
 
         proc = None
         try:
@@ -303,7 +303,7 @@ def _process_queue_loop(queue_key):
                 env["CLAUDIO_BOT_ID"] = bot_id
 
                 proc = subprocess.Popen(
-                    [CLAUDIO_BIN, "_webhook"],
+                    [CLAUDIO_BIN, "_webhook", platform],
                     stdin=subprocess.PIPE,
                     stdout=log_fh,
                     stderr=log_fh,
@@ -452,10 +452,10 @@ def enqueue_webhook(body, bot_id, bot_config):
             timer.start()
         return
 
-    _enqueue_single(body, chat_id, bot_id)
+    _enqueue_single(body, chat_id, bot_id, "telegram")
 
 
-def _enqueue_single(body, chat_id, bot_id):
+def _enqueue_single(body, chat_id, bot_id, platform):
     """Enqueue a single (possibly merged) webhook body for processing."""
     queue_key = f"{bot_id}:{chat_id}"
     with queue_lock:
@@ -479,7 +479,7 @@ def _enqueue_single(body, chat_id, bot_id):
                 bot_id
             ))
 
-        chat_queues[queue_key].append((body, bot_id))
+        chat_queues[queue_key].append((body, bot_id, platform))
 
         if not chat_active.get(queue_key):
             chat_active[queue_key] = True
@@ -551,7 +551,7 @@ def enqueue_whatsapp_webhook(body, bot_id, bot_config):
                 ))
                 return
 
-            chat_queues[queue_key].append((body, bot_id))
+            chat_queues[queue_key].append((body, bot_id, "whatsapp"))
 
             if not chat_active.get(queue_key):
                 chat_active[queue_key] = True

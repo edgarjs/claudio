@@ -101,13 +101,14 @@ case "${1:-}" in
         history_init
         memory_init
         body=$(cat)
-        # Detect bot type and call appropriate handler
-        if [ -n "$WHATSAPP_PHONE_NUMBER_ID" ]; then
+        # Call appropriate handler based on platform passed from server.py
+        local platform="${2:-}"
+        if [ "$platform" = "whatsapp" ]; then
             whatsapp_handle_webhook "$body"
-        elif [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+        elif [ "$platform" = "telegram" ]; then
             telegram_handle_webhook "$body"
         else
-            log_error "webhook" "No bot credentials found for bot $CLAUDIO_BOT_ID"
+            log_error "webhook" "Unknown platform '$platform' for bot $CLAUDIO_BOT_ID"
         fi
         ;;
     status)

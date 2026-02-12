@@ -87,29 +87,33 @@ whatsapp_send_message() {
         local chunk="${text:0:$max_len}"
         text="${text:$max_len}"
 
-        # Build JSON payload
-        local context_json=""
+        # Build JSON payload with jq for safe variable handling
+        local payload
         if [ "$is_first" = true ] && [ -n "$reply_to_message_id" ]; then
-            context_json=",\"context\":{\"message_id\":\"${reply_to_message_id}\"}"
+            payload=$(jq -n \
+                --arg to "$to" \
+                --arg text "$chunk" \
+                --arg mid "$reply_to_message_id" \
+                '{
+                    messaging_product: "whatsapp",
+                    recipient_type: "individual",
+                    to: $to,
+                    type: "text",
+                    text: { preview_url: false, body: $text }
+                } | . + {context: {message_id: $mid}}')
+        else
+            payload=$(jq -n \
+                --arg to "$to" \
+                --arg text "$chunk" \
+                '{
+                    messaging_product: "whatsapp",
+                    recipient_type: "individual",
+                    to: $to,
+                    type: "text",
+                    text: { preview_url: false, body: $text }
+                }')
         fi
         is_first=false
-
-        local payload
-        payload=$(jq -n \
-            --arg to "$to" \
-            --arg text "$chunk" \
-            '{
-                messaging_product: "whatsapp",
-                recipient_type: "individual",
-                to: $to,
-                type: "text",
-                text: { preview_url: false, body: $text }
-            }')
-
-        # Inject context if needed (jq doesn't support conditional object merging cleanly)
-        if [ -n "$context_json" ]; then
-            payload=$(echo "$payload" | jq --argjson ctx "{\"message_id\":\"${reply_to_message_id}\"}" '. + {context: $ctx}')
-        fi
 
         local result
         result=$(whatsapp_api "messages" \
@@ -156,13 +160,19 @@ whatsapp_send_audio() {
         return 1
     fi
 
-    # Send audio message with media_id
-    local context_json=""
-    if [ -n "$reply_to_message_id" ]; then
-        context_json=",\"context\":{\"message_id\":\"${reply_to_message_id}\"}"
-    fi
-
-    local payload="{\"messaging_product\":\"whatsapp\",\"recipient_type\":\"individual\",\"to\":\"${to}\",\"type\":\"audio\",\"audio\":{\"id\":\"${media_id}\"}${context_json}}"
+    # Send audio message with media_id - use jq for safe JSON construction
+    local payload
+    payload=$(jq -n \
+        --arg to "$to" \
+        --arg mid "$media_id" \
+        --arg rmid "$reply_to_message_id" \
+        '{
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: $to,
+            type: "audio",
+            audio: { id: $mid }
+        } | if $rmid != "" then . + {context: {message_id: $rmid}} else . end')
 
     result=$(whatsapp_api "messages" \
         -H "Content-Type: application/json" \
@@ -258,8 +268,8 @@ whatsapp_download_media() {
     fi
 
     # Step 2: Download the media file
-    # Reuse config file for download
-    printf 'url = "%s"\n' "$media_url" > "$config_file"
+    # Reuse config file for download - use _env_quote to prevent injection
+    printf 'url = "%s"\n' "$(_env_quote "$media_url")" > "$config_file"
     printf 'header = "Authorization: Bearer %s"\n' "$WHATSAPP_ACCESS_TOKEN" >> "$config_file"
 
     if ! curl -sf --connect-timeout 10 --max-time 60 --max-redirs 1 -o "$output_path" --config "$config_file"; then
@@ -422,6 +432,7 @@ ${text}"
             return
             ;;
         /haiku)
+            # shellcheck disable=SC2034  # Used by claude.sh via config
             MODEL="haiku"
             if [ -n "$CLAUDIO_BOT_DIR" ]; then
                 claudio_save_bot_env
@@ -592,22 +603,12 @@ Read this file and summarize its contents."
         fi
     fi
 
-    # Send typing indicator (or recording indicator for voice messages)
-    local typing_action="typing"
-    [ "$has_audio" = true ] && typing_action="recording"
+    # Send typing indicator (sends "..." text message as workaround since WhatsApp
+    # Business API doesn't provide a native typing indicator endpoint)
     (
         parent_pid=$$
         while kill -0 "$parent_pid" 2>/dev/null; do
-            if [ "$typing_action" = "recording" ]; then
-                # WhatsApp uses "record_audio" for recording indicator
-                curl -s --connect-timeout 5 --max-time 10 \
-                    --config <(printf 'url = "%s/%s/messages"\n' "$WHATSAPP_API" "$WHATSAPP_PHONE_NUMBER_ID"; printf 'header = "Authorization: Bearer %s"\n' "$WHATSAPP_ACCESS_TOKEN") \
-                    -H "Content-Type: application/json" \
-                    -d "{\"messaging_product\":\"whatsapp\",\"recipient_type\":\"individual\",\"to\":\"${WEBHOOK_FROM_NUMBER}\",\"type\":\"text\",\"text\":{\"body\":\"...\"}}" \
-                    > /dev/null 2>&1 || true
-            else
-                whatsapp_send_typing "$WEBHOOK_FROM_NUMBER"
-            fi
+            whatsapp_send_typing "$WEBHOOK_FROM_NUMBER"
             sleep 4
         done
     ) &
