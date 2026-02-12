@@ -787,11 +787,18 @@ telegram_setup() {
 
     # Save config: per-bot or global
     if [ -n "$bot_id" ]; then
+        # Validate bot_id format to prevent path traversal
+        if [[ ! "$bot_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            print_error "Invalid bot name: '$bot_id'. Use only letters, numbers, hyphens, and underscores."
+            exit 1
+        fi
+
         local bot_dir="$CLAUDIO_PATH/bots/$bot_id"
         mkdir -p "$bot_dir"
         chmod 700 "$bot_dir"
 
         # Generate per-bot webhook secret
+        export WEBHOOK_SECRET
         WEBHOOK_SECRET=$(openssl rand -hex 32) || {
             print_error "Failed to generate WEBHOOK_SECRET"
             exit 1
