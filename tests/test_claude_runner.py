@@ -294,8 +294,8 @@ class TestPersistUsage(unittest.TestCase):
 
     def test_inserts_into_token_usage(self):
         import tempfile
-        fd, db_path = tempfile.mkstemp(suffix='.db')
-        os.close(fd)
+        tmp_dir = tempfile.mkdtemp()
+        db_path = os.path.join(tmp_dir, 'history.db')
         try:
             # Create the table first
             conn = sqlite3.connect(db_path)
@@ -343,19 +343,35 @@ class TestPersistUsage(unittest.TestCase):
             self.assertAlmostEqual(row[6], 0.005)
             self.assertEqual(row[7], 1234)
         finally:
-            os.unlink(db_path)
+            try:
+                os.unlink(db_path)
+            except OSError:
+                pass
+            try:
+                os.rmdir(tmp_dir)
+            except OSError:
+                pass
 
     def test_handles_missing_table_gracefully(self):
         import tempfile
-        fd, db_path = tempfile.mkstemp(suffix='.db')
-        os.close(fd)
+        tmp_dir = tempfile.mkdtemp()
+        db_path = os.path.join(tmp_dir, 'history.db')
         try:
-            # No table created -- should not raise
+            # Create an empty db (no table) -- should not raise
+            conn = sqlite3.connect(db_path)
+            conn.close()
             raw_json = {"usage": {}, "modelUsage": {}, "total_cost_usd": 0, "duration_ms": 0}
             _persist_usage(raw_json, db_path)
             # No exception means success
         finally:
-            os.unlink(db_path)
+            try:
+                os.unlink(db_path)
+            except OSError:
+                pass
+            try:
+                os.rmdir(tmp_dir)
+            except OSError:
+                pass
 
     def test_empty_db_file_returns_early(self):
         """When db_file is empty string, _persist_usage should return silently."""

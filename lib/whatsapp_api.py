@@ -274,9 +274,9 @@ class WhatsAppClient:
             self._log_error(f"Failed to get media URL for media_id: {media_id}")
             return False
 
-        # Validate URL scheme
-        if not media_url.startswith("https://"):
-            self._log_error("Invalid media URL scheme")
+        # Validate URL scheme (case-insensitive)
+        if not media_url.lower().startswith("https://"):
+            self._log_error("Invalid media URL scheme (must be HTTPS)")
             return False
 
         # Step 2: Download the file

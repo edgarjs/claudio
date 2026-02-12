@@ -426,12 +426,16 @@ class TestDbHistory(unittest.TestCase):
     """Tests for _db_init, _history_add, _history_get_context."""
 
     def setUp(self):
-        fd, self.db_file = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
+        self._tmpdir = tempfile.mkdtemp()
+        self.db_file = os.path.join(self._tmpdir, "history.db")
 
     def tearDown(self):
         try:
             os.unlink(self.db_file)
+        except OSError:
+            pass
+        try:
+            os.rmdir(self._tmpdir)
         except OSError:
             pass
 

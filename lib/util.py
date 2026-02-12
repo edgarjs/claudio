@@ -172,6 +172,19 @@ def log_error(module, msg, bot_id=None):
 
 # -- Multipart form-data encoder --
 
+def _sanitize_header_value(value):
+    """Sanitize a value for safe inclusion in multipart headers.
+
+    Strips CRLF sequences, control characters, and escapes double quotes
+    to prevent header injection attacks. Truncates to 255 characters.
+    """
+    # Remove control characters including CR/LF
+    cleaned = ''.join(c if c.isprintable() and c not in '\r\n' else '_' for c in value)
+    # Escape double quotes
+    cleaned = cleaned.replace('"', '\\"')
+    return cleaned[:255]
+
+
 class MultipartEncoder:
     """Encode multipart/form-data requests using stdlib only.
 
@@ -197,6 +210,7 @@ class MultipartEncoder:
 
     def add_field(self, name, value):
         """Add a simple form field."""
+        name = _sanitize_header_value(name)
         part = (
             f'--{self._boundary}\r\n'
             f'Content-Disposition: form-data; name="{name}"\r\n'
@@ -209,6 +223,10 @@ class MultipartEncoder:
         """Add a file upload field."""
         if filename is None:
             filename = os.path.basename(filepath)
+
+        name = _sanitize_header_value(name)
+        filename = _sanitize_header_value(filename)
+        content_type = _sanitize_header_value(content_type)
 
         header = (
             f'--{self._boundary}\r\n'
@@ -223,6 +241,10 @@ class MultipartEncoder:
 
     def add_file_data(self, name, data, content_type='application/octet-stream', filename='file'):
         """Add file data (bytes) as an upload field."""
+        name = _sanitize_header_value(name)
+        filename = _sanitize_header_value(filename)
+        content_type = _sanitize_header_value(content_type)
+
         header = (
             f'--{self._boundary}\r\n'
             f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'

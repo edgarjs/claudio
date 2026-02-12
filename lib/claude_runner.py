@@ -403,11 +403,18 @@ def _persist_usage(raw_json, db_file):
         if not db_file:
             return
 
+        # Validate db_file: must be named history.db, no traversal
+        db_real = os.path.realpath(os.path.abspath(db_file))
+        if os.path.basename(db_real) != 'history.db':
+            return
+        if '..' in os.path.normpath(db_file).split(os.sep):
+            return
+
         usage = raw_json.get('usage', {})
         model_usage = raw_json.get('modelUsage', {})
         model = next(iter(model_usage), None) if model_usage else None
 
-        conn = sqlite3.connect(db_file, timeout=10)
+        conn = sqlite3.connect(db_real, timeout=10)
         conn.execute('PRAGMA journal_mode=WAL')
         conn.execute('PRAGMA busy_timeout=5000')
         try:

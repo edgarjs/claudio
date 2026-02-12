@@ -12,6 +12,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+import traceback
 
 from lib.config import BotConfig, parse_env_file
 from lib.util import (
@@ -251,10 +252,35 @@ def _handle_command(text, config, client, target, message_id):
     return False
 
 
+# -- Database path validation --
+
+def _validate_db_path(db_file):
+    """Validate that db_file resolves to a file named history.db
+    and does not contain path traversal.
+
+    Returns the resolved absolute path, or raises ValueError.
+    """
+    if not db_file:
+        raise ValueError("db_file is empty")
+
+    db_real = os.path.realpath(os.path.abspath(db_file))
+
+    # Must be named history.db
+    if os.path.basename(db_real) != 'history.db':
+        raise ValueError(f"Unexpected database filename: {os.path.basename(db_file)}")
+
+    # Reject obvious traversal (.. in the original path)
+    if '..' in os.path.normpath(db_file).split(os.sep):
+        raise ValueError(f"Path traversal in db_file: {db_file}")
+
+    return db_real
+
+
 # -- Direct database access (replaces subprocess to db.py) --
 
 def _db_init(db_file):
     """Ensure messages and token_usage tables exist."""
+    db_file = _validate_db_path(db_file)
     conn = sqlite3.connect(db_file, timeout=10)
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA busy_timeout=5000')
@@ -290,6 +316,7 @@ def _db_init(db_file):
 
 def _history_add(db_file, role, content):
     """Insert a message into conversation history."""
+    db_file = _validate_db_path(db_file)
     conn = sqlite3.connect(db_file, timeout=10)
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA busy_timeout=5000')
@@ -305,6 +332,7 @@ def _history_add(db_file, role, content):
 
 def _history_get_context(db_file, limit):
     """Get conversation history as a formatted context string."""
+    db_file = _validate_db_path(db_file)
     conn = sqlite3.connect(db_file, timeout=10)
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA busy_timeout=5000')
@@ -633,13 +661,16 @@ def _process_message(msg, text, config, client, platform, bot_id):
                 history_text = "[Sent an image]"
         elif doc_file:
             doc_name = sanitize_doc_name(msg.doc_filename)
-            user_caption = msg.caption or msg.text
+            user_caption = msg.caption
             if user_caption:
                 history_text = f'[Sent a file "{doc_name}" with caption: {user_caption}]'
             else:
                 history_text = f'[Sent a file "{doc_name}"]'
 
-        # -- Typing indicator (Telegram only — WhatsApp removed) --
+        # -- Typing indicator --
+        # WhatsApp Cloud API typing indicator requires message_id and
+        # auto-dismisses after 25s, making it impractical for long Claude
+        # invocations. Only Telegram gets a typing loop.
 
         if platform == 'telegram':
             typing_action = 'record_voice' if has_voice else 'typing'
@@ -684,7 +715,7 @@ def _process_message(msg, text, config, client, platform, bot_id):
 
         # -- Enrich document history with summary from response --
 
-        if response and not (msg.caption or msg.text) and doc_file:
+        if response and not msg.caption and doc_file:
             doc_name = sanitize_doc_name(msg.doc_filename)
             history_text = f'[Sent a file "{doc_name}": {summarize(response)}]'
 
@@ -734,6 +765,7 @@ def _process_message(msg, text, config, client, platform, bot_id):
 
     except Exception as e:
         log_error(_MODULE, f"Error processing message: {e}", bot_id=bot_id)
+        traceback.print_exc()
         try:
             client.send_message(
                 msg.chat_id,
@@ -748,7 +780,7 @@ def _process_message(msg, text, config, client, platform, bot_id):
         # Stop typing indicator
         typing_stop.set()
         if typing_thread:
-            typing_thread.join(timeout=5)
+            typing_thread.join(timeout=1)
 
         # Clean up temp files
         for path in tmp_files:

@@ -4,6 +4,11 @@ Provides a BotConfig dataclass that loads from bot.env + service.env.
 """
 
 import os
+import re
+import sys
+
+# Only allow alphanumeric keys with underscores (standard env var names)
+_ENV_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 
 def parse_env_file(path):
@@ -12,6 +17,8 @@ def parse_env_file(path):
     Mirrors parse_env_file() in server.py and _safe_load_env() in config.sh.
     Duplicated here to avoid circular imports (server.py will import handlers.py
     which imports config.py).
+
+    Keys must match [A-Za-z_][A-Za-z0-9_]*. Invalid keys are skipped.
     """
     result = {}
     try:
@@ -24,6 +31,11 @@ def parse_env_file(path):
                 if eq < 1:
                     continue
                 key = line[:eq]
+                if not _ENV_KEY_RE.match(key):
+                    sys.stderr.write(
+                        f"[config] Skipping invalid key in {path}: {key!r}\n"
+                    )
+                    continue
                 val = line[eq + 1:]
                 if len(val) >= 2 and val.startswith('"') and val.endswith('"'):
                     val = val[1:-1]
