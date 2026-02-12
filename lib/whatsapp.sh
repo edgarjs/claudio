@@ -192,11 +192,17 @@ whatsapp_send_audio() {
 
 whatsapp_mark_read() {
     local message_id="$1"
+    local payload
+    payload=$(jq -n --arg mid "$message_id" '{
+        messaging_product: "whatsapp",
+        status: "read",
+        message_id: $mid
+    }')
     # Fire-and-forget: don't retry read receipts
     curl -s --connect-timeout 5 --max-time 10 \
         --config <(printf 'url = "%s/%s/messages"\n' "$WHATSAPP_API" "$WHATSAPP_PHONE_NUMBER_ID"; printf 'header = "Authorization: Bearer %s"\n' "$WHATSAPP_ACCESS_TOKEN") \
         -H "Content-Type: application/json" \
-        -d "{\"messaging_product\":\"whatsapp\",\"status\":\"read\",\"message_id\":\"${message_id}\"}" \
+        -d "$payload" \
         > /dev/null 2>&1 || true
 }
 
