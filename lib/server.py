@@ -354,7 +354,7 @@ def _merge_media_group(group_key):
     bot_id = group["bot_id"]
     if len(bodies) == 1:
         # Single photo, enqueue as-is
-        _enqueue_single(bodies[0], group["chat_id"], bot_id)
+        _enqueue_single(bodies[0], group["chat_id"], bot_id, "telegram")
         return
 
     # Merge: use the first message as base, collect all photo file_ids
@@ -379,11 +379,11 @@ def _merge_media_group(group_key):
                 bot_id
             ))
 
-        _enqueue_single(json.dumps(base), group["chat_id"], bot_id)
+        _enqueue_single(json.dumps(base), group["chat_id"], bot_id, "telegram")
     except (json.JSONDecodeError, KeyError) as e:
         sys.stderr.write(log_msg("media-group", f"Error merging group {group_key}: {e}", bot_id))
         # Fallback: enqueue just the first message
-        _enqueue_single(bodies[0], group["chat_id"], bot_id)
+        _enqueue_single(bodies[0], group["chat_id"], bot_id, "telegram")
 
 
 def enqueue_webhook(body, bot_id, bot_config):
