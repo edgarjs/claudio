@@ -102,7 +102,7 @@ case "${1:-}" in
         memory_init
         body=$(cat)
         # Call appropriate handler based on platform passed from server.py
-        local platform="${2:-}"
+        platform="${2:-}"
         if [ "$platform" = "whatsapp" ]; then
             whatsapp_handle_webhook "$body"
         elif [ "$platform" = "telegram" ]; then
